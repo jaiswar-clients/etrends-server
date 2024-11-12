@@ -5,14 +5,14 @@ import { ConfigService } from '@/common/config/services/config.service';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
-import { ResponseInterceptor } from 'interceptors/response.interceptor';
+import { ResponseInterceptor } from '@/interceptors/response.interceptor';
 import { HttpExceptionInterceptor as HttpExceptionFilter } from '@/common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule,{
-    bufferLogs:true,
-    cors:true,
-    rawBody:true
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+    cors: true,
+    rawBody: true,
   });
 
   const configService = app.get(ConfigService);
@@ -35,13 +35,11 @@ async function bootstrap() {
     new ValidationPipe({
       whitelist: true,
       transform: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: false,
       forbidUnknownValues: true,
     }),
   );
 
-
-  
   await app.listen(port);
 }
 

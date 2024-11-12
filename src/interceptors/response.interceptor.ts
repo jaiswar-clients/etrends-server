@@ -15,14 +15,6 @@ export class ResponseInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const ctx = context.switchToHttp();
     const response = ctx.getResponse();
-    const skip = this.reflector.get<boolean>(
-      'skipInterceptor',
-      context.getHandler(),
-    );
-
-    if (skip) {
-      return next.handle();
-    }
 
     return next.handle().pipe(
       map((data) => {

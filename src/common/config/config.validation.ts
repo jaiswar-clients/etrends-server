@@ -6,4 +6,7 @@ export const validationSchema = Joi.object({
   DATABASE_URL: Joi.string().required(),
   CLIENT_URL: Joi.string().required(),
   APP_URL: Joi.string().required(),
-})
+  JWT_SECRET: Joi.string().required(),
+  ENCRYPTION_KEY: Joi.string().required(),
+  IV: Joi.string().required(),
+});

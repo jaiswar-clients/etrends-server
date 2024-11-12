@@ -19,6 +19,14 @@ export class AppConfigDTO {
 
   @IsString()
   @IsNotEmpty()
+  ENCRYPTION_KEY: number;
+
+  @IsString()
+  @IsNotEmpty()
+  IV: number;
+
+  @IsString()
+  @IsNotEmpty()
   CLIENT_URL: number;
 
   @IsString()

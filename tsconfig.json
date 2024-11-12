@@ -22,7 +22,9 @@
       "@/common/*": ["./common/*"],
       "@/modules/*": ["./modules/*"],
       "@/db/*": ["./db/*"],
-      "@/libs/*": ["./libs/*"]
+      "@/libs/*": ["./libs/*"],
+      "@/utils/*": ["./utils/*"],
+      "@/interceptors/*": ["./interceptors/*"]
     },
     "strict": true
   },
