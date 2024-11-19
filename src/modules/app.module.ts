@@ -10,6 +10,8 @@ import { UserModule } from './user/user.module';
 import { ClientModule } from './client/client.module';
 import { OrderModule } from './order/order.module';
 import { JwtModule } from '@nestjs/jwt';
+import { StorageModule } from '@/common/storage/storage.module';
+import { ProductModule } from './product/product.module';
 
 type NestModuleImport =
   | Type<any>
@@ -39,6 +41,8 @@ const appModules: NestModuleImport[] = [LoggerModule, HttpModule, ConfigModule];
     UserModule,
     ClientModule,
     OrderModule,
+    StorageModule,
+    ProductModule
   ],
   controllers: [AppController],
   providers: [AppService],

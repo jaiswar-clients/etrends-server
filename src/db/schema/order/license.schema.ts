@@ -16,9 +16,6 @@ export class License extends Document {
   @Prop({ type: Types.ObjectId, required: true, ref: 'Product' })
   product_id: Types.ObjectId; // Product for which Id purchases
 
-  @Prop({ type: String })
-  training_implementation_cost: string;
-
   @Prop({
     type: {
       percentage: {
@@ -26,7 +23,7 @@ export class License extends Document {
         max: 100,
         default: 20,
       },
-      amount: String,
+      amount: Number,
     },
   })
   rate: {

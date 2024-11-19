@@ -6,7 +6,7 @@ import {
   Types,
 } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
-import { IAMCRate } from './order.schema';
+import { IAMCRate } from './product-order.schema';
 
 export type CustomizationDocument = HydratedDocument<Customization>;
 
@@ -15,8 +15,8 @@ export class Customization extends Document {
   @Prop({ type: Types.ObjectId, required: true, ref: 'Product' })
   product_id: Types.ObjectId; // Product for which Id purchases
 
-  @Prop({ type: String })
-  cost: String;
+  @Prop({ type: Number })
+  cost: number;
 
   @Prop({
     type: {
@@ -25,12 +25,12 @@ export class Customization extends Document {
         max: 100,
         default: 20,
       },
-      amount: String,
+      amount: Number,
     },
   })
   amc_rate: IAMCRate;
 
-  @Prop({ type: String })
+  @Prop({ type: [String] })
   modules: string[];
 
   @Prop()

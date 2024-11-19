@@ -1,6 +1,6 @@
 import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, HydratedDocument } from 'mongoose';
+import { Document, HydratedDocument, Types } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
 
 export type ClientDocument = HydratedDocument<Client>;
@@ -51,8 +51,15 @@ export class Client extends Document {
   @Prop({ type: [PointOfContact], default: [] })
   point_of_contacts: PointOfContact[];
 
-  @Prop({ type: [String], default: [] })
-  orders: [];
+  @Prop({
+    type: [
+      {
+        type: Types.ObjectId,
+      },
+    ],
+    default: [],
+  })
+  orders: Types.ObjectId[];
 }
 
 const ClientSchema = SchemaFactory.createForClass(Client);

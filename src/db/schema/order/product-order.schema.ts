@@ -21,7 +21,7 @@ class PaymentTerms {
   name: string;
 
   @Prop({ type: String })
-  percentage_from_base_cost: string;
+  percentage_from_base_cost: number;
 
   @Prop({ type: Number })
   calculated_amount: number;
@@ -43,6 +43,12 @@ export class Order extends Document {
   })
   products: Types.ObjectId[];
 
+  @Prop({ type: String })
+  training_implementation_cost: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'Client' })
+  client_id: Types.ObjectId;
+
   @Prop({ type: Number })
   base_cost: number;
 
@@ -53,7 +59,7 @@ export class Order extends Document {
         max: 100,
         default: 20,
       },
-      amount: String,
+      amount: Number,
     },
   })
   amc_rate: IAMCRate;
@@ -63,6 +69,44 @@ export class Order extends Document {
 
   @Prop({ type: [PaymentTerms] })
   payment_terms: PaymentTerms[];
+
+  @Prop({ type: Types.ObjectId, ref: 'License' })
+  license_id: Types.ObjectId; // for first time purchase
+
+  @Prop({ type: String })
+  agreement_document: string; // file url
+
+  @Prop({
+    type: {
+      start: Date,
+      end: Date,
+    },
+  })
+  agreement_date: {
+    start: Date;
+    end: Date;
+  };
+
+  @Prop({ type: String })
+  purchase_order_document: string; // cdn url
+
+  @Prop({
+    type: {
+      title: String,
+      url: String,
+    },
+    default: {},
+  })
+  other_document: {
+    title: string;
+    url: string;
+  }; // cdn url
+
+  @Prop({ type: Types.ObjectId, ref: 'Customization' })
+  customization_id: Types.ObjectId; // for customization
+
+  @Prop({ type: Date })
+  deployment_date: Date; // date of deployment is also the start date of the AMC
 
   @Prop()
   createdAt?: Date;

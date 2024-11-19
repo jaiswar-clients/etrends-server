@@ -15,16 +15,10 @@ export class Product extends Document {
   short_name: string;
 
   @Prop({ type: Boolean, default: false })
-  does_have_license: Boolean;
+  does_have_license: boolean;
 
   @Prop({ type: String, required: true })
   description: string;
-
-  @Prop()
-  createdAt?: Date;
-
-  @Prop()
-  updatedAt?: Date;
 }
 
 // Define schema with plugins and virtuals as needed
