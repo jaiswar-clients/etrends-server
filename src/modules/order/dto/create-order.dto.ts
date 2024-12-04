@@ -1,94 +1,108 @@
 import { Types } from 'mongoose';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import {
-    IsArray,
-    IsDate,
-    IsEnum,
-    IsMongoId,
-    IsNotEmpty,
-    IsNumber,
-    IsOptional,
-    IsString,
-    ValidateNested,
+  IsArray,
+  IsDate,
+  IsEnum,
+  IsMongoId,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class PaymentTermsDto {
-    @IsString()
-    name: string;
+  @IsString()
+  name: string;
 
-    @IsNumber()
-    percentage_from_base_cost: number;
+  @IsNumber()
+  percentage_from_base_cost: number;
 
-    @IsNumber()
-    calculated_amount: number;
+  @IsNumber()
+  calculated_amount: number;
 
-    @IsString()
-    date: Date;
+  @IsString()
+  date: Date;
 }
 
 class LicenseDetailsDto {
-    @IsNumber()
-    cost_per_license: number;
+  @IsNumber()
+  cost_per_license: number;
 
-    @IsNumber()
-    total_license: number;
+  @IsNumber()
+  total_license: number;
 }
 
 class AmcRateDto {
-    @IsNumber()
-    percentage: number;
+  @IsNumber()
+  percentage: number;
 
-    @IsNumber()
-    amount: number;
+  @IsNumber()
+  amount: number;
 }
 
-export class CreateNewOrderDto {
-    @IsArray()
-    @IsMongoId({ each: true })
-    @IsNotEmpty()
-    products: Types.ObjectId[];
+class CustomizationDto {
+  @IsNumber()
+  cost: number;
 
-    @IsNumber()
-    base_cost: number;
+  @IsArray()
+  @IsString({ each: true })
+  modules: string[];
+}
 
-    @ValidateNested()
-    @Type(() => AmcRateDto)
-    amc_rate: AmcRateDto;
+export class CreateOrderDto {
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsNotEmpty()
+  products: Types.ObjectId[];
 
-    @IsEnum(ORDER_STATUS_ENUM)
-    status: ORDER_STATUS_ENUM;
+  @IsNumber()
+  base_cost: number;
 
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => PaymentTermsDto)
-    payment_terms: PaymentTermsDto[];
+  @ValidateNested()
+  @Type(() => AmcRateDto)
+  amc_rate: AmcRateDto;
 
-    @IsString()
-    @IsOptional()
-    agreement_document: string;
+  @IsEnum(ORDER_STATUS_ENUM)
+  status: ORDER_STATUS_ENUM;
 
-    @IsString()
-    @IsOptional()
-    agreement_date: {
-        start: Date;
-        end: Date;
-    };
+  @IsString()
+  purchased_date: string;
 
-    @IsString()
-    @IsOptional()
-    purchase_order_document: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentTermsDto)
+  payment_terms: PaymentTermsDto[];
 
-    @IsNumber()
-    @IsOptional()
-    training_implementation_cost: string;
+  @IsString()
+  @IsOptional()
+  agreement_document: string;
 
-    @IsString()
-    @IsOptional()
-    deployment_date: Date;
+  @IsOptional()
+  agreement_date: {
+    start: Date;
+    end: Date;
+  };
 
-    @ValidateNested()
-    @Type(() => LicenseDetailsDto)
-    @IsOptional()
-    license_details?: LicenseDetailsDto;
+  @IsString()
+  @IsOptional()
+  purchase_order_document: string;
+
+  @IsNumber()
+  @IsOptional()
+  training_implementation_cost: number;
+
+  @IsString()
+  @IsOptional()
+  amc_start_date: Date;
+
+  @ValidateNested()
+  @Type(() => LicenseDetailsDto)
+  license_details: LicenseDetailsDto;
+
+  @ValidateNested()
+  @Type(() => CustomizationDto)
+  customization: CustomizationDto;
 }

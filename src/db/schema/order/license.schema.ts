@@ -16,6 +16,9 @@ export class License extends Document {
   @Prop({ type: Types.ObjectId, required: true, ref: 'Product' })
   product_id: Types.ObjectId; // Product for which Id purchases
 
+  @Prop({ type: Types.ObjectId, ref: 'Order' })
+  order_id: Types.ObjectId;
+
   @Prop({
     type: {
       percentage: {

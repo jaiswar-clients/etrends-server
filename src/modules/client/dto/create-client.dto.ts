@@ -7,6 +7,7 @@ import {
   IsArray,
   ValidateNested,
   IsBoolean,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
@@ -39,8 +40,12 @@ export class CreateNewClientDto {
   name: string;
 
   @IsOptional()
-  @IsString()
-  parent_company?: string;
+  @IsObject()
+  parent_company?: {
+    id: string;
+    new: boolean;
+    name: string;
+  };
 
   @IsOptional()
   @IsString()

@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -21,9 +22,19 @@ export class ProductController {
     return this.productService.getAllProducts();
   }
 
+  @Get('/:id')
+  async getProductById(@Param('id') id: string) {
+    return this.productService.getProductById(id);
+  }
+
   @Post()
   async createProduct(@Body() body: CreateProductDto) {
     return this.productService.createProduct(body);
+  }
+
+  @Patch('/:id')
+  async updateProduct(@Param('id') id: string, @Body() body: CreateProductDto) {
+    return this.productService.updateProductById(id, body);
   }
 
   @Delete('/:id')

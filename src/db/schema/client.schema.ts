@@ -27,8 +27,8 @@ export class Client extends Document {
   @Prop({ type: String, required: true })
   name: string;
 
-  @Prop({ type: String })
-  parent_company: string;
+  @Prop({ type: Types.ObjectId, ref: 'Client' })
+  parent_company_id: string;
 
   @Prop({ type: String })
   pan_number: string;
@@ -48,6 +48,20 @@ export class Client extends Document {
   @Prop({ type: String })
   vendor_id: string;
 
+  @Prop({ type: Boolean, default: false })
+  is_parent_company: boolean;
+
+  @Prop({
+    type: [
+      {
+        type: Types.ObjectId,
+        ref: 'Client',
+      },
+    ],
+    default: [],
+  })
+  child_companies: Types.ObjectId[];
+
   @Prop({ type: [PointOfContact], default: [] })
   point_of_contacts: PointOfContact[];
 
@@ -55,11 +69,24 @@ export class Client extends Document {
     type: [
       {
         type: Types.ObjectId,
+        ref: 'Order',
       },
     ],
     default: [],
   })
   orders: Types.ObjectId[];
+
+  // add array of amc ids
+  @Prop({
+    type: [
+      {
+        type: Types.ObjectId,
+        ref: 'AMC',
+      },
+    ],
+    default: [],
+  })
+  amcs: Types.ObjectId[];
 }
 
 const ClientSchema = SchemaFactory.createForClass(Client);

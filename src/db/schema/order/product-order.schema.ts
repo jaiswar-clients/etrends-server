@@ -64,14 +64,17 @@ export class Order extends Document {
   })
   amc_rate: IAMCRate;
 
+  @Prop({ type: Types.ObjectId, ref: 'AMC' })
+  amc_id: Types.ObjectId;
+
   @Prop({ type: String, enum: ORDER_STATUS_ENUM })
   status: ORDER_STATUS_ENUM;
 
   @Prop({ type: [PaymentTerms] })
   payment_terms: PaymentTerms[];
 
-  @Prop({ type: Types.ObjectId, ref: 'License' })
-  license_id: Types.ObjectId; // for first time purchase
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'License' }] })
+  licenses: Types.ObjectId[]; // array of license IDs
 
   @Prop({ type: String })
   agreement_document: string; // file url
@@ -90,6 +93,9 @@ export class Order extends Document {
   @Prop({ type: String })
   purchase_order_document: string; // cdn url
 
+  @Prop({ type: Date, default: Date.now })
+  purchased_date: Date;
+
   @Prop({
     type: {
       title: String,
@@ -102,17 +108,35 @@ export class Order extends Document {
     url: string;
   }; // cdn url
 
-  @Prop({ type: Types.ObjectId, ref: 'Customization' })
-  customization_id: Types.ObjectId; // for customization
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
+  customizations: Types.ObjectId[]; // array of customization IDs
+
+  @Prop({ type: Types.ObjectId, ref: 'AdditionalService' })
+  additional_services: Types.ObjectId[]; // array of additional service IDs
 
   @Prop({ type: Date })
-  deployment_date: Date; // date of deployment is also the start date of the AMC
+  amc_start_date: Date; // date of deployment is also the start date of the AMC
 
   @Prop()
   createdAt?: Date;
 
   @Prop()
   updatedAt?: Date;
+
+  @Prop({
+    type: {
+      customization: Boolean,
+      license: Boolean,
+    },
+    default: {
+      customization: false,
+      license: false,
+    },
+  })
+  is_purchased_with_order: {
+    customization: boolean; // if customization is purchased with order than it always the first elemenet of the customizations array
+    license: boolean;
+  };
 }
 
 // Define schema with plugins and virtuals as needed

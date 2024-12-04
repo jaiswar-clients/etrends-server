@@ -105,7 +105,7 @@ export class ProductService {
         }),
       );
 
-      return "deleted";
+      return 'deleted';
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
@@ -147,6 +147,46 @@ export class ProductService {
       this.loggerService.error(
         JSON.stringify({
           message: 'getProductById: Failed to get product',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        error.message ?? 'Server failed',
+        HttpStatus.BAD_GATEWAY,
+        {
+          cause: error,
+        },
+      );
+    }
+  }
+
+  async updateProductById(id: string, body: CreateProductDto) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateProductById: Updating Product',
+          id,
+          body,
+        }),
+      );
+
+      const product = await this.productModel.findByIdAndUpdate(id, body, {
+        new: true,
+      });
+
+      this.loggerService.warn(
+        JSON.stringify({
+          message: 'updateProductById: Product Updated',
+          product,
+        }),
+      );
+
+      return product?.toObject();
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateProductById: Failed to update product',
           error: error.message,
           stack: error.stack,
         }),

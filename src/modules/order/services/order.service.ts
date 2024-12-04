@@ -7,12 +7,22 @@ import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
-import { CreateOrderDto } from '../dto/create-first-order.dto';
+import { CreateOrderDto } from '../dto/create-order.dto';
 import { Product, ProductDocument } from '@/db/schema/product.schema';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { Client, ClientDocument } from '@/db/schema/client.schema';
 import { StorageService } from '@/common/storage/services/storage.service';
-import { CreateNewOrderDto } from '../dto/create-order.dto';
+import { CreateLicenseDto } from '../dto/create-license.dto';
+import {
+  AdditionalService,
+  AdditionalServiceDocument,
+} from '@/db/schema/order/additional-service.schema';
+import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
+import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
+import { PURCHASE_TYPE } from '@/common/types/enums/order.enum';
+import { AMC, AMCDocument } from '@/db/schema/amc/amc.schema';
+import { Types } from 'mongoose';
+import { UpdateAMCDto } from '../dto/update-amc.dto';
 
 @Injectable()
 export class OrderService {
@@ -27,11 +37,15 @@ export class OrderService {
     private productModel: SoftDeleteModel<ProductDocument>,
     @InjectModel(Client.name)
     private clientModel: SoftDeleteModel<ClientDocument>,
+    @InjectModel(AdditionalService.name)
+    private additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>,
+    @InjectModel(AMC.name)
+    private amcModel: SoftDeleteModel<AMCDocument>,
     private loggerService: LoggerService,
     private storageService: StorageService,
   ) {}
 
-  async createFirstOrder(clientId: string, body: CreateOrderDto) {
+  async createOrder(clientId: string, body: CreateOrderDto) {
     if (!clientId) {
       this.loggerService.error(
         JSON.stringify({
@@ -110,10 +124,9 @@ export class OrderService {
       }
 
       let customization_id: string | null = null;
-      if (customization.amc_rate || customization.modules.length) {
+      if (customization.modules.length) {
         const customizationData = new this.customizationModel({
           cost: customization.cost,
-          amc_rate: customization.amc_rate,
           modules: customization.modules,
           product_id: products[0],
         });
@@ -131,19 +144,60 @@ export class OrderService {
       const orderPayload = {
         ...body,
         client_id: clientId,
+        purchase_date: new Date(body.purchased_date),
       };
       // remove the license_details and customization from the body
       delete orderPayload.license_details;
       delete orderPayload.customization;
 
       if (license_id) {
-        orderPayload['license_id'] = license_id;
+        orderPayload['licenses'] = [license_id];
+        orderPayload['is_purchased_with_order.license'] = true;
       }
       if (customization_id) {
-        orderPayload['customization_id'] = customization_id;
+        orderPayload['customizations'] = [customization_id];
+        orderPayload['is_purchased_with_order.customization'] = true;
       }
 
       const order = new this.orderModel(orderPayload);
+
+      // AMC Creation
+      const amcTotalCost = (customization.cost || 0) + order.base_cost;
+
+      // calculate amc_percentage if order.amc_rate.amount is present
+      let amcPercentage = order.amc_rate.percentage;
+
+      const amcAmount = (amcTotalCost / 100) * amcPercentage;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createOrder: Creating AMC',
+          amcTotalCost,
+          amcAmount,
+          amcPercentage,
+        }),
+      );
+
+      const amc = new this.amcModel({
+        order_id: order._id,
+        client_id: clientId,
+        total_cost: amcTotalCost,
+        amount: amcAmount,
+        products: products,
+        amc_percentage: amcPercentage,
+        start_date: new Date(body.amc_start_date),
+      });
+
+      await amc.save();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createOrder: AMC created',
+          amc_id: amc._id,
+        }),
+      );
+
+      order.amc_id = new Types.ObjectId(amc._id.toString());
       await order.save();
 
       this.loggerService.log(
@@ -153,15 +207,23 @@ export class OrderService {
         }),
       );
 
+      // if customization_id and license_id, update its object with orderId
+      if (license_id) {
+        await this.licenseModel.findByIdAndUpdate(license_id, {
+          order_id: order._id,
+        });
+      }
+      if (customization_id) {
+        await this.customizationModel.findByIdAndUpdate(customization_id, {
+          order_id: order._id,
+        });
+      }
+
       // Use findOneAndUpdate with upsert to handle both cases in a single query
       const updatedClient = await this.clientModel.findOneAndUpdate(
         { _id: clientId },
         {
-          $cond: {
-            if: { $gt: [{ $size: '$orders' }, 0] },
-            then: { $set: { 'orders.0': order._id } },
-            else: { $push: { orders: order._id } },
-          },
+          $push: { orders: order._id, amcs: amc._id },
         },
         { new: true },
       );
@@ -192,7 +254,7 @@ export class OrderService {
   }
 
   // Create Update handler for first order
-  async updateFirstOrder(orderId: string, body: CreateOrderDto) {
+  async updateOrder(orderId: string, body: CreateOrderDto) {
     if (!orderId) {
       this.loggerService.error(
         JSON.stringify({
@@ -219,7 +281,7 @@ export class OrderService {
       }
 
       let license_id: string | null =
-        existingOrder.license_id?.toString() || null;
+        existingOrder.licenses[0]?.toString() || null;
       const doesHaveLicense = productsList.some(
         (product) => product.does_have_license,
       );
@@ -254,11 +316,10 @@ export class OrderService {
       }
 
       let customization_id: string | null =
-        existingOrder.customization_id?.toString() || null;
-      if (customization?.amc_rate || customization?.modules?.length) {
+        existingOrder.customizations[0]?.toString() || null;
+      if (customization?.modules?.length) {
         const customizationUpdate = {
           cost: customization.cost,
-          amc_rate: customization.amc_rate,
           modules: customization.modules,
           product_id: products[0],
         };
@@ -289,6 +350,19 @@ export class OrderService {
         { new: true },
       );
 
+      const amcTotalCost = (customization.cost || 0) + updatedOrder.base_cost;
+      let amcPercentage = updatedOrder.amc_rate.percentage;
+
+      const amcAmount = (amcTotalCost / 100) * amcPercentage;
+
+      await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
+        total_cost: amcTotalCost,
+        amount: amcAmount,
+        products: products,
+        amc_percentage: amcPercentage,
+        start_date: new Date(body.amc_start_date),
+      });
+
       this.loggerService.log(
         JSON.stringify({
           message: 'updateFirstOrder: Order updated successfully',
@@ -311,86 +385,53 @@ export class OrderService {
     }
   }
 
-  async getFirstOrder(clientId: string) {
-    try {
-      if (!clientId) {
-        this.loggerService.error(
-          JSON.stringify({
-            message: 'getFirstOrder: Client id is required',
-          }),
-        );
-        throw new HttpException(
-          'Client id is required',
-          HttpStatus.BAD_REQUEST,
-        );
-      }
+  async getOrderById(orderId: string) {
+    if (!orderId) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getOrderById: Order id is required',
+        }),
+      );
+      throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
+    }
 
+    try {
       this.loggerService.log(
         JSON.stringify({
-          message: 'getFirstOrder: Fetching client',
-          clientId,
+          message: 'getOrderById: Fetching order',
+          orderId,
         }),
       );
 
-      const client = await this.clientModel.findById(clientId).populate({
-        path: 'orders',
-        populate: [
-          { path: 'license_id', model: License.name },
-          { path: 'customization_id', model: Customization.name },
-        ],
-        options: { limit: 1 },
-      });
-
-      if (!client) {
-        this.loggerService.error(
-          JSON.stringify({
-            message: 'getFirstOrder: Client not found',
-            clientId,
-          }),
-        );
-        throw new HttpException('Client not found', HttpStatus.NOT_FOUND);
-      }
-
-      if (!client.orders || client.orders.length === 0) {
-        this.loggerService.error(
-          JSON.stringify({
-            message: 'getFirstOrder: No orders found for client',
-            clientId,
-          }),
-        );
-        throw new HttpException('No orders found', HttpStatus.NOT_FOUND);
-      }
-
-      const order = await this.orderModel.findById(client.orders[0]).populate([
-        { path: 'license_id', model: License.name },
-        { path: 'customization_id', model: Customization.name },
+      const order = await this.orderModel.findById(orderId).populate([
+        { path: 'licenses', model: License.name },
+        { path: 'customizations', model: Customization.name },
       ]);
-
-      // transform the order.license_id and order.customization_id to order.license and order.customization and delete the original fields
-      const orderObj = order.toObject();
-      if (orderObj.license_id) {
-        orderObj['license'] = orderObj.license_id;
-        delete orderObj.license_id;
-      }
-
-      if (orderObj.customization_id) {
-        orderObj['customization'] = orderObj.customization_id;
-        delete orderObj.customization_id;
-      }
 
       if (!order) {
         this.loggerService.error(
           JSON.stringify({
-            message: 'getFirstOrder: Order not found',
-            orderId: client.orders[0],
+            message: 'getOrderById: Order not found',
+            orderId,
           }),
         );
         throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
       }
 
+      const orderObj = order.toObject();
+      if (orderObj.licenses && orderObj.licenses.length > 0) {
+        orderObj['license'] = orderObj.licenses[0];
+        delete orderObj.licenses;
+      }
+
+      if (orderObj.customizations && orderObj.customizations.length > 0) {
+        orderObj['customization'] = orderObj.customizations[0];
+        delete orderObj.customizations;
+      }
+
       this.loggerService.log(
         JSON.stringify({
-          message: 'getFirstOrder: Order found successfully',
+          message: 'getOrderById: Order found successfully',
           orderId: order._id,
         }),
       );
@@ -410,7 +451,7 @@ export class OrderService {
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
-          message: 'getFirstOrder: Error fetching order',
+          message: 'getOrderById: Error fetching order',
           error: error.message,
         }),
       );
@@ -421,112 +462,905 @@ export class OrderService {
     }
   }
 
-  //  For Creating new Orders
+  async getOrdersByClientId(clientId: string) {
+    if (!clientId) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getOrdersByClientId: Client id is required',
+        }),
+      );
+      throw new HttpException('Client id is required', HttpStatus.BAD_REQUEST);
+    }
 
-  async createNewOrder(clientId: string, body: CreateNewOrderDto) {
     try {
       this.loggerService.log(
         JSON.stringify({
-          message: 'createNewOrder: Creating new order',
-          body,
+          message: 'getOrdersByClientId: Fetching client orders',
+          clientId,
         }),
       );
 
-      const { license_details, products } = body;
+      const client = await this.clientModel.findById(clientId);
+      if (!client) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getOrdersByClientId: Client not found',
+            clientId,
+          }),
+        );
+        throw new HttpException('Client not found', HttpStatus.NOT_FOUND);
+      }
 
-      const productsList = await this.productModel.find({
-        _id: { $in: products },
+      const orders = await this.orderModel
+        .find({ _id: { $in: client.orders } })
+        .populate([
+          { path: 'license_id', model: License.name },
+          { path: 'customization_id', model: Customization.name },
+          { path: 'products', model: Product.name },
+        ]);
+
+      const ordersList = orders.map((order) => {
+        const orderObj = order.toObject();
+        if (orderObj.licenses && orderObj.licenses.length > 0) {
+          orderObj['license'] = orderObj.licenses[0];
+          delete orderObj.licenses;
+        }
+        if (orderObj.customizations && orderObj.customizations.length > 0) {
+          orderObj['customization'] = orderObj.customizations[0];
+          delete orderObj.customizations;
+        }
+        if (orderObj.purchase_order_document) {
+          orderObj.purchase_order_document = this.storageService.get(
+            orderObj.purchase_order_document,
+          );
+        }
+        if (orderObj.agreement_document) {
+          orderObj.agreement_document = this.storageService.get(
+            orderObj.agreement_document,
+          );
+        }
+        return orderObj;
       });
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'createNewOrder: Found products',
-          productsList,
+          message: 'getOrdersByClientId: Orders fetched successfully',
+          clientId,
+          orders: ordersList,
         }),
       );
 
-      if (productsList.length !== products.length) {
-        throw new Error('Invalid product id');
-      }
-
-      let license_id: string | null = null;
-      const doesHaveLicense = productsList.some(
-        (product) => product.does_have_license,
-      );
-
-      if (
-        doesHaveLicense &&
-        !license_details?.cost_per_license &&
-        !license_details?.total_license
-      ) {
-        throw new Error('License is required');
-      } else if (
-        doesHaveLicense &&
-        license_details?.cost_per_license &&
-        license_details?.total_license
-      ) {
-        const licenseProduct = productsList.find(
-          (product) => product.does_have_license,
-        );
-        if (!licenseProduct) {
-          throw new Error('License product not found');
-        }
-
-        const license = new this.licenseModel({
-          rate: {
-            amount: license_details.cost_per_license,
-            percentage: 0,
-          },
-          total_license: license_details.total_license,
-          product_id: licenseProduct._id,
-        });
-        await license.save();
-        license_id = license._id as string;
-
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'createNewOrder: Created license',
-            license_id,
-          }),
-        );
-      }
-
-      const orderPayload = {
-        ...body,
-      };
-      delete orderPayload.license_details;
-
-      if (license_id) {
-        orderPayload['license_id'] = license_id;
-      }
-
-      const order = new this.orderModel(orderPayload);
-      await order.save();
-
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'createNewOrder: Order created successfully',
-          order_id: order._id,
-        }),
-      );
-
-      // Add new Order in client
-      await this.clientModel.findOneAndUpdate(
-        { _id: clientId },
-        {
-          $push: { orders: order._id },
-        },
-      );
-
-      return order;
+      return ordersList;
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
-          message: 'createNewOrder: Error creating order',
+          message: 'getOrdersByClientId: Error fetching client orders',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // License section
+  async addLicense(orderId: string, body: CreateLicenseDto) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createLicense: Creating new license',
+          body,
+        }),
+      );
+
+      const { cost_per_license, total_license, product_id } = body;
+
+      const license = new this.licenseModel({
+        rate: {
+          amount: cost_per_license,
+          percentage: 0,
+        },
+        total_license,
+        product_id,
+        order_id: orderId,
+        purchase_date: body.purchase_date,
+        purchase_order_document: body.purchase_order_document,
+        invoice: body.invoice,
+      });
+      await license.save();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createLicense: License created successfully',
+          license_id: license._id,
+        }),
+      );
+
+      await this.orderModel.findByIdAndUpdate(orderId, {
+        $push: { licenses: license._id },
+      });
+
+      return license;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'createLicense: Error creating license',
           error: error.message,
         }),
       );
       throw new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // Additional Service
+  async addAdditionalService(
+    orderId: string,
+    body: CreateAdditionalServiceDto,
+  ) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addAdditionalService: Creating new additional service',
+          body,
+        }),
+      );
+
+      const additionalService = new this.additionalServiceModel({
+        ...body,
+        order_id: orderId,
+      });
+      await additionalService.save();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'addAdditionalService: Additional service created successfully',
+          additional_service_id: additionalService._id,
+        }),
+      );
+
+      await this.orderModel.findByIdAndUpdate(orderId, {
+        $push: { additional_services: additionalService._id },
+      });
+
+      return additionalService;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'addAdditionalService: Error creating additional service',
+          error: error.message,
+        }),
+      );
+      throw new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  // Customization
+  async addCustomization(orderId: string, body: CreateCustomizationDto) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addCustomization: Starting customization creation',
+          orderId,
+          body,
+        }),
+      );
+
+      const { cost, modules, product_id } = body;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addCustomization: Creating customization document',
+          cost,
+          modules,
+          product_id,
+          orderId,
+        }),
+      );
+
+      const customization = new this.customizationModel({
+        ...body,
+        order_id: orderId,
+      });
+      await customization.save();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addCustomization: Starting AMC cost update',
+          orderId,
+          customizationId: customization._id,
+          customizationCost: cost,
+        }),
+      );
+
+      // Add customization cost to AMC total cost
+      const amc = await this.amcModel.findOne({
+        order_id: new Types.ObjectId(orderId),
+      });
+      if (!amc) {
+        throw new Error('AMC not found for this order');
+      }
+
+      const newTotalCost = amc.total_cost + cost;
+      const newAmount = (newTotalCost / 100) * amc.amc_percentage;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addCustomization: AMC Calc completed',
+          newTotalCost,
+          newAmount,
+          used: { percentage: amc.amc_percentage, total_cost: amc.total_cost },
+        }),
+      );
+
+      const amcUpdateResult = await this.amcModel.findByIdAndUpdate(
+        amc._id,
+        {
+          total_cost: newTotalCost,
+          amount: newAmount,
+        },
+        { new: true },
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addCustomization: AMC update completed',
+          amcUpdateResult,
+          orderId,
+        }),
+      );
+
+      const orderUpdate = await this.orderModel.findByIdAndUpdate(orderId, {
+        $push: { customizations: customization._id },
+      });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addCustomization: Process completed successfully',
+          customizationId: customization._id,
+          orderId,
+          orderUpdateResult: orderUpdate,
+        }),
+      );
+
+      return customization;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'addCustomization: Error occurred',
+          error: error.message,
+          stack: error.stack,
+          orderId,
+          requestBody: body,
+        }),
+      );
+      throw new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async loadAllOrdersWithAttributes(page: number, limit: number) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAllOrdersWithFilters: Fetching all orders',
+        }),
+      );
+
+      const orders = await this.orderModel
+        .find()
+        .sort({ _id: -1 })
+        .populate<{
+          client_id: ClientDocument;
+        }>([
+          { path: 'licenses', model: License.name },
+          { path: 'customizations', model: Customization.name },
+          { path: 'additional_services', model: AdditionalService.name },
+          { path: 'products', model: Product.name },
+          { path: 'client_id', model: Client.name },
+        ]);
+
+      const productsList = await this.productModel.find();
+
+      let customizations = [],
+        licenses = [],
+        additional_services = [];
+
+      const ordersList = orders.map((order) => {
+        const orderObj = order.toObject() as any;
+
+        if (
+          orderObj.is_purchased_with_order?.license &&
+          orderObj.licenses?.length
+        ) {
+          orderObj.license = orderObj.licenses[0];
+          orderObj.licenses.forEach(
+            (license) => (license.status = order.status),
+          );
+          licenses.push(...orderObj.licenses);
+          delete orderObj.licenses;
+        }
+
+        if (
+          orderObj.is_purchased_with_order?.customization &&
+          orderObj.customizations?.length
+        ) {
+          orderObj.customization = orderObj.customizations[0];
+          orderObj.customizations.forEach(
+            (customization) => (customization.status = order.status),
+          );
+          customizations.push(...orderObj.customizations);
+          delete orderObj.customizations;
+        }
+
+        if (orderObj.purchase_order_document) {
+          orderObj.purchase_order_document = this.storageService.get(
+            orderObj.purchase_order_document,
+          );
+        }
+        if (orderObj.agreement_document) {
+          orderObj.agreement_document = this.storageService.get(
+            orderObj.agreement_document,
+          );
+        }
+
+        if (orderObj.additional_services?.length) {
+          orderObj.additional_services.forEach(
+            (service) => (service.status = order.status),
+          );
+          additional_services.push(...orderObj.additional_services);
+          delete orderObj.additional_services;
+        }
+
+        return orderObj;
+      });
+
+      const purchases = [
+        ...ordersList.map((order) => ({
+          client: order.client_id || { name: 'Unknown' },
+          purchase_type: PURCHASE_TYPE.ORDER,
+          products: order.products,
+          status: order.status,
+          id: order._id,
+        })),
+        ...licenses.map((license) => ({
+          client: orders.find(
+            (o) => o._id.toString() === license.order_id?.toString(),
+          )?.client_id || { name: 'Unknown' },
+          purchase_type: PURCHASE_TYPE.LICENSE,
+          products: [
+            productsList.find(
+              (p) => p._id.toString() === license.product_id?.toString(),
+            ) || null,
+          ],
+          status: license.status,
+          id: license._id,
+        })),
+        ...customizations.map((customization) => ({
+          client: orders.find(
+            (o) => o._id.toString() === customization.order_id?.toString(),
+          )?.client_id || { name: 'Unknown' },
+          purchase_type: PURCHASE_TYPE.CUSTOMIZATION,
+          products: [
+            productsList.find(
+              (p) => p._id.toString() === customization.product_id?.toString(),
+            ) || null,
+          ],
+          status: customization.status,
+          id: customization._id,
+        })),
+        ...additional_services.map((service) => ({
+          client: orders.find(
+            (o) => o._id.toString() === service.order_id?.toString(),
+          )?.client_id || { name: 'Unknown' },
+          purchase_type: PURCHASE_TYPE.ADDITIONAL_SERVICE,
+          products: [{ name: service.name || '' }],
+          status: service.status,
+          id: service._id,
+        })),
+      ];
+
+      return { purchases };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getAllOrdersWithFilters: Error fetching orders',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // create handler for getting amc by order id
+  async getAmcByOrderId(orderId: string) {
+    if (!orderId) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getAmcByOrderId: Order id is required',
+        }),
+      );
+      throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcByOrderId: Fetching AMC',
+          orderId,
+        }),
+      );
+
+      const amc = await this.amcModel.findOne({ order_id: orderId }).populate([
+        {
+          path: 'client_id',
+          select: 'name',
+        },
+        {
+          path: 'products',
+        },
+      ]);
+
+      const amcObject = amc.toObject();
+      amcObject['client'] = amcObject.client_id;
+      delete amcObject.client_id;
+      if (amc.purchase_order_document) {
+        amcObject.purchase_order_document = this.storageService.get(
+          amcObject.purchase_order_document,
+        );
+      } else if (amc.invoice_document) {
+        amcObject.invoice_document = this.storageService.get(
+          amcObject.invoice_document,
+        );
+      }
+
+      if (!amc) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getAmcByOrderId: AMC not found',
+            orderId,
+          }),
+        );
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcByOrderId: AMC found successfully',
+          orderId,
+        }),
+      );
+
+      return amcObject;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getAmcByOrderId: Error fetching AMC',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async updateAMC(orderId: string, body: UpdateAMCDto) {
+    if (!orderId) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateAMC: Order id is required',
+        }),
+      );
+      throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateAMC: Updating AMC',
+          orderId,
+          body,
+        }),
+      );
+
+      const amc = await this.amcModel.findOne({ order_id: orderId });
+      if (!amc) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'updateAMC: AMC not found',
+            orderId,
+          }),
+        );
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
+      const updatedAMC = await this.amcModel.findByIdAndUpdate(
+        amc._id,
+        {
+          $set: {
+            purchase_order_number: body.purchase_order_number,
+            amc_frequency_in_months: body.amc_frequency_in_months,
+            purchase_order_document: body.purchase_order_document,
+            invoice_document: body.invoice_document,
+            start_date: body.start_date,
+          },
+        },
+        {
+          new: true,
+        },
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateAMC: AMC updated successfully',
+          orderId,
+        }),
+      );
+
+      return updatedAMC;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateAMC: Error updating AMC',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async getLicenseById(id: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getLicenseById: Fetching license',
+          id,
+        }),
+      );
+
+      const license = await this.licenseModel.findById(id);
+
+      const licenseObj = license.toObject();
+      if (licenseObj.purchase_order_document) {
+        licenseObj.purchase_order_document = this.storageService.get(
+          licenseObj.purchase_order_document,
+        );
+      }
+
+      if (!license) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getLicenseById: License not found',
+            id,
+          }),
+        );
+        throw new HttpException('License not found', HttpStatus.NOT_FOUND);
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getLicenseById: License found successfully',
+          id,
+        }),
+      );
+
+      return licenseObj;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getLicenseById: Error fetching license',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async getAdditionalServiceById(id: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAdditionalServiceById: Fetching additional service',
+          id,
+        }),
+      );
+
+      const additionalService = await this.additionalServiceModel.findById(id);
+
+      const additionalServiceObj = additionalService.toObject();
+      if (additionalServiceObj.purchase_order_document) {
+        additionalServiceObj.purchase_order_document = this.storageService.get(
+          additionalServiceObj.purchase_order_document,
+        );
+      } else if (additionalServiceObj.service_document) {
+        additionalServiceObj.service_document = this.storageService.get(
+          additionalServiceObj.service_document,
+        );
+      }
+
+      if (!additionalService) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getAdditionalServiceById: Additional service not found',
+            id,
+          }),
+        );
+      }
+
+      return additionalServiceObj;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'getAdditionalServiceById: Error fetching additional service',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async getCustomizationById(id: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getCustomizationById: Fetching customization',
+          id,
+        }),
+      );
+
+      const customization = await this.customizationModel.findById(id);
+
+      if (!customization) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getCustomizationById: Customization not found',
+            id,
+          }),
+        );
+        throw new HttpException(
+          'Customization not found',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const customizationObj = customization.toObject();
+      if (customizationObj.purchase_order_document) {
+        customizationObj.purchase_order_document = this.storageService.get(
+          customizationObj.purchase_order_document,
+        );
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getCustomizationById: Customization found successfully',
+          id,
+        }),
+      );
+
+      return customizationObj;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getCustomizationById: Error fetching customization',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async updateAdditionalServiceById(
+    id: string,
+    body: CreateAdditionalServiceDto,
+  ) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateAdditionalService: Updating additional service',
+          id,
+          body,
+        }),
+      );
+
+      const additionalService =
+        await this.additionalServiceModel.findByIdAndUpdate(id, body, {
+          new: true,
+        });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'updateAdditionalService: Additional service updated successfully',
+          id,
+        }),
+      );
+
+      return additionalService;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateAdditionalService: Error updating additional service',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async updateCustomizationById(id: string, body: CreateCustomizationDto) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateCustomization: Updating customization',
+          id,
+          body,
+        }),
+      );
+
+      const customization = await this.customizationModel.findByIdAndUpdate(
+        id,
+        body,
+        { new: true },
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateCustomization: Customization updated successfully',
+          id,
+        }),
+      );
+
+      return customization;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateCustomization: Error updating customization',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async updateLicenseById(id: string, body: CreateLicenseDto) {
+    try {
+      const { cost_per_license, product_id, total_license } = body;
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateLicense: Updating license',
+          id,
+          body,
+        }),
+      );
+
+      const license = await this.licenseModel.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            'rate.amount': cost_per_license,
+            'rate.percentage': 0,
+            total_license,
+            product_id,
+            purchase_date: body.purchase_date,
+            purchase_order_document: body.purchase_order_document,
+            invoice: body.invoice,
+          },
+        },
+        {
+          new: true,
+        },
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateLicense: License updated successfully',
+          id,
+        }),
+      );
+
+      return license;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateLicense: Error updating license',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async loadAllAMC(page: number, limit: number) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllAMC: Fetching all AMC',
+        }),
+      );
+
+      const amcs = await this.amcModel
+        .find()
+        .sort({ _id: -1 })
+        .populate([
+          {
+            path: 'client_id',
+            model: Client.name,
+          },
+          {
+            path: 'order_id',
+            model: Order.name,
+          },
+          {
+            path: 'products',
+            model: Product.name,
+          },
+        ]);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllAMC: AMC fetched successfully',
+        }),
+      );
+
+      const amcsList = amcs.map((amc) => {
+        const amcObj = amc.toObject();
+        if (amcObj.purchase_order_document) {
+          amcObj.purchase_order_document = this.storageService.get(
+            amcObj.purchase_order_document,
+          );
+        } else if (amcObj.invoice_document) {
+          amcObj.invoice_document = this.storageService.get(
+            amcObj.invoice_document,
+          );
+        }
+        amcObj['client'] = amcObj.client_id;
+        delete amcObj.client_id;
+        amcObj['order'] = amcObj.order_id;
+        // amcObj['products'] = amcObj.order_id ;
+        delete amcObj.order_id;
+        return amcObj;
+      });
+
+      return amcsList;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'loadAllAMC: Error fetching AMC',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 }
