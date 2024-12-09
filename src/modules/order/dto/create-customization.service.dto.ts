@@ -7,6 +7,7 @@ import {
   IsString,
   IsEnum,
   IsArray,
+  IsOptional,
 } from 'class-validator';
 
 export class CreateCustomizationDto {
@@ -23,7 +24,15 @@ export class CreateCustomizationDto {
   modules: string[];
 
   @IsString()
+  @IsOptional()
+  title?: string;
+
+  @IsString()
+  @IsOptional()
   purchase_order_document: string;
+
+  @IsString()
+  invoice_document: string;
 
   @IsString()
   purchased_date: string;

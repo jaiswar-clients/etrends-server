@@ -19,6 +19,28 @@ export class Product extends Document {
 
   @Prop({ type: String, required: true })
   description: string;
+
+  @Prop({
+    type: [
+      {
+        name: String,
+        key: String,
+        description: String,
+      },
+    ],
+  })
+  modules: { name: string; key: string; description: string }[];
+
+  @Prop({
+    type: [
+      {
+        name: String,
+        key: String,
+        description: String,
+      },
+    ],
+  })
+  reports: { name: string; key: string; description: string }[];
 }
 
 // Define schema with plugins and virtuals as needed

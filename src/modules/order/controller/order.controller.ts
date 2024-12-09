@@ -13,6 +13,7 @@ import { CreateLicenseDto } from '../dto/create-license.dto';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
 import { UpdateAMCDto } from '../dto/update-amc.dto';
+import { AMC_FILTER } from '@/common/types/enums/order.enum';
 
 export type UpdateOrderType = CreateOrderDto;
 
@@ -34,10 +35,19 @@ export class OrderController {
   }
 
   @Get('/all-amc')
-  async loadAllAMC(@Query('page') page: number, @Query('limit') limit: number) {
+  async loadAllAMC(
+    @Query('page') page: number,
+    @Query('filter') filter: AMC_FILTER,
+    @Query('limit') limit: number,
+  ) {
     const parsedPage = parseInt(page.toString());
     const parsedLimit = parseInt(limit.toString());
-    return this.orderService.loadAllAMC(parsedPage, parsedLimit);
+
+    return this.orderService.loadAllAMC(
+      parsedPage,
+      parsedLimit,
+      filter || AMC_FILTER.UPCOMING,
+    );
   }
 
   @Get('/:id')

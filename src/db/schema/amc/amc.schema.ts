@@ -5,6 +5,12 @@ import * as mongooseDelete from 'mongoose-delete';
 // Define the document type for TypeScript
 export type AMCDocument = HydratedDocument<AMC>;
 
+export enum PAYMENT_STATUS_ENUM {
+  PAID = 'paid',
+  PENDING = 'pending',
+  PARTIAL = 'partial',
+}
+
 // Main schema
 @Schema({ timestamps: true })
 export class AMC extends Document {
@@ -30,6 +36,29 @@ export class AMC extends Document {
 
   @Prop({ type: Date })
   start_date: Date;
+
+  @Prop({
+    type: [
+      {
+        from_date: { type: Date, required: true },
+        to_date: { type: Date, required: true },
+        status: {
+          type: String,
+          enum: Object.values(PAYMENT_STATUS_ENUM),
+          required: true,
+        },
+      },
+    ],
+  })
+  payments: {
+    _id: any;
+    from_date: Date;
+    to_date: Date;
+    status: PAYMENT_STATUS_ENUM; // AMC is free for 1 year that's status will be paid
+  }[];
+
+  @Prop({ type: Boolean, default: true }) // AMC is free for 1 year that's status will be paid
+  is_amc_free: boolean;
 
   @Prop({ type: String })
   purchase_order_document: string;

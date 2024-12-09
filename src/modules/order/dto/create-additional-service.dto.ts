@@ -33,6 +33,10 @@ export class CreateAdditionalServiceDto {
   @Type(() => DateRange)
   date: DateRange;
 
+  @IsString()
+  @IsNotEmpty()
+  invoice_document: string;
+
   @IsNumber()
   @IsNotEmpty()
   cost: number;

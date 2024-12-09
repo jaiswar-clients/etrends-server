@@ -81,18 +81,26 @@ export class CreateOrderDto {
   agreement_document: string;
 
   @IsOptional()
+  @IsArray()
+  base_cost_seperation: {
+    product_id: Types.ObjectId;
+    amount: number;
+    percentage: number;
+  }[];
+
+  @IsOptional()
+  @IsArray()
   agreement_date: {
     start: Date;
     end: Date;
-  };
+  }[];
+
+  @IsString()
+  invoice_document: string;
 
   @IsString()
   @IsOptional()
   purchase_order_document: string;
-
-  @IsNumber()
-  @IsOptional()
-  training_implementation_cost: number;
 
   @IsString()
   @IsOptional()

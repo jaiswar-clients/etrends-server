@@ -1,8 +1,5 @@
 import { Module, OnModuleInit } from '@nestjs/common';
-import { OrderController } from './controller/order.controller';
-import { OrderService } from './services/order.service';
 import { MongooseModule } from '@nestjs/mongoose';
-import { StorageModule } from '@/common/storage/storage.module';
 import {
   Customization,
   CustomizationSchema,
@@ -18,6 +15,8 @@ import { Client, ClientSchema } from '@/db/schema/client.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
 import { MailService } from '@/common/mail/service/mail.service';
 import { Reminder, ReminderSchema } from '@/db/schema/reminder.schema';
+import { ReminderController } from './controller/reminder.controller';
+import { ReminderService } from './services/reminder.service';
 
 @Module({
   imports: [
@@ -31,17 +30,15 @@ import { Reminder, ReminderSchema } from '@/db/schema/reminder.schema';
       { name: AMC.name, schema: AMCSchema },
       { name: Reminder.name, schema: ReminderSchema },
     ]),
-    StorageModule,
   ],
-  controllers: [OrderController],
-  providers: [OrderService, MailService],
-  exports: [OrderService],
+  controllers: [ReminderController],
+  providers: [ReminderService, MailService],
+  exports: [ReminderService],
 })
-export class OrderModule implements OnModuleInit {
-  constructor(private orderService: OrderService) {}
+export class ReminderModule implements OnModuleInit {
+  constructor(private reminderService: ReminderService) {}
 
   async onModuleInit() {
-    // await this.orderService.deleteAllOrdersForAllClients();
-    // await this.orderService.updateAMCPayments()
+    // await this.reminderService.checkAMCPendingPaymentsAndSendReminder();
   }
 }

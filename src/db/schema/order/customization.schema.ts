@@ -12,6 +12,7 @@ export type CustomizationDocument = HydratedDocument<Customization>;
 export enum CustomizationType {
   MODULE = 'module',
   REPORT = 'report',
+  CUSTOMIZATION = 'customization',
 }
 
 @Schema({ timestamps: true })
@@ -28,6 +29,9 @@ export class Customization extends Document {
   @Prop({ type: [String] })
   modules: string[];
 
+  @Prop({ type: String })
+  title: string;
+
   @Prop({ type: String, enum: CustomizationType })
   type: CustomizationType;
 
@@ -36,6 +40,9 @@ export class Customization extends Document {
 
   @Prop({ type: String })
   purchase_order_document: string; // cdn url
+
+  @Prop({ type: String })
+  invoice_document: string; // cdn url
 
   @Prop()
   createdAt?: Date;

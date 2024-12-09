@@ -8,8 +8,12 @@ export const app = registerAs('APP', () => ({
   ENCRYPTION_KEY: process.env['ENCRYPTION_KEY'],
   CLIENT_URL: process.env['CLIENT_URL'],
   APP_URL: process.env['APP_URL'],
+  EMAIL_DOMAIN: process.env['EMAIL_DOMAIN'],
+  EMAIL_PORT: process.env['EMAIL_PORT'],
+  EMAIL_SECURE: process.env['EMAIL_SECURE'],
+  EMAIL_ID: process.env['EMAIL_ID'],
+  EMAIL_PASSWORD: process.env['EMAIL_PASSWORD'],
 }));
-
 
 export const awsServices = registerAs('AWS', () => ({
   AWS_SECRET_ACCESS_KEY: process.env['AWS_SECRET_ACCESS_KEY'],

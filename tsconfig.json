@@ -28,6 +28,6 @@
     },
     "strict": true
   },
-  "include": ["src/**/*.ts", "types/express.d.ts"],
+  "include": ["src/**/*.ts", "types/express.d.ts", "src/modules/cron/ts"],
   "exclude": ["node_modules", "dist"]
 }

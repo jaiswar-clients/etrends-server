@@ -6,6 +6,7 @@ import { CreateNewClientDto } from '../dto/create-client.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { encrypt } from '@/utils/cryptography';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
+import { AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
 
 @Injectable()
 export class ClientService {
@@ -427,15 +428,23 @@ export class ClientService {
         .find({
           _id: { $in: client.orders },
         })
-        .populate({
-          path: 'products',
-          model: 'Product',
-        });
+        .populate([
+          {
+            path: 'products',
+            model: 'Product',
+          },
+          {
+            path: 'amc_id',
+            model: 'AMC',
+          },
+        ]);
 
       const products = orders.reduce((acc, order) => {
         const productsWithOrderId = order.products.map((product: any) => ({
           ...product._doc,
           order_id: order._id,
+          amc_rate: order.amc_rate,
+          total_cost: (order.amc_id as any).total_cost,
         }));
         const uniqueProducts = [...acc];
         productsWithOrderId.forEach((product) => {
@@ -471,6 +480,132 @@ export class ClientService {
         {
           cause: error,
         },
+      );
+    }
+  }
+
+  async getProfitFromClient(clientId: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getProfitFromClient: Getting profits from client',
+          clientId,
+        }),
+      );
+
+      const client = await this.clientModel.findById(clientId);
+
+      if (!client) {
+        throw new HttpException('Client not found', HttpStatus.NOT_FOUND);
+      }
+
+      const orders = await this.orderModel
+        .find({
+          _id: { $in: client.orders },
+        })
+        .populate([
+          {
+            path: 'customizations',
+            model: 'Customization',
+          },
+          {
+            path: 'licenses',
+            model: 'License',
+          },
+          {
+            path: 'additional_services',
+            model: 'AdditionalService',
+          },
+          {
+            path: 'amc_id',
+            model: 'AMC',
+          },
+          {
+            path: 'products',
+            model: 'Product',
+            select: 'name short_name',
+          },
+        ]);
+
+      let totalProfit = 0;
+      let upcomingAmcProfit = 0;
+      let totalAMCCollected = 0;
+
+      for (const order of orders) {
+        // Base order cost
+        totalProfit += order.base_cost || 0;
+        const amc: AMCDocument = order.amc_id as any;
+
+        // Customizations cost
+        if (order.customizations?.length) {
+          const customizationsCost = order.customizations.reduce(
+            (sum: number, customization: any) =>
+              sum + (customization.cost || 0),
+            0,
+          );
+          totalProfit += customizationsCost;
+        }
+
+        // Licenses cost
+        if (order.licenses?.length) {
+          const licensesCost = order.licenses.reduce(
+            (sum: number, license: any) =>
+              sum + (license.total_license || 0) * (license.rate?.amount || 0),
+            0,
+          );
+          totalProfit += licensesCost;
+        }
+
+        // Additional services cost
+        if (order.additional_services?.length) {
+          const additionalServicesCost = order.additional_services.reduce(
+            (sum: number, service: any) => sum + (service.cost || 0),
+            0,
+          );
+          totalProfit += additionalServicesCost;
+        }
+
+        if (amc.payments.length > 1) {
+          // exlcude first payment as it is free
+          const amcPayments = amc.payments.slice(1);
+          const totalPaidAmcs = amcPayments.filter(
+            (payment) => payment.status === PAYMENT_STATUS_ENUM.PAID,
+          ).length;
+          totalAMCCollected += totalPaidAmcs * amc.amount;
+        }
+      }
+
+      const formattedOrders = orders.map((order) => ({
+        id: order._id,
+        products: order.products,
+        base_cost: order.base_cost,
+        customizations: order.customizations,
+        licenses: order.licenses,
+        additional_services: order.additional_services,
+        amc_details: order.amc_id,
+        agreement_date: order.agreement_date,
+        status: order.status,
+        purchased_date: order.purchased_date,
+      }));
+
+      return {
+        total_profit: totalProfit,
+        upcoming_amc_profit: upcomingAmcProfit,
+        total_amc_collection: totalAMCCollected,
+        currency: 'INR',
+        orders: formattedOrders,
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getProfitFromClient: Failed to calculate profits',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        error.message ?? 'Failed to calculate profits',
+        HttpStatus.BAD_GATEWAY,
       );
     }
   }

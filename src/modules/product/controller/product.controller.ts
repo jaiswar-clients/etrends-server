@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { ProductService } from '../services/product.service';
 import { AuthGuard } from '@/common/guards/auth.guard';
-import { CreateProductDto } from '../dto/create-product.dto';
+import { CreateProductDto, UpdateProductDto } from '../dto/create-product.dto';
 
 @Controller('products')
 @UseGuards(AuthGuard)
@@ -33,7 +33,7 @@ export class ProductController {
   }
 
   @Patch('/:id')
-  async updateProduct(@Param('id') id: string, @Body() body: CreateProductDto) {
+  async updateProduct(@Param('id') id: string, @Body() body: UpdateProductDto) {
     return this.productService.updateProductById(id, body);
   }
 

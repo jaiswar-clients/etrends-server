@@ -32,4 +32,23 @@ export class AppConfigDTO {
   @IsString()
   @IsNotEmpty()
   APP_URL: number;
+
+  @IsString()
+  @IsNotEmpty()
+  EMAIL_DOMAIN: string;
+
+  @IsString()
+  @IsNotEmpty()
+  EMAIL_PORT: string;
+
+  @IsNotEmpty()
+  EMAIL_SECURE: boolean;
+
+  @IsString()
+  @IsNotEmpty()
+  EMAIL_ID: string;
+
+  @IsString()
+  @IsNotEmpty()
+  EMAIL_PASSWORD: string;
 }

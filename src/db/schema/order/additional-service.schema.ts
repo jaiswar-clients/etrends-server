@@ -39,9 +39,12 @@ export class AdditionalService extends Document {
   purchase_order_document: string; // cdn url
 
   @Prop({ type: String })
+  invoice_document: string; // cdn url
+
+  @Prop({ type: String })
   service_document: string; // cdn url
 
-  @Prop({type:Types.ObjectId, ref:'Order'})
+  @Prop({ type: Types.ObjectId, ref: 'Order' })
   order_id: Types.ObjectId;
 
   @Prop()

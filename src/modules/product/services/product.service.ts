@@ -3,7 +3,7 @@ import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
 import { LoggerService } from '@/common/logger/services/logger.service';
-import { CreateProductDto } from '../dto/create-product.dto';
+import { CreateProductDto, UpdateProductDto } from '../dto/create-product.dto';
 
 @Injectable()
 export class ProductService {
@@ -161,7 +161,7 @@ export class ProductService {
     }
   }
 
-  async updateProductById(id: string, body: CreateProductDto) {
+  async updateProductById(id: string, body: UpdateProductDto) {
     try {
       this.loggerService.log(
         JSON.stringify({

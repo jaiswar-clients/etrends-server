@@ -9,3 +9,12 @@ export enum PURCHASE_TYPE {
   ADDITIONAL_SERVICE = 'additional_service',
   ORDER = 'order',
 }
+
+export enum AMC_FILTER {
+  UPCOMING = 'upcoming',
+  ALL = 'all',
+  PAID = 'paid',
+  PENDING = 'pending',
+  OVERDUE = 'overdue',
+  FIRST = 'first',
+}

@@ -43,14 +43,27 @@ export class Order extends Document {
   })
   products: Types.ObjectId[];
 
-  @Prop({ type: String })
-  training_implementation_cost: string;
-
   @Prop({ type: Types.ObjectId, ref: 'Client' })
   client_id: Types.ObjectId;
 
   @Prop({ type: Number })
   base_cost: number;
+
+  @Prop({
+    type: [
+      {
+        product_id: { type: Types.ObjectId, ref: 'Product' },
+        amount: Number,
+        percentage: Number,
+      },
+    ],
+    default: {},
+  })
+  base_cost_seperation: {
+    product_id: Types.ObjectId;
+    amount: number;
+    percentage: number;
+  }[];
 
   @Prop({
     type: {
@@ -80,18 +93,25 @@ export class Order extends Document {
   agreement_document: string; // file url
 
   @Prop({
-    type: {
-      start: Date,
-      end: Date,
-    },
+    type: [
+      {
+        start: Date,
+        end: Date,
+      },
+    ],
+    default: [],
   })
   agreement_date: {
+    _id: any;
     start: Date;
     end: Date;
-  };
+  }[];
 
   @Prop({ type: String })
   purchase_order_document: string; // cdn url
+
+  @Prop({ type: String })
+  invoice_document: string; // cdn url
 
   @Prop({ type: Date, default: Date.now })
   purchased_date: Date;
@@ -111,7 +131,7 @@ export class Order extends Document {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
   customizations: Types.ObjectId[]; // array of customization IDs
 
-  @Prop({ type: Types.ObjectId, ref: 'AdditionalService' })
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
   additional_services: Types.ObjectId[]; // array of additional service IDs
 
   @Prop({ type: Date })

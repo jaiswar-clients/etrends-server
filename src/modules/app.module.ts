@@ -12,6 +12,10 @@ import { OrderModule } from './order/order.module';
 import { JwtModule } from '@nestjs/jwt';
 import { StorageModule } from '@/common/storage/storage.module';
 import { ProductModule } from './product/product.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { TasksService } from '@/modules/cron/cron.service';
+import { MailModule } from '@/common/mail/mail.module';
+import { ReminderModule } from './reminder/reminder.module';
 
 type NestModuleImport =
   | Type<any>
@@ -31,20 +35,23 @@ const appModules: NestModuleImport[] = [LoggerModule, HttpModule, ConfigModule];
       }),
     }),
     JwtModule.registerAsync({
-      global:true,
+      global: true,
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         global: true,
         secret: configService.get('JWT_SECRET'),
       }),
     }),
+    ScheduleModule.forRoot(),
     UserModule,
     ClientModule,
     OrderModule,
     StorageModule,
-    ProductModule
+    ProductModule,
+    MailModule,
+    ReminderModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, TasksService],
 })
 export class AppModule {}

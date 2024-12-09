@@ -17,4 +17,10 @@ export const validationSchema = Joi.object({
   AWS_CLOUDFRONT_KEY_PAIR: Joi.string().required(),
   AWS_REGION: Joi.string().required(),
   AWS_BUCKET_NAME: Joi.string().required(),
+
+  EMAIL_DOMAIN: Joi.string().required(),
+  EMAIL_PORT: Joi.string().required(),
+  EMAIL_SECURE: Joi.boolean().required(),
+  EMAIL_ID: Joi.string().required(),
+  EMAIL_PASSWORD: Joi.string().required(),
 });
