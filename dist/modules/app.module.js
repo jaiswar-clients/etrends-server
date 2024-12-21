@@ -13,7 +13,6 @@ const app_service_1 = require("./app.service");
 const logger_module_1 = require("../common/logger/logger.module");
 const http_module_1 = require("../common/http/http.module");
 const config_module_1 = require("../common/config/config.module");
-const config_1 = require("@nestjs/config");
 const mongoose_1 = require("@nestjs/mongoose");
 const config_service_1 = require("../common/config/services/config.service");
 const user_module_1 = require("./user/user.module");
@@ -48,10 +47,6 @@ exports.AppModule = AppModule = __decorate([
                     global: true,
                     secret: configService.get('JWT_SECRET'),
                 }),
-            }),
-            config_1.ConfigModule.forRoot({
-                isGlobal: true,
-                envFilePath: process.env.NODE_ENV === 'production' ? '.env.production' : '.env',
             }),
             schedule_1.ScheduleModule.forRoot(),
             user_module_1.UserModule,
