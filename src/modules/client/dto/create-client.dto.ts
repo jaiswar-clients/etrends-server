@@ -8,6 +8,7 @@ import {
   ValidateNested,
   IsBoolean,
   IsObject,
+  IsNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
@@ -38,6 +39,11 @@ export class CreateNewClientDto {
   @IsString()
   @IsNotEmpty()
   name: string;
+
+  @IsNumber()
+  @IsOptional()
+  @IsEnum([1, 3, 6, 12, 18, 24])
+  amc_frequency_in_months?: number;
 
   @IsOptional()
   @IsObject()

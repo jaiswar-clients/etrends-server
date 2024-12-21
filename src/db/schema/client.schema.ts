@@ -45,6 +45,14 @@ export class Client extends Document {
   @Prop({ type: String })
   client_id: string;
 
+  @Prop({
+    required: true,
+    type: Number,
+    default: 12,
+    enum: [1, 3, 6, 12, 18, 24],
+  })
+  amc_frequency_in_months: number;
+
   @Prop({ type: String })
   vendor_id: string;
 

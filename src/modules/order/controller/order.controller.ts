@@ -6,6 +6,7 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { OrderService } from '../services/order.service';
 import { CreateOrderDto } from '../dto/create-order.dto';
@@ -14,10 +15,12 @@ import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
 import { UpdateAMCDto } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
+import { AuthGuard } from '@/common/guards/auth.guard';
 
 export type UpdateOrderType = CreateOrderDto;
 
 @Controller('orders')
+@UseGuards(AuthGuard)
 export class OrderController {
   constructor(private orderService: OrderService) {}
 
@@ -39,14 +42,17 @@ export class OrderController {
     @Query('page') page: number,
     @Query('filter') filter: AMC_FILTER,
     @Query('limit') limit: number,
+    @Query('upcoming') upcoming: string,
   ) {
     const parsedPage = parseInt(page.toString());
     const parsedLimit = parseInt(limit.toString());
+    const parsedUpcoming = parseInt(upcoming) || 1;
 
     return this.orderService.loadAllAMC(
       parsedPage,
       parsedLimit,
       filter || AMC_FILTER.UPCOMING,
+      { upcoming: parsedUpcoming },
     );
   }
 

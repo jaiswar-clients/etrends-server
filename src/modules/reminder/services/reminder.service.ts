@@ -31,6 +31,7 @@ import {
 import { Reminder, ReminderDocument } from '@/db/schema/reminder.schema';
 import { ConfigService } from '@/common/config/services/config.service';
 import { SendEmailDto } from '../dto/send-email';
+import { StorageService } from '@/common/storage/services/storage.service';
 
 @Injectable()
 export class ReminderService {
@@ -38,16 +39,7 @@ export class ReminderService {
   constructor(
     @InjectModel(Order.name)
     private orderModel: SoftDeleteModel<OrderDocument>,
-    @InjectModel(License.name)
-    private licenseModel: SoftDeleteModel<LicenseDocument>,
-    @InjectModel(Customization.name)
-    private customizationModel: SoftDeleteModel<CustomizationDocument>,
-    @InjectModel(Product.name)
-    private productModel: SoftDeleteModel<ProductDocument>,
-    @InjectModel(Client.name)
-    private clientModel: SoftDeleteModel<ClientDocument>,
-    @InjectModel(AdditionalService.name)
-    private additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>,
+
     @InjectModel(AMC.name)
     private amcModel: SoftDeleteModel<AMCDocument>,
     @InjectModel(Reminder.name)
@@ -55,6 +47,7 @@ export class ReminderService {
     private loggerService: LoggerService,
     private mailService: MailService,
     private configService: ConfigService,
+    private storageService: StorageService,
   ) {
     this.INTERNAL_TEAM_EMAIL = 'jaiswar.newsletter@gmail.com';
   }
@@ -492,8 +485,7 @@ export class ReminderService {
 
       // Filter orders with agreement expiry in next 30 days
       const expiringOrders = orders.filter((order) => {
-        const lastAgreement =
-          order.agreement_date[order.agreement_date.length - 1];
+        const lastAgreement = order.agreements[order.agreements.length - 1];
         const expiryDate = new Date(lastAgreement.end);
         const today = new Date();
         const nextMonth = new Date();
@@ -511,8 +503,7 @@ export class ReminderService {
 
       for (let order of expiringOrders) {
         const agreementDetails = this.getExpiringAgreementDetails([order]);
-        const lastAgreement =
-          order.agreement_date[order.agreement_date.length - 1];
+        const lastAgreement = order.agreements[order.agreements.length - 1];
         if (agreementDetails.length === 0) {
           this.loggerService.log(
             JSON.stringify({
@@ -586,8 +577,7 @@ export class ReminderService {
   private getExpiringAgreementDetails(orders: OrderDocument[]) {
     try {
       const details = orders.map((order) => {
-        const lastAgreement =
-          order.agreement_date[order.agreement_date.length - 1];
+        const lastAgreement = order.agreements[order.agreements.length - 1];
         const expiryDate = new Date(lastAgreement.end);
         const daysToExpiry = Math.floor(
           (expiryDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24),
@@ -598,6 +588,7 @@ export class ReminderService {
           product: order.products.map((p: any) => p.name).join(', '),
           expiryDate: expiryDate.toLocaleDateString(),
           expiry: daysToExpiry,
+          document: this.storageService.get(lastAgreement.document),
           link: `${this.configService.get('CLIENT_URL')}/purchases/${order._id}?type=order&client=${client._id}`,
         };
       });
@@ -684,7 +675,7 @@ export class ReminderService {
         {
           path: 'order_id',
           model: Order.name,
-          select: 'products agreement_date amc_start_date base_cost',
+          select: 'products agreements amc_start_date base_cost',
         },
         {
           path: 'amc_id',

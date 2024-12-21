@@ -29,6 +29,9 @@ export class Customization extends Document {
   @Prop({ type: [String] })
   modules: string[];
 
+  @Prop({ type: [String] })
+  reports: string[];
+
   @Prop({ type: String })
   title: string;
 

@@ -21,6 +21,7 @@ import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
 import {
   AMC_FILTER,
+  DEFAULT_AMC_CYCLE_IN_MONTHS,
   ORDER_STATUS_ENUM,
   PURCHASE_TYPE,
 } from '@/common/types/enums/order.enum';
@@ -31,12 +32,7 @@ import {
 } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
 import { UpdateAMCDto } from '../dto/update-amc.dto';
-import {
-  MAIL_TEMPLATES,
-  MailService,
-} from '@/common/mail/service/mail.service';
-import { Reminder, ReminderDocument } from '@/db/schema/reminder.schema';
-import { ConfigService } from '@/common/config/services/config.service';
+import { extractS3Key } from '@/utils/misc';
 
 @Injectable()
 export class OrderService {
@@ -55,12 +51,8 @@ export class OrderService {
     private additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>,
     @InjectModel(AMC.name)
     private amcModel: SoftDeleteModel<AMCDocument>,
-    @InjectModel(Reminder.name)
-    private reminderModel: SoftDeleteModel<ReminderDocument>,
     private loggerService: LoggerService,
     private storageService: StorageService,
-    private mailService: MailService,
-    private configService: ConfigService,
   ) {}
 
   async createOrder(clientId: string, body: CreateOrderDto) {
@@ -325,7 +317,7 @@ export class OrderService {
       }
 
       let license_id: string | null =
-        existingOrder.licenses[0]?.toString() || null;
+        existingOrder.licenses?.[0]?.toString() || null;
       const doesHaveLicense = productsList.some(
         (product) => product.does_have_license,
       );
@@ -360,7 +352,7 @@ export class OrderService {
       }
 
       let customization_id: string | null =
-        existingOrder.customizations[0]?.toString() || null;
+        existingOrder.customizations?.[0]?.toString() || null;
       if (customization?.modules?.length) {
         const customizationUpdate = {
           cost: customization.cost,
@@ -388,6 +380,22 @@ export class OrderService {
       delete orderPayload.license_details;
       delete orderPayload.customization;
 
+      orderPayload.purchase_order_document = extractS3Key(
+        orderPayload.purchase_order_document,
+      );
+      orderPayload.invoice_document = extractS3Key(
+        orderPayload.invoice_document,
+      );
+
+      orderPayload.other_document.url = extractS3Key(
+        orderPayload.other_document.url,
+      );
+
+      orderPayload.agreements.map((agreement) => {
+        agreement.document = extractS3Key(agreement.document);
+        return agreement;
+      });
+
       const updatedOrder = await this.orderModel.findByIdAndUpdate(
         orderId,
         orderPayload,
@@ -395,42 +403,46 @@ export class OrderService {
       );
 
       const licenseTotalCost =
-        license_details.cost_per_license * license_details.total_license || 0;
+        license_details?.cost_per_license * license_details?.total_license || 0;
 
       const amcTotalCost =
-        (customization.cost + licenseTotalCost || 0) + updatedOrder.base_cost;
-      let amcPercentage = updatedOrder.amc_rate.percentage;
+        ((customization?.cost || 0) + licenseTotalCost || 0) +
+        (updatedOrder.base_cost || 0);
+      let amcPercentage = updatedOrder.amc_rate?.percentage || 0;
 
       const amcAmount = (amcTotalCost / 100) * amcPercentage;
 
-      const DEFAULT_AMC_CYCLE_IN_MONTHS = 12;
-      const till_date_of_payment = this.getNextDate(
-        body.amc_start_date,
-        DEFAULT_AMC_CYCLE_IN_MONTHS,
-      );
+      if (updatedOrder.amc_id) {
+        const DEFAULT_AMC_CYCLE_IN_MONTHS = 12;
+        const till_date_of_payment = this.getNextDate(
+          body.amc_start_date,
+          DEFAULT_AMC_CYCLE_IN_MONTHS,
+        );
 
-      const amc = updatedOrder.amc_id as any;
+        const amc = await this.amcModel.findById(updatedOrder.amc_id);
 
-      const payments = !amc.payments.length
-        ? body.amc_start_date
-          ? [
-              {
-                from_date: body.amc_start_date,
-                to_date: till_date_of_payment,
-                status: PAYMENT_STATUS_ENUM.PAID,
-              },
-            ]
-          : []
-        : amc.payments;
+        const payments =
+          !amc?.payments?.length && body.amc_start_date
+            ? [
+                {
+                  from_date: body.amc_start_date,
+                  to_date: till_date_of_payment,
+                  status: PAYMENT_STATUS_ENUM.PAID,
+                },
+              ]
+            : amc?.payments || [];
 
-      await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
-        total_cost: amcTotalCost,
-        amount: amcAmount,
-        products: products,
-        amc_percentage: amcPercentage,
-        start_date: new Date(body.amc_start_date),
-        payments,
-      });
+        await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
+          total_cost: amcTotalCost,
+          amount: amcAmount,
+          products: products,
+          amc_percentage: amcPercentage,
+          start_date: body.amc_start_date
+            ? new Date(body.amc_start_date)
+            : undefined,
+          payments,
+        });
+      }
 
       this.loggerService.log(
         JSON.stringify({
@@ -441,6 +453,7 @@ export class OrderService {
 
       return updatedOrder;
     } catch (error: any) {
+      console.log({ error });
       this.loggerService.error(
         JSON.stringify({
           message: 'updateFirstOrder: Error updating order',
@@ -464,11 +477,11 @@ export class OrderService {
       throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
     }
 
-    // update all orders agreemtent_date to be an array i.e documents which has agreement_date.start and agreement_date.end move that object into an array
+    // update all orders agreemtent_date to be an array i.e documents which has agreements.start and agreements.end move that object into an array
     const orders = await this.orderModel.find();
     for (const order of orders) {
-      if (order.agreement_date && !Array.isArray(order.agreement_date)) {
-        order.agreement_date = [order.agreement_date];
+      if (order.agreements && !Array.isArray(order.agreements)) {
+        order.agreements = [order.agreements];
         await order.save();
       }
     }
@@ -519,10 +532,25 @@ export class OrderService {
           orderObj.purchase_order_document,
         );
       }
-      if (orderObj.agreement_document) {
-        orderObj.agreement_document = this.storageService.get(
-          orderObj.agreement_document,
+
+      if (orderObj.invoice_document) {
+        orderObj.invoice_document = this.storageService.get(
+          orderObj.invoice_document,
         );
+      }
+
+      if (orderObj.other_document) {
+        orderObj.other_document.url = this.storageService.get(
+          orderObj.other_document.url,
+        );
+      }
+
+      if (orderObj.agreements.length) {
+        for (let i = 0; i < orderObj.agreements.length; i++) {
+          orderObj.agreements[i].document = this.storageService.get(
+            orderObj.agreements[i].document,
+          );
+        }
       }
 
       return orderObj;
@@ -592,10 +620,12 @@ export class OrderService {
             orderObj.purchase_order_document,
           );
         }
-        if (orderObj.agreement_document) {
-          orderObj.agreement_document = this.storageService.get(
-            orderObj.agreement_document,
-          );
+        if (orderObj.agreements.length) {
+          for (let i = 0; i < orderObj.agreements.length; i++) {
+            orderObj.agreements[i].document = this.storageService.get(
+              orderObj.agreements[i].document,
+            );
+          }
         }
         return orderObj;
       });
@@ -916,10 +946,12 @@ export class OrderService {
             orderObj.purchase_order_document,
           );
         }
-        if (orderObj.agreement_document) {
-          orderObj.agreement_document = this.storageService.get(
-            orderObj.agreement_document,
-          );
+        if (orderObj.agreements.length) {
+          for (let i = 0; i < orderObj.agreements.length; i++) {
+            orderObj.agreements[i].document = this.storageService.get(
+              orderObj.agreements[i].document,
+            );
+          }
         }
 
         if (orderObj.additional_services?.length) {
@@ -934,11 +966,12 @@ export class OrderService {
       });
 
       const purchases = [
-        ...ordersList.map((order) => ({
+        ...ordersList.map((order: OrderDocument) => ({
           client: order.client_id || { name: 'Unknown' },
           purchase_type: PURCHASE_TYPE.ORDER,
           products: order.products,
           status: order.status,
+          amc_start_date: order?.amc_start_date || null,
           id: order._id,
         })),
         ...licenses.map((license) => ({
@@ -1086,7 +1119,14 @@ export class OrderService {
         }),
       );
 
-      const amc = await this.amcModel.findOne({ order_id: orderId });
+      const amc = await this.amcModel.findOne({ order_id: orderId }).populate({
+        path: 'cliend_id',
+        model: 'Client',
+      });
+
+      const amc_frequency_in_months = (amc.client_id as any)
+        .amc_frequency_in_months;
+
       if (!amc) {
         this.loggerService.error(
           JSON.stringify({
@@ -1115,10 +1155,7 @@ export class OrderService {
       }
 
       // Handle payments update for date/frequency changes
-      if (
-        body.start_date !== amc.start_date.toString() ||
-        body.amc_frequency_in_months !== amc.amc_frequency_in_months
-      ) {
+      if (body.start_date !== amc.start_date.toString()) {
         const payments = [...payload.payments];
         const lastPayment = payments[payments.length - 1];
         const secondLastPayment = payments[payments.length - 2];
@@ -1126,7 +1163,7 @@ export class OrderService {
         // Only update if last payment is pending
         if (lastPayment && lastPayment.status === PAYMENT_STATUS_ENUM.PENDING) {
           const frequency =
-            body.amc_frequency_in_months || amc.amc_frequency_in_months;
+            amc_frequency_in_months || DEFAULT_AMC_CYCLE_IN_MONTHS;
 
           let fromDate;
           if (secondLastPayment) {
@@ -1462,7 +1499,12 @@ export class OrderService {
     }
   }
 
-  async loadAllAMC(page: number, limit: number, filter: AMC_FILTER) {
+  async loadAllAMC(
+    page: number,
+    limit: number,
+    filter: AMC_FILTER,
+    options: { upcoming: number } = { upcoming: 1 },
+  ) {
     try {
       this.loggerService.log(
         JSON.stringify({
@@ -1483,7 +1525,7 @@ export class OrderService {
               $gte: new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 2),
               $lte: new Date(
                 nextMonth.getFullYear(),
-                nextMonth.getMonth() + 3, // Changed from +2 to +3 to include next 2 months
+                nextMonth.getMonth() + options.upcoming,
                 0,
               ),
             },
@@ -1624,10 +1666,14 @@ export class OrderService {
       );
 
       // Find only AMCs that have payments
-      const amcs = await this.amcModel.find({
-        payments: { $exists: true, $ne: [] },
-        amc_frequency_in_months: { $exists: true },
-      });
+      const amcs = await this.amcModel
+        .find({
+          payments: { $exists: true, $ne: [] },
+        })
+        .populate({
+          path: 'client_id',
+          select: 'amc_frequency_in_months',
+        });
 
       this.loggerService.log(
         JSON.stringify({
@@ -1643,7 +1689,11 @@ export class OrderService {
 
       const updates = amcs.map(async (amc) => {
         try {
-          const { payments, amc_frequency_in_months, _id } = amc;
+          const amc_frequency_in_months =
+            (amc.client_id as any)?.amc_frequency_in_months ||
+            DEFAULT_AMC_CYCLE_IN_MONTHS;
+
+          const { payments, _id } = amc;
           const lastPayment = payments[payments.length - 1];
 
           this.loggerService.log(

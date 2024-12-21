@@ -89,22 +89,21 @@ export class Order extends Document {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'License' }] })
   licenses: Types.ObjectId[]; // array of license IDs
 
-  @Prop({ type: String })
-  agreement_document: string; // file url
-
   @Prop({
     type: [
       {
         start: Date,
         end: Date,
+        document: String,
       },
     ],
     default: [],
   })
-  agreement_date: {
+  agreements: {
     _id: any;
     start: Date;
     end: Date;
+    document: string;
   }[];
 
   @Prop({ type: String })

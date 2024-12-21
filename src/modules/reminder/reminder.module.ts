@@ -17,19 +17,16 @@ import { MailService } from '@/common/mail/service/mail.service';
 import { Reminder, ReminderSchema } from '@/db/schema/reminder.schema';
 import { ReminderController } from './controller/reminder.controller';
 import { ReminderService } from './services/reminder.service';
+import { StorageModule } from '@/common/storage/storage.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Order.name, schema: OrderSchema },
-      { name: License.name, schema: LicenseSchema },
-      { name: Customization.name, schema: CustomizationSchema },
-      { name: Product.name, schema: ProductSchema },
-      { name: Client.name, schema: ClientSchema },
-      { name: AdditionalService.name, schema: AdditionalServiceSchema },
       { name: AMC.name, schema: AMCSchema },
       { name: Reminder.name, schema: ReminderSchema },
     ]),
+    StorageModule,
   ],
   controllers: [ReminderController],
   providers: [ReminderService, MailService],

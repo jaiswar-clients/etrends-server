@@ -26,14 +26,6 @@ export class AMC extends Document {
   @Prop({ type: String })
   purchase_order_number: string;
 
-  @Prop({
-    required: true,
-    type: Number,
-    default: 12,
-    enum: [1, 3, 6, 12, 18, 24],
-  })
-  amc_frequency_in_months: number;
-
   @Prop({ type: Date })
   start_date: Date;
 
@@ -56,9 +48,6 @@ export class AMC extends Document {
     to_date: Date;
     status: PAYMENT_STATUS_ENUM; // AMC is free for 1 year that's status will be paid
   }[];
-
-  @Prop({ type: Boolean, default: true }) // AMC is free for 1 year that's status will be paid
-  is_amc_free: boolean;
 
   @Prop({ type: String })
   purchase_order_document: string;

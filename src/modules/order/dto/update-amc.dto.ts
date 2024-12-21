@@ -6,11 +6,6 @@ export class UpdateAMCDto {
   @IsOptional()
   purchase_order_number?: string;
 
-  @IsNumber()
-  @IsOptional()
-  @IsEnum([1, 3, 6, 12, 18, 24])
-  amc_frequency_in_months?: number;
-
   @IsOptional()
   payments?: {
     from_date: Date;

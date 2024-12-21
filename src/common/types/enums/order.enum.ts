@@ -18,3 +18,5 @@ export enum AMC_FILTER {
   OVERDUE = 'overdue',
   FIRST = 'first',
 }
+
+export const DEFAULT_AMC_CYCLE_IN_MONTHS = 12;

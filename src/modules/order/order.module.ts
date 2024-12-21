@@ -17,7 +17,6 @@ import { Product, ProductSchema } from '@/db/schema/product.schema';
 import { Client, ClientSchema } from '@/db/schema/client.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
 import { MailService } from '@/common/mail/service/mail.service';
-import { Reminder, ReminderSchema } from '@/db/schema/reminder.schema';
 
 @Module({
   imports: [
@@ -29,7 +28,6 @@ import { Reminder, ReminderSchema } from '@/db/schema/reminder.schema';
       { name: Client.name, schema: ClientSchema },
       { name: AdditionalService.name, schema: AdditionalServiceSchema },
       { name: AMC.name, schema: AMCSchema },
-      { name: Reminder.name, schema: ReminderSchema },
     ]),
     StorageModule,
   ],
@@ -41,7 +39,6 @@ export class OrderModule implements OnModuleInit {
   constructor(private orderService: OrderService) {}
 
   async onModuleInit() {
-    // await this.orderService.deleteAllOrdersForAllClients();
-    // await this.orderService.updateAMCPayments()
+    // 
   }
 }

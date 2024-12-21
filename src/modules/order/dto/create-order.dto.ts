@@ -7,6 +7,7 @@ import {
   IsMongoId,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   ValidateNested,
@@ -58,6 +59,13 @@ export class CreateOrderDto {
   @IsNotEmpty()
   products: Types.ObjectId[];
 
+  @IsObject()
+  @IsOptional()
+  other_document: {
+    title: string;
+    url: string;
+  };
+
   @IsNumber()
   base_cost: number;
 
@@ -76,10 +84,6 @@ export class CreateOrderDto {
   @Type(() => PaymentTermsDto)
   payment_terms: PaymentTermsDto[];
 
-  @IsString()
-  @IsOptional()
-  agreement_document: string;
-
   @IsOptional()
   @IsArray()
   base_cost_seperation: {
@@ -90,9 +94,10 @@ export class CreateOrderDto {
 
   @IsOptional()
   @IsArray()
-  agreement_date: {
+  agreements: {
     start: Date;
     end: Date;
+    document: string;
   }[];
 
   @IsString()

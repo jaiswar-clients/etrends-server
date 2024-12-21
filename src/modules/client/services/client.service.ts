@@ -531,9 +531,20 @@ export class ClientService {
       let upcomingAmcProfit = 0;
       let totalAMCCollected = 0;
 
+      // Revenue breakdown
+      let revenueBreakdown = {
+        base_cost: 0,
+        customizations: 0,
+        licenses: 0,
+        additional_services: 0,
+        amc: 0,
+      };
+
       for (const order of orders) {
         // Base order cost
         totalProfit += order.base_cost || 0;
+        revenueBreakdown.base_cost += order.base_cost || 0;
+
         const amc: AMCDocument = order.amc_id as any;
 
         // Customizations cost
@@ -544,6 +555,7 @@ export class ClientService {
             0,
           );
           totalProfit += customizationsCost;
+          revenueBreakdown.customizations += customizationsCost;
         }
 
         // Licenses cost
@@ -554,6 +566,7 @@ export class ClientService {
             0,
           );
           totalProfit += licensesCost;
+          revenueBreakdown.licenses += licensesCost;
         }
 
         // Additional services cost
@@ -563,15 +576,18 @@ export class ClientService {
             0,
           );
           totalProfit += additionalServicesCost;
+          revenueBreakdown.additional_services += additionalServicesCost;
         }
 
         if (amc.payments.length > 1) {
-          // exlcude first payment as it is free
+          // exclude first payment as it is free
           const amcPayments = amc.payments.slice(1);
           const totalPaidAmcs = amcPayments.filter(
             (payment) => payment.status === PAYMENT_STATUS_ENUM.PAID,
           ).length;
-          totalAMCCollected += totalPaidAmcs * amc.amount;
+          const amcCollection = totalPaidAmcs * amc.amount;
+          totalAMCCollected += amcCollection;
+          revenueBreakdown.amc += amcCollection;
         }
       }
 
@@ -583,7 +599,7 @@ export class ClientService {
         licenses: order.licenses,
         additional_services: order.additional_services,
         amc_details: order.amc_id,
-        agreement_date: order.agreement_date,
+        agreements: order.agreements,
         status: order.status,
         purchased_date: order.purchased_date,
       }));
@@ -592,6 +608,7 @@ export class ClientService {
         total_profit: totalProfit,
         upcoming_amc_profit: upcomingAmcProfit,
         total_amc_collection: totalAMCCollected,
+        revenue_breakdown: revenueBreakdown,
         currency: 'INR',
         orders: formattedOrders,
       };

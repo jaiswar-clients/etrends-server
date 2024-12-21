@@ -52,6 +52,22 @@ export class Reminder extends Document {
   @Prop({ type: Number, default: 1 })
   total_attempts: number;
 
+  @Prop({
+    type: [
+      {
+        filename: String,
+        url: String,
+        content_type: String,
+      },
+    ],
+    default: [],
+  })
+  attachments: {
+    filename: string;
+    url: string;
+    content_type: string;
+  }[];
+
   @Prop()
   createdAt?: Date;
 

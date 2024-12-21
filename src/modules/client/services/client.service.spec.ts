@@ -168,7 +168,7 @@ describe('ClientService', () => {
         expect(order).toHaveProperty('licenses');
         expect(order).toHaveProperty('additional_services');
         expect(order).toHaveProperty('amc_details');
-        expect(order).toHaveProperty('agreement_date');
+        expect(order).toHaveProperty('agreements');
         expect(order).toHaveProperty('status');
         expect(order).toHaveProperty('purchased_date');
       });

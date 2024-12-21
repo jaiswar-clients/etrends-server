@@ -20,11 +20,13 @@ export class MailService {
     subject,
     context,
     template,
+    attachments,
   }: {
     email: string;
     subject: string;
     template: MAIL_TEMPLATES;
     context: any;
+    attachments?: { filename: string; path: string; contentType?: string }[];
   }): Promise<string> {
     try {
       if (!template) {
@@ -45,6 +47,7 @@ export class MailService {
         subject,
         template: templateId,
         context,
+        attachments,
       });
       this.loggerService.log(`Email sent successfully to ${email}`);
 
@@ -52,7 +55,6 @@ export class MailService {
 
       return status;
     } catch (error: any) {
-      console.log('error', error);
       this.loggerService.error(
         JSON.stringify({
           message: 'Error sending email',
@@ -100,7 +102,6 @@ export class MailService {
 
       return status;
     } catch (error: any) {
-      console.log('error', error);
       this.loggerService.error(
         JSON.stringify({
           message: 'Error sending email',
