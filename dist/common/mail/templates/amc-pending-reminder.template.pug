@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+html(lang="en")
+    head
+        meta(charset="UTF-8")
+        meta(name="viewport", content="width=device-width, initial-scale=1.0")
+        style.
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: #f8f9fa; padding: 15px; text-align: center; }
+            .content { padding: 20px 0; }
+            .footer { text-align: center; font-size: 12px; color: #666; }
+            .highlight { color: #dc3545; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th, td { padding: 8px; border: 1px solid #ddd; }
+            th { background-color: #f8f9fa; }
+            a { color: #0000FF; text-decoration: underline; }
+
+    body
+        .container
+            .header
+                h2 Order Agreement Expiry Reminder
+            
+            .content
+                p Dear Team,
+                
+                p This is to inform you about the upcoming expiry of the order agreements for the following clients:
+
+                table
+                    tr
+                        th Customer Name
+                        td #{client}
+                    tr
+                        th Customer ID
+                        td #{clientId}
+                    tr
+                        th Product
+                        td #{product}
+
+
+                h3 Agreement Details:
+
+                table
+                    thead
+                        tr
+                            th Product
+                            th Expiry Date
+                            th Days to Expiry
+                            th View Agreement
+                    tbody
+
+                each agreement in agreements
+                    tr
+                        td #{agreement.product}
+                        td.highlight #{agreement.expiryDate}
+                        td.highlight #{agreement.daysToExpiry}
+                        td
+                            a(href=agreement.link) View Agreement
+
+                p Please take necessary action to follow up with the clients regarding the agreement renewals.
+                
+                strong Contact Persons:
+                table
+                    thead
+                        tr
+                            th Name
+                            th Designation
+                            th Email
+                            th Phone
+                    tbody
+                        each contact in contacts
+                            tr
+                                td #{contact.name}
+                                td #{contact.designation}
+                                td #{contact.email}
+                                td #{contact.phone}
+
+            .footer
+                p This is an automated reminder. Please do not reply to this email.
+                p If you have any questions, please contact the system administrator.
+                

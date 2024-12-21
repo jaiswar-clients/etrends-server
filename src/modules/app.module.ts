@@ -4,6 +4,7 @@ import { AppService } from './app.service';
 import { LoggerModule } from '@/common/logger/logger.module';
 import { HttpModule } from '@/common/http/http.module';
 import { ConfigModule } from '@/common/config/config.module';
+import { ConfigModule as NextConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigService } from '@/common/config/services/config.service';
 import { UserModule } from './user/user.module';
@@ -42,6 +43,11 @@ const appModules: NestModuleImport[] = [LoggerModule, HttpModule, ConfigModule];
         global: true,
         secret: configService.get('JWT_SECRET'),
       }),
+    }),
+    NextConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath:
+        process.env.NODE_ENV === 'production' ? '.env.production' : '.env',
     }),
     ScheduleModule.forRoot(),
     UserModule,
