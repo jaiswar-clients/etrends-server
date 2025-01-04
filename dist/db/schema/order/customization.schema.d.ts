@@ -1,4 +1,5 @@
 import { Document, HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
+import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 export type CustomizationDocument = HydratedDocument<Customization>;
 export declare enum CustomizationType {
     MODULE = "module",
@@ -14,6 +15,8 @@ export declare class Customization extends Document {
     title: string;
     type: CustomizationType;
     purchased_date: Date;
+    payment_status: PAYMENT_STATUS_ENUM;
+    payment_receive_date: Date;
     purchase_order_document: string;
     invoice_document: string;
     createdAt?: Date;

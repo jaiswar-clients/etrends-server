@@ -6,6 +6,7 @@ export enum MAIL_TEMPLATES {
   SEND_UPCOMING_AMC_REMINDER = 'amc-upcoming-reminder',
   SEND_PENDING_AMC_REMINDER = 'amc-pending-reminder',
   SEND_AGREEMENT_EXPIRY_REMINDER = 'agreement-expiry-reminder',
+  EXTERNAL_REMINDER_TO_CLIENT = 'external-reminder-to-client',
 }
 
 @Injectable()

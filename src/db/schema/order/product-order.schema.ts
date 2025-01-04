@@ -16,6 +16,11 @@ export interface IAMCRate {
   amount: number;
 }
 
+export enum PAYMENT_STATUS_ENUM {
+  PAID = 'paid',
+  PENDING = 'pending',
+}
+
 class PaymentTerms {
   @Prop({ type: String })
   name: string;
@@ -28,6 +33,16 @@ class PaymentTerms {
 
   @Prop({ type: Date })
   date: Date;
+
+  @Prop({
+    type: String,
+    enum: PAYMENT_STATUS_ENUM,
+    default: PAYMENT_STATUS_ENUM.PENDING,
+  })
+  status: PAYMENT_STATUS_ENUM;
+
+  @Prop({ type: Date })
+  payment_receive_date: Date;
 }
 
 @Schema({ timestamps: true })
@@ -130,7 +145,7 @@ export class Order extends Document {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
   customizations: Types.ObjectId[]; // array of customization IDs
 
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Additional' }] })
   additional_services: Types.ObjectId[]; // array of additional service IDs
 
   @Prop({ type: Date })

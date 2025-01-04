@@ -9,6 +9,7 @@ import {
   IsArray,
   IsOptional,
 } from 'class-validator';
+import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
 
 export class CreateCustomizationDto {
   @IsMongoId()
@@ -18,6 +19,15 @@ export class CreateCustomizationDto {
   @IsNumber()
   @IsNotEmpty()
   cost: number;
+
+  @IsString()
+  @IsOptional()
+  @IsEnum(PAYMENT_STATUS_ENUM)
+  payment_status: PAYMENT_STATUS_ENUM;
+
+  @IsString()
+  @IsOptional()
+  payment_receive_date: Date;
 
   @IsArray()
   @IsString({ each: true })

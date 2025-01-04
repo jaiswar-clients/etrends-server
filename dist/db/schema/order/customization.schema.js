@@ -13,6 +13,7 @@ exports.CustomizationSchema = exports.Customization = exports.CustomizationType 
 const mongoose_1 = require("@nestjs/mongoose");
 const mongoose_2 = require("mongoose");
 const mongooseDelete = require("mongoose-delete");
+const product_order_schema_1 = require("./product-order.schema");
 var CustomizationType;
 (function (CustomizationType) {
     CustomizationType["MODULE"] = "module";
@@ -54,6 +55,18 @@ __decorate([
     (0, mongoose_1.Prop)({ type: Date }),
     __metadata("design:type", Date)
 ], Customization.prototype, "purchased_date", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: String,
+        enum: product_order_schema_1.PAYMENT_STATUS_ENUM,
+        default: product_order_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+    }),
+    __metadata("design:type", String)
+], Customization.prototype, "payment_status", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Date }),
+    __metadata("design:type", Date)
+], Customization.prototype, "payment_receive_date", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: String }),
     __metadata("design:type", String)

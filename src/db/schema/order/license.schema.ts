@@ -6,6 +6,7 @@ import {
   Types,
 } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
+import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 
 // Define the document type for TypeScript
 export type LicenseDocument = HydratedDocument<License>;
@@ -33,6 +34,16 @@ export class License extends Document {
     percentage: number;
     amount: number;
   };
+
+  @Prop({
+    type: String,
+    enum: PAYMENT_STATUS_ENUM,
+    default: PAYMENT_STATUS_ENUM.PENDING,
+  })
+  payment_status: PAYMENT_STATUS_ENUM;
+
+  @Prop({ type: Date })
+  payment_receive_date: Date;
 
   @Prop({ type: Number })
   total_license: number;

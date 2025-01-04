@@ -8,7 +8,9 @@ import {
   IsString,
   ValidateNested,
   IsDateString,
+  IsEnum,
 } from 'class-validator';
+import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
 
 class DateRange {
   @IsDateString()
@@ -36,6 +38,15 @@ export class CreateAdditionalServiceDto {
   @IsString()
   @IsNotEmpty()
   invoice_document: string;
+
+  @IsString()
+  @IsOptional()
+  @IsEnum(PAYMENT_STATUS_ENUM)
+  payment_status: PAYMENT_STATUS_ENUM;
+
+  @IsString()
+  @IsOptional()
+  payment_receive_date: Date;
 
   @IsNumber()
   @IsNotEmpty()

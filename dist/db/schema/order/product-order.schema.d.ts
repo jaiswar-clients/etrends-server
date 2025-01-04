@@ -5,11 +5,17 @@ export interface IAMCRate {
     percentage: number;
     amount: number;
 }
+export declare enum PAYMENT_STATUS_ENUM {
+    PAID = "paid",
+    PENDING = "pending"
+}
 declare class PaymentTerms {
     name: string;
     percentage_from_base_cost: number;
     calculated_amount: number;
     date: Date;
+    status: PAYMENT_STATUS_ENUM;
+    payment_receive_date: Date;
 }
 export declare class Order extends Document {
     products: Types.ObjectId[];

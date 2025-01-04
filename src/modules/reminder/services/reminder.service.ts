@@ -28,10 +28,18 @@ import {
   MAIL_TEMPLATES,
   MailService,
 } from '@/common/mail/service/mail.service';
-import { Reminder, ReminderDocument } from '@/db/schema/reminder.schema';
+import {
+  COMMUNICATION_TYPE,
+  Reminder,
+  ReminderDocument,
+} from '@/db/schema/reminders/reminder.schema';
 import { ConfigService } from '@/common/config/services/config.service';
 import { SendEmailDto } from '../dto/send-email';
 import { StorageService } from '@/common/storage/services/storage.service';
+import {
+  EmailTemplate,
+  EmailTemplateDocument,
+} from '@/db/schema/reminders/email.template.schema';
 
 @Injectable()
 export class ReminderService {
@@ -39,11 +47,12 @@ export class ReminderService {
   constructor(
     @InjectModel(Order.name)
     private orderModel: SoftDeleteModel<OrderDocument>,
-
     @InjectModel(AMC.name)
     private amcModel: SoftDeleteModel<AMCDocument>,
     @InjectModel(Reminder.name)
     private reminderModel: SoftDeleteModel<ReminderDocument>,
+    @InjectModel(EmailTemplate.name)
+    private emailTemplateModel: SoftDeleteModel<EmailTemplateDocument>,
     private loggerService: LoggerService,
     private mailService: MailService,
     private configService: ConfigService,
@@ -614,7 +623,7 @@ export class ReminderService {
 
   // ******************* REMINDER SCHEDULERS - END *******************
 
-  async getAllReminders() {
+  async getAllInternalReminders() {
     try {
       this.loggerService.log(
         JSON.stringify({
@@ -622,11 +631,15 @@ export class ReminderService {
         }),
       );
 
-      const reminders = await this.reminderModel.find().populate({
-        path: 'client_id',
-        model: Client.name,
-        select: 'name',
-      });
+      const reminders = await this.reminderModel
+        .find({
+          communication_type: COMMUNICATION_TYPE.INTERNAL,
+        })
+        .populate({
+          path: 'client_id',
+          model: Client.name,
+          select: 'name',
+        });
 
       // convert reminders to Object and add client in each reminder
       const remindersWithClient = [];
@@ -727,30 +740,57 @@ export class ReminderService {
     }
   }
 
-  async sendEmailToClient(body: SendEmailDto) {
+  async sendEmailToClient(data: SendEmailDto) {
     try {
       this.loggerService.log(
         JSON.stringify({
           message: 'Sending email to client',
-          to: body.to,
-          subject: body.subject,
+          to: data.to,
+          subject: data.subject,
         }),
       );
 
       const emailStatus = await this.mailService.sendMailWithoutTemplate({
-        from: body.from,
-        to: body.to,
-        cc: body.cc,
-        bcc: body.bcc,
-        subject: body.subject,
-        html: body.body,
+        from: data.from,
+        to: data.to,
+        cc: data.cc,
+        bcc: data.bcc,
+        subject: data.subject,
+        html: data.body,
       });
+
+      // creating reminder record
+      const reminderId = `${data.from}-${data.to}-${data.email_template_id}`;
+      const emailTemplate = await this.emailTemplateModel.findById(
+        data.email_template_id,
+      );
+
+      const newReminder = new this.reminderModel({
+        reminder_id: reminderId,
+        to: data.to,
+        from: data.from,
+        subject: data.subject,
+        template: emailTemplate.key as MAIL_TEMPLATES,
+        email_template_id: data.email_template_id,
+        context: data.body,
+        status: emailStatus,
+        total_attempts: 1,
+        communication_type: COMMUNICATION_TYPE.EXTERNAL,
+        body: data.body,
+        customization_id: data.customization_id,
+        license_id: data.license_id,
+        order_id: data.order_id,
+        amc_id: data.amc_id,
+        client_id: data.client_id,
+      });
+
+      await newReminder.save();
 
       this.loggerService.log(
         JSON.stringify({
           message: 'Email sent successfully',
-          to: body.to,
-          subject: body.subject,
+          to: data.to,
+          subject: data.subject,
           status: emailStatus,
         }),
       );
@@ -762,6 +802,107 @@ export class ReminderService {
           message: 'Critical error in sendEmailToClient',
           error: error.message,
           stack: error.stack,
+        }),
+      );
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async getEmailTemplates() {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'Fetching email templates',
+        }),
+      );
+
+      const templates = await this.emailTemplateModel.find();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'Successfully retrieved email templates',
+          totalTemplates: templates.length,
+        }),
+      );
+
+      return templates;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'Error retrieving email templates',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async getExternalCommunicationHistory() {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'Fetching external communication history',
+        }),
+      );
+
+      const communications = await this.reminderModel
+        .find({ communication_type: COMMUNICATION_TYPE.EXTERNAL })
+        .populate([
+          {
+            path: 'client_id',
+            model: Client.name,
+            select: 'name point_of_contacts industry',
+          },
+          {
+            path: 'order_id',
+            model: Order.name,
+            select: 'products agreements amc_start_date base_cost',
+          },
+          {
+            path: 'amc_id',
+            model: AMC.name,
+          },
+          {
+            path: 'email_template_id',
+            model: EmailTemplate.name,
+          },
+        ]);
+
+      const communicationsWithClient = communications.map((communication) => {
+        const communicationObj = communication.toObject();
+        if (communicationObj.client_id) {
+          communicationObj['client'] = communicationObj.client_id;
+          delete communicationObj.client_id;
+        }
+        if (communicationObj.order_id) {
+          communicationObj['order'] = communicationObj.order_id;
+          delete communicationObj.order_id;
+        }
+        if (communicationObj.amc_id) {
+          communicationObj['amc'] = communicationObj.amc_id;
+          delete communicationObj.amc_id;
+        }
+        if (communicationObj.email_template_id) {
+          communicationObj['email_template'] =
+            communicationObj.email_template_id;
+          delete communicationObj.email_template_id;
+        }
+        return communicationObj;
+      });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'Successfully retrieved external communication history',
+          totalCommunications: communicationsWithClient.length,
+        }),
+      );
+
+      return communicationsWithClient;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'Error retrieving external communication history',
+          error: error.message,
         }),
       );
       throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);

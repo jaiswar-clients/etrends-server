@@ -13,6 +13,7 @@ exports.LicenseSchema = exports.License = void 0;
 const mongoose_1 = require("@nestjs/mongoose");
 const mongoose_2 = require("mongoose");
 const mongooseDelete = require("mongoose-delete");
+const product_order_schema_1 = require("./product-order.schema");
 let License = class License extends mongoose_2.Document {
 };
 exports.License = License;
@@ -37,6 +38,18 @@ __decorate([
     }),
     __metadata("design:type", Object)
 ], License.prototype, "rate", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: String,
+        enum: product_order_schema_1.PAYMENT_STATUS_ENUM,
+        default: product_order_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+    }),
+    __metadata("design:type", String)
+], License.prototype, "payment_status", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Date }),
+    __metadata("design:type", Date)
+], License.prototype, "payment_receive_date", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: Number }),
     __metadata("design:type", Number)

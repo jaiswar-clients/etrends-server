@@ -6,6 +6,7 @@ import {
   Types,
 } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
+import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 
 export type CustomizationDocument = HydratedDocument<Customization>;
 
@@ -40,6 +41,16 @@ export class Customization extends Document {
 
   @Prop({ type: Date })
   purchased_date: Date;
+
+  @Prop({
+    type: String,
+    enum: PAYMENT_STATUS_ENUM,
+    default: PAYMENT_STATUS_ENUM.PENDING,
+  })
+  payment_status: PAYMENT_STATUS_ENUM;
+
+  @Prop({ type: Date })
+  payment_receive_date: Date;
 
   @Prop({ type: String })
   purchase_order_document: string; // cdn url

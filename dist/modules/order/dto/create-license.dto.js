@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreateLicenseDto = void 0;
 const mongoose_1 = require("mongoose");
 const class_validator_1 = require("class-validator");
+const product_order_schema_1 = require("../../../db/schema/order/product-order.schema");
 class CreateLicenseDto {
 }
 exports.CreateLicenseDto = CreateLicenseDto;
@@ -33,6 +34,17 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], CreateLicenseDto.prototype, "purchase_date", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEnum)(product_order_schema_1.PAYMENT_STATUS_ENUM),
+    __metadata("design:type", String)
+], CreateLicenseDto.prototype, "payment_status", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Date)
+], CreateLicenseDto.prototype, "payment_receive_date", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),

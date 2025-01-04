@@ -13,6 +13,7 @@ exports.CreateOrderDto = void 0;
 const order_enum_1 = require("../../../common/types/enums/order.enum");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
+const product_order_schema_1 = require("../../../db/schema/order/product-order.schema");
 class PaymentTermsDto {
 }
 __decorate([
@@ -29,8 +30,19 @@ __decorate([
 ], PaymentTermsDto.prototype, "calculated_amount", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Date)
 ], PaymentTermsDto.prototype, "date", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsEnum)(product_order_schema_1.PAYMENT_STATUS_ENUM),
+    __metadata("design:type", String)
+], PaymentTermsDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Date)
+], PaymentTermsDto.prototype, "payment_receive_date", void 0);
 class LicenseDetailsDto {
 }
 __decorate([

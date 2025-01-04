@@ -3,18 +3,20 @@ import { ReportFilterType } from '@/common/types/enums/report';
 export declare class ReportController {
     private readonly reportService;
     constructor(reportService: ReportService);
-    getOverallSalesReport(filter: ReportFilterType, year: string, quarter: string, startDate: string, endDate: string): Promise<{
-        orderRevenue: number;
-        customizationRevenue: number;
-        licenseRevenue: number;
-        additionalServiceRevenue: number;
-        amcRevenue: number;
-        total: number;
+    getTotalBilling(filter: ReportFilterType, year: string, quarter: string, month: string): Promise<{
+        period: string;
+        total_amc_billing: number;
+        total_purchase_billing: number;
+    }[]>;
+    getAMCAnnualBreakdown(filter: ReportFilterType, year: string, quarter: string, startDate: string, endDate: string, productId: string): Promise<{
+        totalExpected: number;
+        totalCollected: number;
         period: string;
     }[]>;
-    getAMCRevenueReport(filter: ReportFilterType, year: string, quarter: string, startDate: string, endDate: string): Promise<{
+    getExpectedVsReceivedRevenue(filter: ReportFilterType, year: string, quarter: string, month: string): Promise<{
         period: string;
-        total: number;
+        expected_amount: number;
+        received_amount: number;
     }[]>;
     getProductWiseRevenueDistribution(filter: ReportFilterType, year: string, quarter: string, startDate: string, endDate: string): Promise<{
         productId: unknown;
@@ -22,11 +24,6 @@ export declare class ReportController {
         revenue: number;
         percentage: number;
         cumulativePercentage: number;
-    }[]>;
-    getAMCAnnualBreakdown(filter: ReportFilterType, year: string, quarter: string, startDate: string, endDate: string, productId: string): Promise<{
-        totalExpected: number;
-        totalCollected: number;
-        period: string;
     }[]>;
     getIndustryWiseRevenueDistribution(filter: ReportFilterType, year: string, quarter: string, month: string): Promise<any[]>;
 }

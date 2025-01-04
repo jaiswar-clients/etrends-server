@@ -13,6 +13,7 @@ exports.AdditionalServiceSchema = exports.AdditionalService = void 0;
 const mongoose_1 = require("@nestjs/mongoose");
 const mongooseDelete = require("mongoose-delete");
 const mongoose_2 = require("mongoose");
+const product_order_schema_1 = require("./product-order.schema");
 let AdditionalService = class AdditionalService extends mongoose_2.Document {
 };
 exports.AdditionalService = AdditionalService;
@@ -37,6 +38,25 @@ __decorate([
     (0, mongoose_1.Prop)({ type: Number, required: true }),
     __metadata("design:type", Number)
 ], AdditionalService.prototype, "cost", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: String,
+        enum: product_order_schema_1.PAYMENT_STATUS_ENUM,
+        default: product_order_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+    }),
+    __metadata("design:type", String)
+], AdditionalService.prototype, "payment_status", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: Date,
+        default: Date.now,
+    }),
+    __metadata("design:type", Date)
+], AdditionalService.prototype, "purchased_date", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Date }),
+    __metadata("design:type", Date)
+], AdditionalService.prototype, "payment_receive_date", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: String }),
     __metadata("design:type", String)

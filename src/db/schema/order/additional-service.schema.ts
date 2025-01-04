@@ -8,6 +8,7 @@ import {
   Types,
 } from 'mongoose';
 import { Type } from 'class-transformer';
+import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 
 // Define the document type for TypeScript
 export type AdditionalServiceDocument = HydratedDocument<AdditionalService>;
@@ -34,6 +35,22 @@ export class AdditionalService extends Document {
 
   @Prop({ type: Number, required: true })
   cost: number;
+
+  @Prop({
+    type: String,
+    enum: PAYMENT_STATUS_ENUM,
+    default: PAYMENT_STATUS_ENUM.PENDING,
+  })
+  payment_status: PAYMENT_STATUS_ENUM;
+
+  @Prop({
+    type: Date,
+    default: Date.now,
+  })
+  purchased_date: Date;
+
+  @Prop({ type: Date })
+  payment_receive_date: Date;
 
   @Prop({ type: String })
   purchase_order_document: string; // cdn url

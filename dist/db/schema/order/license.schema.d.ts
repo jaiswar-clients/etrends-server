@@ -1,4 +1,5 @@
 import { Document, HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
+import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 export type LicenseDocument = HydratedDocument<License>;
 export declare class License extends Document {
     product_id: Types.ObjectId;
@@ -7,6 +8,8 @@ export declare class License extends Document {
         percentage: number;
         amount: number;
     };
+    payment_status: PAYMENT_STATUS_ENUM;
+    payment_receive_date: Date;
     total_license: number;
     purchase_date: Date;
     purchase_order_document: string;

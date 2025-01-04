@@ -1,4 +1,5 @@
 import { Document, HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
+import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 export type AdditionalServiceDocument = HydratedDocument<AdditionalService>;
 export declare class AdditionalService extends Document {
     product_id: Types.ObjectId;
@@ -8,6 +9,9 @@ export declare class AdditionalService extends Document {
         end: Date;
     };
     cost: number;
+    payment_status: PAYMENT_STATUS_ENUM;
+    purchased_date: Date;
+    payment_receive_date: Date;
     purchase_order_document: string;
     invoice_document: string;
     service_document: string;

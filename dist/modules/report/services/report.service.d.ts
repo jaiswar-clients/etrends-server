@@ -18,25 +18,28 @@ export declare class ReportService {
     private amcModel;
     private readonly loggerService;
     constructor(orderModel: SoftDeleteModel<OrderDocument>, licenseModel: SoftDeleteModel<LicenseDocument>, customizationModel: SoftDeleteModel<CustomizationDocument>, productModel: SoftDeleteModel<ProductDocument>, clientModel: SoftDeleteModel<ClientDocument>, additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>, amcModel: SoftDeleteModel<AMCDocument>, loggerService: LoggerService);
-    getDetailedOverallSalesReport(filter: ReportFilterType, options?: ReportFilterOptions): Promise<{
-        orderRevenue: number;
-        customizationRevenue: number;
-        licenseRevenue: number;
-        additionalServiceRevenue: number;
-        amcRevenue: number;
-        total: number;
-        period: string;
-    }[]>;
-    getAMCRevenueReport(filter: ReportFilterType, options?: ReportFilterOptions): Promise<{
-        period: string;
-        total: number;
-    }[]>;
     getProductWiseRevenueDistribution(filter: ReportFilterType, options?: ReportFilterOptions): Promise<{
         productId: unknown;
         productName: string;
         revenue: number;
         percentage: number;
         cumulativePercentage: number;
+    }[]>;
+    getIndustryWiseRevenueDistribution(filter: ReportFilterType, options?: ReportFilterOptions & {
+        month?: number;
+        year?: number;
+        quarter?: string;
+        productId?: string;
+    }): Promise<any[]>;
+    private calculateDateRange;
+    getTotalBussinessRevenue(filter: ReportFilterType, options?: ReportFilterOptions & {
+        month?: number;
+        year?: number;
+        quarter?: string;
+    }): Promise<{
+        period: string;
+        total_amc_billing: number;
+        total_purchase_billing: number;
     }[]>;
     getAMCAnnualBreakdown(filter: ReportFilterType, options?: ReportFilterOptions & {
         productId?: string;
@@ -45,10 +48,23 @@ export declare class ReportService {
         totalCollected: number;
         period: string;
     }[]>;
-    getIndustryWiseRevenueDistribution(filter: ReportFilterType, options?: ReportFilterOptions & {
+    getExpectedVsReceivedChartData(filter: ReportFilterType, options?: ReportFilterOptions & {
         month?: number;
         year?: number;
         quarter?: string;
-        productId?: string;
+    }): Promise<{
+        period: string;
+        expected_amount: number;
+        received_amount: number;
+    }[]>;
+    fetchIndustryRevenueDistribution(filter: ReportFilterType, options?: ReportFilterOptions & {
+        month?: number;
+        year?: number;
+        quarter?: string;
     }): Promise<any[]>;
+    getPieChartSalesData(filter: ReportFilterType, options?: ReportFilterOptions & {
+        month?: number;
+        year?: number;
+        quarter?: string;
+    }): Promise<void>;
 }

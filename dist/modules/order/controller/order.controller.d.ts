@@ -5,6 +5,7 @@ import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
 import { UpdateAMCDto } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
+import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 export type UpdateOrderType = CreateOrderDto;
 export declare class OrderController {
     private orderService;
@@ -35,7 +36,25 @@ export declare class OrderController {
             id: any;
         })[];
     }>;
-    loadAllAMC(page: number, filter: AMC_FILTER, limit: number, upcoming: string): Promise<any[]>;
+    loadAllAMC(page: number, limit: number, filter: AMC_FILTER, upcoming: string): Promise<any[]>;
+    getAllPendingPayments(page: number, limit: number): Promise<{
+        pending_payments: {
+            [key: string]: any;
+            _id: string;
+            type: "amc" | "order" | "license" | "customization" | "additional_service";
+            status: string;
+            pending_amount: number;
+            payment_identifier?: string | number;
+        }[];
+        pagination: {
+            total: number;
+            currentPage: number;
+            totalPages: number;
+            limit: number;
+            hasNextPage: boolean;
+            hasPreviousPage: boolean;
+        };
+    }>;
     getOrderById(orderId: string): Promise<import("mongoose").Document<unknown, {}, import("../../../db/schema/order/product-order.schema").Order> & import("../../../db/schema/order/product-order.schema").Order & Required<{
         _id: unknown;
     }> & {
@@ -147,4 +166,5 @@ export declare class OrderController {
     }> & {
         __v: number;
     }>;
+    updatePendingPaymentStatus(id: string, body: UpdatePendingPaymentDto): Promise<any>;
 }

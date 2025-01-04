@@ -39,6 +39,7 @@ export class AMC extends Document {
           enum: Object.values(PAYMENT_STATUS_ENUM),
           required: true,
         },
+        received_date: { type: Date, required: true },
       },
     ],
   })
@@ -47,6 +48,7 @@ export class AMC extends Document {
     from_date: Date;
     to_date: Date;
     status: PAYMENT_STATUS_ENUM; // AMC is free for 1 year that's status will be paid
+    received_date: Date;
   }[];
 
   @Prop({ type: String })

@@ -151,7 +151,9 @@ let OrderService = class OrderService {
                 amount: amcAmount,
                 products: products,
                 amc_percentage: amcPercentage,
-                start_date: new Date(body.amc_start_date),
+                start_date: body.amc_start_date
+                    ? new Date(body.amc_start_date)
+                    : undefined,
                 payments,
             });
             await amc.save();
@@ -765,8 +767,8 @@ let OrderService = class OrderService {
                 body,
             }));
             const amc = await this.amcModel.findOne({ order_id: orderId }).populate({
-                path: 'cliend_id',
-                model: 'Client',
+                path: 'client_id',
+                model: client_schema_1.Client.name,
             });
             const amc_frequency_in_months = amc.client_id
                 .amc_frequency_in_months;
@@ -783,12 +785,7 @@ let OrderService = class OrderService {
                     ? new Date(body.start_date)
                     : amc.start_date,
             };
-            if (body.payments) {
-                payload.payments = amc.payments.map((payment) => {
-                    const updatedPayment = body.payments.find((p) => p._id.toString() === payment._id.toString());
-                    return updatedPayment || payment;
-                });
-            }
+            console.log(payload.payments);
             if (body.start_date !== amc.start_date.toString()) {
                 const payments = [...payload.payments];
                 const lastPayment = payments[payments.length - 1];
@@ -1276,6 +1273,229 @@ let OrderService = class OrderService {
         catch (error) {
             this.loggerService.error(JSON.stringify({
                 message: 'deleteAllOrdersForAllClients: Error during deletion process',
+                error: error.message,
+            }));
+            throw new common_1.HttpException(error.message || 'Server error', error.status || common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    async getAllPendingPayments(page = 1, limit = 20) {
+        try {
+            this.loggerService.log(JSON.stringify({
+                message: 'getAllPendingPayments: Starting to fetch pending payments',
+            }));
+            const TOTAL_PURCHASES_SCENARIOS = 5;
+            const pendingLimitForEachSchema = limit / TOTAL_PURCHASES_SCENARIOS;
+            const [totalAMCs, totalLicenses, totalCustomizations, totalServices, totalOrders,] = await Promise.all([
+                this.amcModel.countDocuments({
+                    'payments.1': { $exists: true },
+                    'payments.status': amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                }),
+                this.licenseModel.countDocuments({
+                    payment_status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                }),
+                this.customizationModel.countDocuments({
+                    payment_status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                }),
+                this.additionalServiceModel.countDocuments({
+                    payment_status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                }),
+                this.orderModel.countDocuments({
+                    'payment_terms.status': amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                }),
+            ]);
+            const [pendingAMCs, pendingLicenses, pendingCustomizations, pendingServices, pendingOrders,] = await Promise.all([
+                this.amcModel
+                    .find({
+                    'payments.1': { $exists: true },
+                    'payments.status': amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                })
+                    .skip((page - 1) * pendingLimitForEachSchema)
+                    .limit(pendingLimitForEachSchema),
+                this.licenseModel
+                    .find({ payment_status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING })
+                    .skip((page - 1) * pendingLimitForEachSchema)
+                    .limit(pendingLimitForEachSchema)
+                    .populate({
+                    path: 'product_id',
+                    select: 'name',
+                }),
+                this.customizationModel
+                    .find({
+                    payment_status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                })
+                    .skip((page - 1) * pendingLimitForEachSchema)
+                    .limit(pendingLimitForEachSchema),
+                this.additionalServiceModel
+                    .find({
+                    payment_status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                })
+                    .skip((page - 1) * pendingLimitForEachSchema)
+                    .limit(pendingLimitForEachSchema),
+                this.orderModel
+                    .find({
+                    'payment_terms.status': amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                })
+                    .skip((page - 1) * pendingLimitForEachSchema)
+                    .limit(pendingLimitForEachSchema),
+            ]);
+            const pendingPayments = [];
+            for (const amc of pendingAMCs) {
+                if (Array.isArray(amc.payments)) {
+                    amc.payments.forEach((payment, index) => {
+                        if (payment.status === amc_schema_1.PAYMENT_STATUS_ENUM.PENDING) {
+                            pendingPayments.push({
+                                _id: amc._id.toString(),
+                                type: 'amc',
+                                status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                                pending_amount: amc.amount || 0,
+                                payment_identifier: index,
+                                payment_date: payment.from_date,
+                                name: `AMC no ${index + 1}`,
+                            });
+                        }
+                    });
+                }
+            }
+            for (const license of pendingLicenses) {
+                const licenseCost = (license.rate?.amount || 0) * (license.total_license || 0);
+                pendingPayments.push({
+                    _id: license._id.toString(),
+                    type: 'license',
+                    status: license.payment_status,
+                    pending_amount: licenseCost,
+                    payment_identifier: license._id.toString(),
+                    payment_date: license.purchase_date,
+                    name: license?.product_id?.name ?? '',
+                });
+            }
+            for (const customization of pendingCustomizations) {
+                pendingPayments.push({
+                    _id: customization._id.toString(),
+                    type: 'customization',
+                    status: customization.payment_status,
+                    pending_amount: customization.cost || 0,
+                    payment_identifier: customization?._id?.toString(),
+                    payment_date: customization.purchased_date,
+                    name: customization?.title ?? '',
+                });
+            }
+            for (const service of pendingServices) {
+                pendingPayments.push({
+                    _id: service._id.toString(),
+                    type: 'additional_service',
+                    status: service.payment_status,
+                    pending_amount: service.cost || 0,
+                    payment_identifier: service._id.toString(),
+                    payment_date: service.purchased_date,
+                    name: service.name,
+                });
+            }
+            for (const order of pendingOrders) {
+                if (Array.isArray(order.payment_terms)) {
+                    order.payment_terms.forEach((term, index) => {
+                        if (term.status === amc_schema_1.PAYMENT_STATUS_ENUM.PENDING &&
+                            term.calculated_amount) {
+                            pendingPayments.push({
+                                _id: order._id.toString(),
+                                type: 'order',
+                                status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                                pending_amount: term.calculated_amount,
+                                payment_identifier: index,
+                                payment_date: term.date,
+                                name: term.name,
+                            });
+                        }
+                    });
+                }
+            }
+            const totalCount = totalAMCs +
+                totalLicenses +
+                totalCustomizations +
+                totalServices +
+                totalOrders;
+            const totalPages = Math.ceil(totalCount / limit);
+            this.loggerService.log(JSON.stringify({
+                message: 'getAllPendingPayments: Successfully fetched all pending payments',
+                total: pendingPayments.length,
+            }));
+            return {
+                pending_payments: pendingPayments,
+                pagination: {
+                    total: totalCount,
+                    currentPage: page,
+                    totalPages,
+                    limit,
+                    hasNextPage: page < totalPages,
+                    hasPreviousPage: page > 1,
+                },
+            };
+        }
+        catch (error) {
+            this.loggerService.error(JSON.stringify({
+                message: 'getAllPendingPayments: Error fetching pending payments',
+                error: error.message,
+                stack: error.stack,
+            }));
+            throw new common_1.HttpException(error.message || 'Server error', error.status || common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    async updatePendingPayment(id, type, payment_identifier, updateData) {
+        try {
+            this.loggerService.log(JSON.stringify({
+                message: 'updatePendingPayment: Starting payment update',
+                type,
+                payment_identifier,
+                updateData,
+            }));
+            let updatedPayment;
+            const paymentReceiveDate = new Date(updateData.payment_receive_date);
+            switch (type) {
+                case 'amc':
+                    updatedPayment = await this.amcModel.findByIdAndUpdate(id, {
+                        [`payments.${payment_identifier}.status`]: updateData.status,
+                        [`payments.${payment_identifier}.payment_receive_date`]: paymentReceiveDate,
+                    });
+                    break;
+                case 'order':
+                    updatedPayment = await this.orderModel.findByIdAndUpdate(id, {
+                        [`payment_terms.${payment_identifier}.status`]: updateData.status,
+                        [`payment_terms.${payment_identifier}.payment_receive_date`]: paymentReceiveDate,
+                    });
+                    break;
+                case 'license':
+                    updatedPayment = await this.licenseModel.findByIdAndUpdate(id, {
+                        payment_status: updateData.status,
+                        payment_receive_date: paymentReceiveDate,
+                    });
+                    break;
+                case 'customization':
+                    updatedPayment = await this.customizationModel.findByIdAndUpdate(id, {
+                        payment_status: updateData.status,
+                        payment_receive_date: paymentReceiveDate,
+                    }, { new: true });
+                    break;
+                case 'additional_service':
+                    updatedPayment = await this.additionalServiceModel.findByIdAndUpdate(id, {
+                        payment_status: updateData.status,
+                        payment_receive_date: paymentReceiveDate,
+                    });
+                    break;
+                default:
+                    throw new common_1.HttpException('Invalid payment type', common_1.HttpStatus.BAD_REQUEST);
+            }
+            if (!updatedPayment) {
+                throw new common_1.HttpException('Payment not found', common_1.HttpStatus.NOT_FOUND);
+            }
+            this.loggerService.log(JSON.stringify({
+                message: 'updatePendingPayment: Payment updated successfully',
+                type,
+                payment_identifier,
+            }));
+            return updatedPayment;
+        }
+        catch (error) {
+            this.loggerService.error(JSON.stringify({
+                message: 'updatePendingPayment: Error updating payment',
                 error: error.message,
             }));
             throw new common_1.HttpException(error.message || 'Server error', error.status || common_1.HttpStatus.INTERNAL_SERVER_ERROR);

@@ -12,9 +12,10 @@ import { AdditionalService, AdditionalServiceDocument } from '@/db/schema/order/
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
 import { AMC_FILTER, ORDER_STATUS_ENUM, PURCHASE_TYPE } from '@/common/types/enums/order.enum';
-import { AMC, AMCDocument } from '@/db/schema/amc/amc.schema';
+import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
 import { UpdateAMCDto } from '../dto/update-amc.dto';
+import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 export declare class OrderService {
     private orderModel;
     private licenseModel;
@@ -176,4 +177,26 @@ export declare class OrderService {
     deleteAllOrdersForAllClients(): Promise<{
         message: string;
     }>;
+    getAllPendingPayments(page?: number, limit?: number): Promise<{
+        pending_payments: {
+            [key: string]: any;
+            _id: string;
+            type: "amc" | "order" | "license" | "customization" | "additional_service";
+            status: string;
+            pending_amount: number;
+            payment_identifier?: string | number;
+        }[];
+        pagination: {
+            total: number;
+            currentPage: number;
+            totalPages: number;
+            limit: number;
+            hasNextPage: boolean;
+            hasPreviousPage: boolean;
+        };
+    }>;
+    updatePendingPayment(id: string, type: IPendingPaymentTypes, payment_identifier: string | number, updateData: {
+        status: PAYMENT_STATUS_ENUM;
+        payment_receive_date: string;
+    }): Promise<any>;
 }

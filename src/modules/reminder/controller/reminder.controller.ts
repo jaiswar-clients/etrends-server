@@ -10,17 +10,26 @@ export class ReminderController {
 
   @Get('/')
   async getAllReminders() {
-    return this.reminderService.getAllReminders();
+    return this.reminderService.getAllInternalReminders();
+  }
+
+  @Get('email/templates')
+  async getEmailTemplates() {
+    return this.reminderService.getEmailTemplates();
+  }
+
+  @Get('email/external/history')
+  async getExternalEmailHistory() {
+    return this.reminderService.getExternalCommunicationHistory();
   }
 
   @Get('/:id')
   async getReminderDocById(@Param('id') id: string) {
     return this.reminderService.getReminderById(id);
   }
-  
+
   @Post('/send-email-to-client')
   async sendEmailToClient(@Body() body: SendEmailDto) {
     return this.reminderService.sendEmailToClient(body);
   }
-
 }

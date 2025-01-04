@@ -34,8 +34,7 @@ import {
 export class ReportModule implements OnModuleInit {
   constructor(private readonly reportService: ReportService) {}
   async onModuleInit() {
-    // const data=await this.reportService.getIndustryWiseRevenueDistribution("all")
+    // const data = await this.reportService.fetchIndustryRevenueDistribution('monthly');
     // console.log(data);
-    
   }
 }

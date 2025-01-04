@@ -22,6 +22,7 @@ const create_customization_service_dto_1 = require("../dto/create-customization.
 const update_amc_dto_1 = require("../dto/update-amc.dto");
 const order_enum_1 = require("../../../common/types/enums/order.enum");
 const auth_guard_1 = require("../../../common/guards/auth.guard");
+const update_pending_payment_1 = require("../dto/update-pending-payment");
 let OrderController = class OrderController {
     constructor(orderService) {
         this.orderService = orderService;
@@ -31,11 +32,16 @@ let OrderController = class OrderController {
         const parsedLimit = parseInt(limit.toString());
         return this.orderService.loadAllOrdersWithAttributes(parsedPage, parsedLimit);
     }
-    async loadAllAMC(page, filter, limit, upcoming) {
+    async loadAllAMC(page, limit, filter, upcoming) {
         const parsedPage = parseInt(page.toString());
         const parsedLimit = parseInt(limit.toString());
         const parsedUpcoming = parseInt(upcoming) || 1;
         return this.orderService.loadAllAMC(parsedPage, parsedLimit, filter || order_enum_1.AMC_FILTER.UPCOMING, { upcoming: parsedUpcoming });
+    }
+    async getAllPendingPayments(page, limit) {
+        const parsedPage = parseInt(page.toString());
+        const parsedLimit = parseInt(limit.toString());
+        return this.orderService.getAllPendingPayments(parsedPage, parsedLimit);
     }
     async getOrderById(orderId) {
         return this.orderService.getOrderById(orderId);
@@ -82,6 +88,12 @@ let OrderController = class OrderController {
     async updateAMC(orderId, body) {
         return this.orderService.updateAMC(orderId, body);
     }
+    async updatePendingPaymentStatus(id, body) {
+        return this.orderService.updatePendingPayment(id, body.type, body.payment_identifier, {
+            payment_receive_date: body.payment_receive_date,
+            status: body.status,
+        });
+    }
 };
 exports.OrderController = OrderController;
 __decorate([
@@ -95,13 +107,21 @@ __decorate([
 __decorate([
     (0, common_1.Get)('/all-amc'),
     __param(0, (0, common_1.Query)('page')),
-    __param(1, (0, common_1.Query)('filter')),
-    __param(2, (0, common_1.Query)('limit')),
+    __param(1, (0, common_1.Query)('limit')),
+    __param(2, (0, common_1.Query)('filter')),
     __param(3, (0, common_1.Query)('upcoming')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, String, Number, String]),
+    __metadata("design:paramtypes", [Number, Number, String, String]),
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "loadAllAMC", null);
+__decorate([
+    (0, common_1.Get)('/pending-payments'),
+    __param(0, (0, common_1.Query)('page')),
+    __param(1, (0, common_1.Query)('limit')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Number, Number]),
+    __metadata("design:returntype", Promise)
+], OrderController.prototype, "getAllPendingPayments", null);
 __decorate([
     (0, common_1.Get)('/:id'),
     __param(0, (0, common_1.Param)('id')),
@@ -216,6 +236,14 @@ __decorate([
     __metadata("design:paramtypes", [String, update_amc_dto_1.UpdateAMCDto]),
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "updateAMC", null);
+__decorate([
+    (0, common_1.Patch)('/pending-payments/:id'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, update_pending_payment_1.UpdatePendingPaymentDto]),
+    __metadata("design:returntype", Promise)
+], OrderController.prototype, "updatePendingPaymentStatus", null);
 exports.OrderController = OrderController = __decorate([
     (0, common_1.Controller)('orders'),
     (0, common_1.UseGuards)(auth_guard_1.AuthGuard),

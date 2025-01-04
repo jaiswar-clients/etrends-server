@@ -22,7 +22,13 @@ let ReminderController = class ReminderController {
         this.reminderService = reminderService;
     }
     async getAllReminders() {
-        return this.reminderService.getAllReminders();
+        return this.reminderService.getAllInternalReminders();
+    }
+    async getEmailTemplates() {
+        return this.reminderService.getEmailTemplates();
+    }
+    async getExternalEmailHistory() {
+        return this.reminderService.getExternalCommunicationHistory();
     }
     async getReminderDocById(id) {
         return this.reminderService.getReminderById(id);
@@ -38,6 +44,18 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], ReminderController.prototype, "getAllReminders", null);
+__decorate([
+    (0, common_1.Get)('email/templates'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], ReminderController.prototype, "getEmailTemplates", null);
+__decorate([
+    (0, common_1.Get)('email/external/history'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], ReminderController.prototype, "getExternalEmailHistory", null);
 __decorate([
     (0, common_1.Get)('/:id'),
     __param(0, (0, common_1.Param)('id')),

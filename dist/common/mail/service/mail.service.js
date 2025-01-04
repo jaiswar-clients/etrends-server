@@ -18,6 +18,7 @@ var MAIL_TEMPLATES;
     MAIL_TEMPLATES["SEND_UPCOMING_AMC_REMINDER"] = "amc-upcoming-reminder";
     MAIL_TEMPLATES["SEND_PENDING_AMC_REMINDER"] = "amc-pending-reminder";
     MAIL_TEMPLATES["SEND_AGREEMENT_EXPIRY_REMINDER"] = "agreement-expiry-reminder";
+    MAIL_TEMPLATES["EXTERNAL_REMINDER_TO_CLIENT"] = "external-reminder-to-client";
 })(MAIL_TEMPLATES || (exports.MAIL_TEMPLATES = MAIL_TEMPLATES = {}));
 let MailService = class MailService {
     constructor(mailerService, loggerService) {

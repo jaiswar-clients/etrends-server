@@ -13,6 +13,7 @@ exports.CreateCustomizationDto = void 0;
 const mongoose_1 = require("mongoose");
 const customization_schema_1 = require("../../../db/schema/order/customization.schema");
 const class_validator_1 = require("class-validator");
+const product_order_schema_1 = require("../../../db/schema/order/product-order.schema");
 class CreateCustomizationDto {
 }
 exports.CreateCustomizationDto = CreateCustomizationDto;
@@ -26,6 +27,17 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)(),
     __metadata("design:type", Number)
 ], CreateCustomizationDto.prototype, "cost", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEnum)(product_order_schema_1.PAYMENT_STATUS_ENUM),
+    __metadata("design:type", String)
+], CreateCustomizationDto.prototype, "payment_status", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Date)
+], CreateCustomizationDto.prototype, "payment_receive_date", void 0);
 __decorate([
     (0, class_validator_1.IsArray)(),
     (0, class_validator_1.IsString)({ each: true }),

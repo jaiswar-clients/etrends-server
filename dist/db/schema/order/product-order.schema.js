@@ -9,11 +9,16 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.OrderSchema = exports.Order = void 0;
+exports.OrderSchema = exports.Order = exports.PAYMENT_STATUS_ENUM = void 0;
 const order_enum_1 = require("../../../common/types/enums/order.enum");
 const mongoose_1 = require("@nestjs/mongoose");
 const mongoose_2 = require("mongoose");
 const mongooseDelete = require("mongoose-delete");
+var PAYMENT_STATUS_ENUM;
+(function (PAYMENT_STATUS_ENUM) {
+    PAYMENT_STATUS_ENUM["PAID"] = "paid";
+    PAYMENT_STATUS_ENUM["PENDING"] = "pending";
+})(PAYMENT_STATUS_ENUM || (exports.PAYMENT_STATUS_ENUM = PAYMENT_STATUS_ENUM = {}));
 class PaymentTerms {
 }
 __decorate([
@@ -32,6 +37,18 @@ __decorate([
     (0, mongoose_1.Prop)({ type: Date }),
     __metadata("design:type", Date)
 ], PaymentTerms.prototype, "date", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: String,
+        enum: PAYMENT_STATUS_ENUM,
+        default: PAYMENT_STATUS_ENUM.PENDING,
+    }),
+    __metadata("design:type", String)
+], PaymentTerms.prototype, "status", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Date }),
+    __metadata("design:type", Date)
+], PaymentTerms.prototype, "payment_receive_date", void 0);
 let Order = class Order extends mongoose_2.Document {
 };
 exports.Order = Order;
@@ -137,7 +154,7 @@ __decorate([
     __metadata("design:type", Array)
 ], Order.prototype, "customizations", void 0);
 __decorate([
-    (0, mongoose_1.Prop)({ type: [{ type: mongoose_2.Types.ObjectId, ref: 'Customization' }] }),
+    (0, mongoose_1.Prop)({ type: [{ type: mongoose_2.Types.ObjectId, ref: 'Additional' }] }),
     __metadata("design:type", Array)
 ], Order.prototype, "additional_services", void 0);
 __decorate([

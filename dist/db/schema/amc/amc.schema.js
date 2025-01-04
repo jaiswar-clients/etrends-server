@@ -53,6 +53,7 @@ __decorate([
                     enum: Object.values(PAYMENT_STATUS_ENUM),
                     required: true,
                 },
+                received_date: { type: Date, required: true },
             },
         ],
     }),

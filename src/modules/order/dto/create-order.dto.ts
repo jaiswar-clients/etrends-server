@@ -13,6 +13,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
 
 class PaymentTermsDto {
   @IsString()
@@ -25,7 +26,16 @@ class PaymentTermsDto {
   calculated_amount: number;
 
   @IsString()
+  @IsOptional()
   date: Date;
+
+  @IsString()
+  @IsEnum(PAYMENT_STATUS_ENUM)
+  status: PAYMENT_STATUS_ENUM;
+
+  @IsString()
+  @IsOptional()
+  payment_receive_date: Date;
 }
 
 class LicenseDetailsDto {

@@ -13,6 +13,7 @@ exports.CreateAdditionalServiceDto = void 0;
 const class_transformer_1 = require("class-transformer");
 const mongoose_1 = require("mongoose");
 const class_validator_1 = require("class-validator");
+const product_order_schema_1 = require("../../../db/schema/order/product-order.schema");
 class DateRange {
 }
 __decorate([
@@ -48,6 +49,17 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)(),
     __metadata("design:type", String)
 ], CreateAdditionalServiceDto.prototype, "invoice_document", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEnum)(product_order_schema_1.PAYMENT_STATUS_ENUM),
+    __metadata("design:type", String)
+], CreateAdditionalServiceDto.prototype, "payment_status", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Date)
+], CreateAdditionalServiceDto.prototype, "payment_receive_date", void 0);
 __decorate([
     (0, class_validator_1.IsNumber)(),
     (0, class_validator_1.IsNotEmpty)(),

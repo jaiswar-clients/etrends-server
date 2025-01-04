@@ -16,6 +16,7 @@ import { CreateCustomizationDto } from '../dto/create-customization.service.dto'
 import { UpdateAMCDto } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
+import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 
 export type UpdateOrderType = CreateOrderDto;
 
@@ -40,8 +41,8 @@ export class OrderController {
   @Get('/all-amc')
   async loadAllAMC(
     @Query('page') page: number,
-    @Query('filter') filter: AMC_FILTER,
     @Query('limit') limit: number,
+    @Query('filter') filter: AMC_FILTER,
     @Query('upcoming') upcoming: string,
   ) {
     const parsedPage = parseInt(page.toString());
@@ -54,6 +55,16 @@ export class OrderController {
       filter || AMC_FILTER.UPCOMING,
       { upcoming: parsedUpcoming },
     );
+  }
+
+  @Get('/pending-payments')
+  async getAllPendingPayments(
+    @Query('page') page: number,
+    @Query('limit') limit: number,
+  ) {
+    const parsedPage = parseInt(page.toString());
+    const parsedLimit = parseInt(limit.toString());
+    return this.orderService.getAllPendingPayments(parsedPage, parsedLimit);
   }
 
   @Get('/:id')
@@ -153,5 +164,21 @@ export class OrderController {
     @Body() body: UpdateAMCDto,
   ) {
     return this.orderService.updateAMC(orderId, body);
+  }
+
+  @Patch('/pending-payments/:id')
+  async updatePendingPaymentStatus(
+    @Param('id') id: string,
+    @Body() body: UpdatePendingPaymentDto,
+  ) {
+    return this.orderService.updatePendingPayment(
+      id,
+      body.type,
+      body.payment_identifier,
+      {
+        payment_receive_date: body.payment_receive_date,
+        status: body.status,
+      },
+    );
   }
 }

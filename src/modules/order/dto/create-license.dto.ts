@@ -2,12 +2,14 @@ import { Type } from 'class-transformer';
 import { Types } from 'mongoose';
 
 import {
+  IsEnum,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
 } from 'class-validator';
+import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
 
 export class CreateLicenseDto {
   @IsMongoId()
@@ -23,6 +25,15 @@ export class CreateLicenseDto {
   @IsString()
   @IsOptional()
   purchase_date: string;
+
+  @IsString()
+  @IsOptional()
+  @IsEnum(PAYMENT_STATUS_ENUM)
+  payment_status: PAYMENT_STATUS_ENUM;
+
+  @IsString()
+  @IsOptional()
+  payment_receive_date: Date;
 
   @IsString()
   @IsOptional()

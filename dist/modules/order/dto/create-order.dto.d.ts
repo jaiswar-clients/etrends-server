@@ -1,10 +1,13 @@
 import { Types } from 'mongoose';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
+import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
 declare class PaymentTermsDto {
     name: string;
     percentage_from_base_cost: number;
     calculated_amount: number;
     date: Date;
+    status: PAYMENT_STATUS_ENUM;
+    payment_receive_date: Date;
 }
 declare class LicenseDetailsDto {
     cost_per_license: number;
