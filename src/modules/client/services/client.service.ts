@@ -148,11 +148,14 @@ export class ClientService {
           clienId: id,
         }),
       );
-      const client = await this.clientModel.findById(id).populate({
-        path: 'parent_company_id',
-        select: 'name _id',
-        model: 'Client',
-      });
+      const client = await this.clientModel.findById(id);
+      if (client?.parent_company_id) {
+        await client.populate({
+          path: 'parent_company_id',
+          select: 'name _id',
+          model: 'Client',
+        });
+      }
 
       if (!client) {
         this.loggerService.warn(
@@ -187,6 +190,7 @@ export class ClientService {
       );
       return clientObj;
     } catch (error: any) {
+      console.log(error);
       this.loggerService.error(
         JSON.stringify({
           message: 'getClientById: Failed to create client',

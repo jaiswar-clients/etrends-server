@@ -128,11 +128,14 @@ let ClientService = class ClientService {
                 message: 'getClientById: Fetching Client info ',
                 clienId: id,
             }));
-            const client = await this.clientModel.findById(id).populate({
-                path: 'parent_company_id',
-                select: 'name _id',
-                model: 'Client',
-            });
+            const client = await this.clientModel.findById(id);
+            if (client?.parent_company_id) {
+                await client.populate({
+                    path: 'parent_company_id',
+                    select: 'name _id',
+                    model: 'Client',
+                });
+            }
             if (!client) {
                 this.loggerService.warn(JSON.stringify({
                     message: 'getClientById: No Client found by this ID',
@@ -157,6 +160,7 @@ let ClientService = class ClientService {
             return clientObj;
         }
         catch (error) {
+            console.log(error);
             this.loggerService.error(JSON.stringify({
                 message: 'getClientById: Failed to create client',
                 error: error.message,
