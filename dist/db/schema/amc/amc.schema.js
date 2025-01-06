@@ -46,14 +46,13 @@ __decorate([
     (0, mongoose_1.Prop)({
         type: [
             {
-                from_date: { type: Date, required: true },
-                to_date: { type: Date, required: true },
+                from_date: { type: Date },
+                to_date: { type: Date },
                 status: {
                     type: String,
                     enum: Object.values(PAYMENT_STATUS_ENUM),
-                    required: true,
                 },
-                received_date: { type: Date, required: true },
+                received_date: { type: Date },
             },
         ],
     }),

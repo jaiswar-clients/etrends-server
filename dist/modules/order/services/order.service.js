@@ -192,6 +192,7 @@ let OrderService = class OrderService {
             return order;
         }
         catch (error) {
+            console.log({ error });
             this.loggerService.error(JSON.stringify({
                 message: 'createOrder: Error creating order',
                 error: error.message,

@@ -279,6 +279,7 @@ export class OrderService {
 
       return order;
     } catch (error: any) {
+      console.log({ error });
       this.loggerService.error(
         JSON.stringify({
           message: 'createOrder: Error creating order',
