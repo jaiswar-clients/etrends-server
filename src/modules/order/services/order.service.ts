@@ -396,7 +396,7 @@ export class OrderService {
       );
 
       orderPayload.agreements.map((agreement) => {
-        agreement.document = extractS3Key(agreement.document);
+          agreement.document = extractS3Key(agreement.document);
         return agreement;
       });
 

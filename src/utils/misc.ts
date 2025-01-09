@@ -11,6 +11,7 @@ export const responseGenerator = (
 };
 
 export const extractS3Key = (signedUrl: string) => {
+  if(!signedUrl) return null;
   if (!signedUrl.includes('https://')) return signedUrl;
   // Regular expression to match the S3 key in the URL
   const regex = /https:\/\/[^\/]+\/([^?]+)/;

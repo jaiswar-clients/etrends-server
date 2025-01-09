@@ -10,6 +10,8 @@ const responseGenerator = (message, data, success = true) => {
 };
 exports.responseGenerator = responseGenerator;
 const extractS3Key = (signedUrl) => {
+    if (!signedUrl)
+        return null;
     if (!signedUrl.includes('https://'))
         return signedUrl;
     const regex = /https:\/\/[^\/]+\/([^?]+)/;
