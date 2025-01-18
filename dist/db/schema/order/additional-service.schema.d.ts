@@ -1,4 +1,4 @@
-import { Document, HydratedDocument, Schema as MongooseSchema, Types } from 'mongoose';
+import { Document, HydratedDocument, Types } from 'mongoose';
 import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 export type AdditionalServiceDocument = HydratedDocument<AdditionalService>;
 export declare class AdditionalService extends Document {
@@ -13,13 +13,16 @@ export declare class AdditionalService extends Document {
     purchased_date: Date;
     payment_receive_date: Date;
     purchase_order_document: string;
+    purchase_order_number: string;
+    invoice_number: string;
+    invoice_date: Date;
     invoice_document: string;
     service_document: string;
     order_id: Types.ObjectId;
     createdAt?: Date;
     updatedAt?: Date;
 }
-declare const AdditionalServiceSchema: MongooseSchema<AdditionalService, import("mongoose").Model<AdditionalService, any, any, any, Document<unknown, any, AdditionalService> & AdditionalService & Required<{
+declare const AdditionalServiceSchema: import("mongoose").Schema<AdditionalService, import("mongoose").Model<AdditionalService, any, any, any, Document<unknown, any, AdditionalService> & AdditionalService & Required<{
     _id: unknown;
 }> & {
     __v: number;

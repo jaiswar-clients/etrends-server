@@ -2,6 +2,7 @@ export declare class CreateProductDto {
     name: string;
     short_name: string;
     does_have_license: boolean;
+    default_number_of_licenses: number;
     modules: {
         name: string;
         key: string;

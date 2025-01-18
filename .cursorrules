@@ -1,0 +1,8 @@
+When I say add logs to a function, I mean add logs to the function that are relevant to the function's purpose and it should be in JSON format.
+Example: 
+this.loggerService.error(
+        JSON.stringify({
+          message: 'signUp: User created successfully',
+          data: { email },
+        }),
+);

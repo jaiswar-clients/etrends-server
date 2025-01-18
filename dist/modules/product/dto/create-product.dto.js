@@ -30,6 +30,11 @@ __decorate([
     __metadata("design:type", Boolean)
 ], CreateProductDto.prototype, "does_have_license", void 0);
 __decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateProductDto.prototype, "default_number_of_licenses", void 0);
+__decorate([
     (0, class_validator_1.IsArray)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Array)

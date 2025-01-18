@@ -330,6 +330,8 @@ let ReminderService = class ReminderService {
                 totalExpiringOrders: orders.length,
             }));
             const expiringOrders = orders.filter((order) => {
+                if (!order?.agreements?.length)
+                    return false;
                 const lastAgreement = order.agreements[order.agreements.length - 1];
                 const expiryDate = new Date(lastAgreement.end);
                 const today = new Date();

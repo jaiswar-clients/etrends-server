@@ -12,36 +12,45 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.StorageService = void 0;
 const config_service_1 = require("../../config/services/config.service");
 const logger_service_1 = require("../../logger/services/logger.service");
-const cloudfront_signer_1 = require("@aws-sdk/cloudfront-signer");
 const common_1 = require("@nestjs/common");
-const aws_sdk_1 = require("aws-sdk");
+const fs = require("fs");
+const path = require("path");
 let StorageService = class StorageService {
     constructor(configService, loggerService) {
         this.configService = configService;
         this.loggerService = loggerService;
-        this.s3 = new aws_sdk_1.S3();
+        this.filesPath = this.configService.get('FILES_PATH');
+        if (!fs.existsSync(this.filesPath)) {
+            fs.mkdirSync(this.filesPath, { recursive: true });
+        }
     }
     get(filename) {
-        if (!filename)
-            return;
-        const fileUrl = `${this.configService.get('AWS_CLOUDFRONT_DISTRIBUTION')}/${filename}`;
-        const preSignedUrl = (0, cloudfront_signer_1.getSignedUrl)({
-            url: fileUrl,
-            dateLessThan: new Date(Date.now() + 1000 * 60 * 60 * 24).toString(),
-            keyPairId: this.configService.get('AWS_CLOUDFRONT_KEY_PAIR'),
-            privateKey: this.configService.get('AWS_CLOUDFRONT_PRIVATE_KEY'),
-        });
-        this.loggerService.log(`Retrieved file URL: ${preSignedUrl}`, 'StorageService');
-        return preSignedUrl;
+        if (!filename) {
+            return null;
+        }
+        const filePath = path.join(this.filesPath, filename);
+        if (!fs.existsSync(filePath)) {
+            return null;
+        }
+        return `${this.configService.get('APP_URL')}/v1/files/${filename}`;
     }
-    async generateUploadUrl(fileName) {
-        const params = {
-            Bucket: this.configService.get('AWS_BUCKET_NAME'),
-            Key: fileName,
-            Expires: 3600,
-        };
-        const uploadUrl = await this.s3.getSignedUrlPromise('putObject', params);
-        return uploadUrl;
+    async uploadFile(file, fileName) {
+        if (!fileName) {
+            throw new common_1.BadRequestException('Filename is required');
+        }
+        if (!file) {
+            throw new common_1.BadRequestException('File is required');
+        }
+        try {
+            const filePath = path.join(this.filesPath, fileName);
+            await fs.promises.writeFile(filePath, file.buffer);
+            this.loggerService.log(`File uploaded successfully: ${filePath}`, 'StorageService');
+            return fileName;
+        }
+        catch (error) {
+            this.loggerService.error(`Error uploading file: ${error.message}`, error.stack, 'StorageService');
+            throw error;
+        }
     }
 };
 exports.StorageService = StorageService;

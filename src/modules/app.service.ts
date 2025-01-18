@@ -9,40 +9,76 @@ export class AppService {
     private loggerService: LoggerService,
   ) {}
 
-  async getUrlForUpload(fileName: string) {
+  async uploadFile(file: Express.Multer.File, fileName: string) {
     try {
-      // Log the start of the URL generation process
       this.loggerService.log(
         JSON.stringify({
-          message: 'getUrlForUpload: Start generating upload URL',
+          message: 'uploadFile: Start uploading file',
           fileName,
         }),
       );
 
-      // Generate the presigned upload URL
-      const url = await this.storageService.generateUploadUrl(fileName);
+      const filePath = await this.storageService.uploadFile(file, fileName);
 
-      // Log the successful generation of the URL
       this.loggerService.log(
         JSON.stringify({
-          message: 'getUrlForUpload: Successfully generated upload URL',
+          message: 'uploadFile: Successfully uploaded file',
           fileName,
-          url,
+          filePath,
         }),
       );
 
-      return url;
+      return filePath;
     } catch (error: any) {
-      // Log the error that occurred during URL generation
+      console.log(error);
       this.loggerService.log(
         JSON.stringify({
-          message: 'getUrlForUpload: Error generating upload URL',
+          message: 'uploadFile: Error uploading file',
           fileName,
           error: error.message,
         }),
       );
 
-      // Throw an HTTP exception with additional details
+      throw new HttpException('Server failed', HttpStatus.BAD_GATEWAY, {
+        cause: error,
+      });
+    }
+  }
+
+  async uploadFiles(files: Express.Multer.File[], fileNames: string[]) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'uploadFiles: Start uploading multiple files',
+          fileNames,
+        }),
+      );
+
+      const filePaths = await Promise.all(
+        files.map((file, index) =>
+          this.storageService.uploadFile(file, fileNames[index]),
+        ),
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'uploadFiles: Successfully uploaded multiple files',
+          fileNames,
+          filePaths,
+        }),
+      );
+
+      return filePaths;
+    } catch (error: any) {
+      console.log(error);
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'uploadFiles: Error uploading multiple files',
+          fileNames,
+          error: error.message,
+        }),
+      );
+
       throw new HttpException('Server failed', HttpStatus.BAD_GATEWAY, {
         cause: error,
       });

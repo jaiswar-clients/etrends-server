@@ -15,11 +15,15 @@ export class AppConfigDTO {
 
   @IsString()
   @IsNotEmpty()
-  JWT_SECRET: number;
+  JWT_SECRET: string;
 
   @IsString()
   @IsNotEmpty()
-  ENCRYPTION_KEY: number;
+  ENCRYPTION_KEY: string;
+
+  @IsString()
+  @IsNotEmpty()
+  FILES_PATH: string;
 
   @IsString()
   @IsNotEmpty()
@@ -27,11 +31,11 @@ export class AppConfigDTO {
 
   @IsString()
   @IsNotEmpty()
-  CLIENT_URL: number;
+  CLIENT_URL: string;
 
   @IsString()
   @IsNotEmpty()
-  APP_URL: number;
+  APP_URL: string;
 
   @IsString()
   @IsNotEmpty()

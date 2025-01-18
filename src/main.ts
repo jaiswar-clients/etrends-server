@@ -7,6 +7,7 @@ import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { ResponseInterceptor } from '@/interceptors/response.interceptor';
 import { HttpExceptionInterceptor as HttpExceptionFilter } from '@/common/filters/http-exception.filter';
+import * as express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -17,6 +18,7 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const port = configService.get('PORT');
+  const filesPath = configService.get('FILES_PATH');
 
   app.enableVersioning({
     type: VersioningType.URI,
@@ -30,6 +32,9 @@ async function bootstrap() {
   app.useBodyParser('text');
   app.useGlobalInterceptors(new ResponseInterceptor(reflector));
   app.useGlobalFilters(new HttpExceptionFilter());
+
+  // Serve static files from FILES_PATH
+  app.use('/v1/files', express.static(filesPath));
 
   app.useGlobalPipes(
     new ValidationPipe({

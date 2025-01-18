@@ -4,10 +4,8 @@ import * as mongooseDelete from 'mongoose-delete';
 import {
   Document,
   HydratedDocument,
-  Schema as MongooseSchema,
   Types,
 } from 'mongoose';
-import { Type } from 'class-transformer';
 import { PAYMENT_STATUS_ENUM } from './product-order.schema';
 
 // Define the document type for TypeScript
@@ -54,6 +52,15 @@ export class AdditionalService extends Document {
 
   @Prop({ type: String })
   purchase_order_document: string; // cdn url
+
+  @Prop({ type: String })
+  purchase_order_number: string;
+
+  @Prop({ type: String })
+  invoice_number: string;
+
+  @Prop({ type: Date })
+  invoice_date: Date;
 
   @Prop({ type: String })
   invoice_document: string; // cdn url

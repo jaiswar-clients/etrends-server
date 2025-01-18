@@ -449,7 +449,9 @@ export class ClientService {
           order_id: order._id,
           amc_rate: order.amc_rate,
           total_cost: (order.amc_id as any).total_cost,
+          cost_per_license: order.cost_per_license,
         }));
+
         const uniqueProducts = [...acc];
         productsWithOrderId.forEach((product) => {
           const existingIndex = uniqueProducts.findIndex(
@@ -627,6 +629,60 @@ export class ClientService {
       throw new HttpException(
         error.message ?? 'Failed to calculate profits',
         HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+  async generateUniqueClientId(): Promise<string> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'generateUniqueClientId: Generating unique client ID',
+        }),
+      );
+
+      // Get current year last 2 digits
+      const yearSuffix = new Date().getFullYear().toString().slice(-2);
+
+      // Find the latest client with ID pattern for current year
+      const latestClient = await this.clientModel
+        .findOne({
+          client_id: new RegExp(`^CL${yearSuffix}`),
+        })
+        .sort({ client_id: -1 })
+        .select('client_id')
+        .lean();
+
+      let nextNumber = 1;
+      if (latestClient) {
+        // Extract number from existing ID and increment
+        const currentNumber = parseInt(latestClient.client_id.slice(-4));
+        nextNumber = currentNumber + 1;
+      }
+
+      // Generate new ID with 4 digit padding
+      const newClientId = `CL${yearSuffix}${nextNumber.toString().padStart(4, '0')}`;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'generateUniqueClientId: Generated unique client ID successfully',
+          clientId: newClientId,
+        }),
+      );
+
+      return newClientId;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'generateUniqueClientId: Failed to generate unique client ID',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        'Failed to generate unique client ID',
+        HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }

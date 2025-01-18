@@ -124,7 +124,9 @@ let ProductService = class ProductService {
                 id,
                 body,
             }));
-            const product = await this.productModel.findByIdAndUpdate(id, body, {
+            const product = await this.productModel.findByIdAndUpdate(id, {
+                $set: body,
+            }, {
                 new: true,
             });
             this.loggerService.warn(JSON.stringify({

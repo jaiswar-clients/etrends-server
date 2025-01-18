@@ -9,7 +9,6 @@ export declare class AMC extends Document {
     order_id: MongooseSchema.Types.ObjectId;
     client_id: MongooseSchema.Types.ObjectId;
     total_cost: number;
-    purchase_order_number: string;
     start_date: Date;
     payments: {
         _id: any;
@@ -17,9 +16,13 @@ export declare class AMC extends Document {
         to_date: Date;
         status: PAYMENT_STATUS_ENUM;
         received_date: Date;
+        purchase_order_number: string;
+        purchase_order_document: string;
+        purchase_order_date: Date;
+        invoice_document: string;
+        invoice_number: string;
+        invoice_date: Date;
     }[];
-    purchase_order_document: string;
-    invoice_document: string;
     amount: number;
     amc_percentage: number;
     products: MongooseSchema.Types.ObjectId[];

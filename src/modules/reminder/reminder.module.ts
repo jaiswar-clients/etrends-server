@@ -36,6 +36,6 @@ export class ReminderModule implements OnModuleInit {
   constructor(private reminderService: ReminderService) {}
 
   async onModuleInit() {
-    // await this.reminderService.seedEmailTemplates();
+    // await this.reminderService.checkAgreementExpiryAndSendReminder();
   }
 }

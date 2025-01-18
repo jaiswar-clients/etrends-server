@@ -23,9 +23,6 @@ export class AMC extends Document {
   @Prop({ required: true, type: Number })
   total_cost: number;
 
-  @Prop({ type: String })
-  purchase_order_number: string;
-
   @Prop({ type: Date })
   start_date: Date;
 
@@ -39,6 +36,12 @@ export class AMC extends Document {
           enum: Object.values(PAYMENT_STATUS_ENUM),
         },
         received_date: { type: Date },
+        purchase_order_number: String,
+        purchase_order_document: String,
+        purchase_order_date: { type: Date },
+        invoice_document: String,
+        invoice_number: String,
+        invoice_date: { type: Date }
       },
     ],
   })
@@ -48,13 +51,13 @@ export class AMC extends Document {
     to_date: Date;
     status: PAYMENT_STATUS_ENUM; // AMC is free for 1 year that's status will be paid
     received_date: Date;
+    purchase_order_number: string;
+    purchase_order_document: string;
+    purchase_order_date: Date;
+    invoice_document: string;
+    invoice_number: string;
+    invoice_date: Date;
   }[];
-
-  @Prop({ type: String })
-  purchase_order_document: string;
-
-  @Prop({ type: String })
-  invoice_document: string;
 
   @Prop({ required: true, type: Number })
   amount: number;

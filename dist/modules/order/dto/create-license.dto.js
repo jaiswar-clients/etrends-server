@@ -23,6 +23,11 @@ __decorate([
 ], CreateLicenseDto.prototype, "product_id", void 0);
 __decorate([
     (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateLicenseDto.prototype, "licenses_with_base_price", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
     __metadata("design:type", Number)
 ], CreateLicenseDto.prototype, "cost_per_license", void 0);
 __decorate([
@@ -54,5 +59,20 @@ __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
-], CreateLicenseDto.prototype, "invoice", void 0);
+], CreateLicenseDto.prototype, "purchase_order_number", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateLicenseDto.prototype, "invoice_number", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateLicenseDto.prototype, "invoice_date", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateLicenseDto.prototype, "invoice_document", void 0);
 //# sourceMappingURL=create-license.dto.js.map

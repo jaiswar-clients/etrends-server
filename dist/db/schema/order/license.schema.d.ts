@@ -13,7 +13,10 @@ export declare class License extends Document {
     total_license: number;
     purchase_date: Date;
     purchase_order_document: string;
-    invoice: string;
+    purchase_order_number: string;
+    invoice_number: string;
+    invoice_date: Date;
+    invoice_document: string;
     createdAt?: Date;
     updatedAt?: Date;
 }

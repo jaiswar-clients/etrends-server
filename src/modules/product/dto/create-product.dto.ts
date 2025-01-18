@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsArray,
   IsOptional,
+  IsNumber,
 } from 'class-validator';
 import { PartialType } from '@nestjs/mapped-types';
 
@@ -18,6 +19,10 @@ export class CreateProductDto {
 
   @IsBoolean()
   does_have_license: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  default_number_of_licenses: number;
 
   @IsArray()
   @IsOptional()

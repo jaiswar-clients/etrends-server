@@ -13,7 +13,9 @@ declare class PaymentTerms {
     name: string;
     percentage_from_base_cost: number;
     calculated_amount: number;
-    date: Date;
+    invoice_document: string;
+    invoice_number: string;
+    invoice_date: Date;
     status: PAYMENT_STATUS_ENUM;
     payment_receive_date: Date;
 }
@@ -29,6 +31,8 @@ export declare class Order extends Document {
     amc_rate: IAMCRate;
     amc_id: Types.ObjectId;
     status: ORDER_STATUS_ENUM;
+    licenses_with_base_price: number;
+    cost_per_license: number;
     payment_terms: PaymentTerms[];
     licenses: Types.ObjectId[];
     agreements: {
@@ -38,12 +42,12 @@ export declare class Order extends Document {
         document: string;
     }[];
     purchase_order_document: string;
-    invoice_document: string;
+    purchase_order_number: string;
     purchased_date: Date;
-    other_document: {
+    other_documents: {
         title: string;
         url: string;
-    };
+    }[];
     customizations: Types.ObjectId[];
     additional_services: Types.ObjectId[];
     amc_start_date: Date;

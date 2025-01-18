@@ -17,6 +17,9 @@ export class Product extends Document {
   @Prop({ type: Boolean, default: false })
   does_have_license: boolean;
 
+  @Prop({ type: Number, default: 0 })
+  default_number_of_licenses: number;
+
   @Prop({ type: String, required: true })
   description: string;
 

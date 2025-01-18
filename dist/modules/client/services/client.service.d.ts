@@ -72,4 +72,5 @@ export declare class ClientService {
             purchased_date: Date;
         }[];
     }>;
+    generateUniqueClientId(): Promise<string>;
 }

@@ -55,6 +55,21 @@ __decorate([
 ], CreateCustomizationDto.prototype, "purchase_order_document", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateCustomizationDto.prototype, "purchase_order_number", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateCustomizationDto.prototype, "invoice_number", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateCustomizationDto.prototype, "invoice_date", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateCustomizationDto.prototype, "invoice_document", void 0);
 __decorate([

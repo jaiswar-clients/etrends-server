@@ -30,11 +30,6 @@ __decorate([
 ], PaymentTermsDto.prototype, "calculated_amount", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.IsOptional)(),
-    __metadata("design:type", Date)
-], PaymentTermsDto.prototype, "date", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsEnum)(product_order_schema_1.PAYMENT_STATUS_ENUM),
     __metadata("design:type", String)
 ], PaymentTermsDto.prototype, "status", void 0);
@@ -43,16 +38,21 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Date)
 ], PaymentTermsDto.prototype, "payment_receive_date", void 0);
-class LicenseDetailsDto {
-}
 __decorate([
-    (0, class_validator_1.IsNumber)(),
-    __metadata("design:type", Number)
-], LicenseDetailsDto.prototype, "cost_per_license", void 0);
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], PaymentTermsDto.prototype, "invoice_document", void 0);
 __decorate([
-    (0, class_validator_1.IsNumber)(),
-    __metadata("design:type", Number)
-], LicenseDetailsDto.prototype, "total_license", void 0);
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], PaymentTermsDto.prototype, "invoice_number", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], PaymentTermsDto.prototype, "invoice_date", void 0);
 class AmcRateDto {
 }
 __decorate([
@@ -84,10 +84,10 @@ __decorate([
     __metadata("design:type", Array)
 ], CreateOrderDto.prototype, "products", void 0);
 __decorate([
-    (0, class_validator_1.IsObject)(),
+    (0, class_validator_1.IsArray)(),
     (0, class_validator_1.IsOptional)(),
-    __metadata("design:type", Object)
-], CreateOrderDto.prototype, "other_document", void 0);
+    __metadata("design:type", Array)
+], CreateOrderDto.prototype, "other_documents", void 0);
 __decorate([
     (0, class_validator_1.IsNumber)(),
     __metadata("design:type", Number)
@@ -123,23 +123,29 @@ __decorate([
 ], CreateOrderDto.prototype, "agreements", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], CreateOrderDto.prototype, "invoice_document", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], CreateOrderDto.prototype, "purchase_order_document", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateOrderDto.prototype, "purchase_order_number", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Date)
 ], CreateOrderDto.prototype, "amc_start_date", void 0);
 __decorate([
-    (0, class_validator_1.ValidateNested)(),
-    (0, class_transformer_1.Type)(() => LicenseDetailsDto),
-    __metadata("design:type", LicenseDetailsDto)
-], CreateOrderDto.prototype, "license_details", void 0);
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateOrderDto.prototype, "cost_per_license", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateOrderDto.prototype, "licenses_with_base_price", void 0);
 __decorate([
     (0, class_validator_1.ValidateNested)(),
     (0, class_transformer_1.Type)(() => CustomizationDto),

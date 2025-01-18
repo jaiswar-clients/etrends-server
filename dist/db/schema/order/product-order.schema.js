@@ -34,9 +34,17 @@ __decorate([
     __metadata("design:type", Number)
 ], PaymentTerms.prototype, "calculated_amount", void 0);
 __decorate([
+    (0, mongoose_1.Prop)({ type: String }),
+    __metadata("design:type", String)
+], PaymentTerms.prototype, "invoice_document", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: String }),
+    __metadata("design:type", String)
+], PaymentTerms.prototype, "invoice_number", void 0);
+__decorate([
     (0, mongoose_1.Prop)({ type: Date }),
     __metadata("design:type", Date)
-], PaymentTerms.prototype, "date", void 0);
+], PaymentTerms.prototype, "invoice_date", void 0);
 __decorate([
     (0, mongoose_1.Prop)({
         type: String,
@@ -107,6 +115,14 @@ __decorate([
     __metadata("design:type", String)
 ], Order.prototype, "status", void 0);
 __decorate([
+    (0, mongoose_1.Prop)({ type: Number, default: 0 }),
+    __metadata("design:type", Number)
+], Order.prototype, "licenses_with_base_price", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Number, default: 0 }),
+    __metadata("design:type", Number)
+], Order.prototype, "cost_per_license", void 0);
+__decorate([
     (0, mongoose_1.Prop)({ type: [PaymentTerms] }),
     __metadata("design:type", Array)
 ], Order.prototype, "payment_terms", void 0);
@@ -134,21 +150,21 @@ __decorate([
 __decorate([
     (0, mongoose_1.Prop)({ type: String }),
     __metadata("design:type", String)
-], Order.prototype, "invoice_document", void 0);
+], Order.prototype, "purchase_order_number", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: Date, default: Date.now }),
     __metadata("design:type", Date)
 ], Order.prototype, "purchased_date", void 0);
 __decorate([
     (0, mongoose_1.Prop)({
-        type: {
-            title: String,
-            url: String,
-        },
+        type: [{
+                title: String,
+                url: String,
+            }],
         default: {},
     }),
-    __metadata("design:type", Object)
-], Order.prototype, "other_document", void 0);
+    __metadata("design:type", Array)
+], Order.prototype, "other_documents", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: [{ type: mongoose_2.Types.ObjectId, ref: 'Customization' }] }),
     __metadata("design:type", Array)

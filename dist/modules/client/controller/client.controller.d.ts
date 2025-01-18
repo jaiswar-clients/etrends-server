@@ -4,6 +4,7 @@ export declare class ClientController {
     private clientService;
     constructor(clientService: ClientService);
     getAllClients(page: string, limit: string, all: string): Promise<any>;
+    generateClientId(): Promise<string>;
     getAllParentCompanies(): Promise<(import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, import("../../../db/schema/client.schema").Client> & import("../../../db/schema/client.schema").Client & Required<{
         _id: unknown;
     }> & {

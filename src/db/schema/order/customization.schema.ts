@@ -56,6 +56,15 @@ export class Customization extends Document {
   purchase_order_document: string; // cdn url
 
   @Prop({ type: String })
+  purchase_order_number: string;
+
+  @Prop({ type: String })
+  invoice_number: string;
+
+  @Prop({ type: Date })
+  invoice_date: Date;
+
+  @Prop({ type: String })
   invoice_document: string; // cdn url
 
   @Prop()

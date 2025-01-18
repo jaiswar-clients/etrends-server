@@ -171,9 +171,15 @@ export class ProductService {
         }),
       );
 
-      const product = await this.productModel.findByIdAndUpdate(id, body, {
-        new: true,
-      });
+      const product = await this.productModel.findByIdAndUpdate(
+        id,
+        {
+          $set: body,
+        },
+        {
+          new: true,
+        },
+      );
 
       this.loggerService.warn(
         JSON.stringify({

@@ -736,7 +736,9 @@ export class ReportService {
     });
     for (const order of orders) {
       for (const term of order.payment_terms || []) {
-        addBilling(term.date, { purchase: term.calculated_amount || 0 });
+        addBilling(term.payment_receive_date, {
+          purchase: term.calculated_amount || 0,
+        });
       }
     }
 
@@ -990,7 +992,8 @@ export class ReportService {
     for (const ord of allOrders) {
       for (const t of ord.payment_terms || []) {
         // Expected on term.date, Received on term.payment_receive_date if any
-        if (t.date) addData(t.date, t.calculated_amount || 0, 0);
+        if (t.payment_receive_date)
+          addData(t.payment_receive_date, t.calculated_amount || 0, 0);
         if (t.payment_receive_date && t.status === PAYMENT_STATUS_ENUM.PAID) {
           addData(t.payment_receive_date, 0, t.calculated_amount || 0);
         }
@@ -1186,7 +1189,13 @@ export class ReportService {
       for (const term of order.payment_terms || []) {
         // Expected on term.date
         for (const p of prods) {
-          addData(term.date, ind, p.name, term.calculated_amount || 0, 0);
+          addData(
+            term.payment_receive_date,
+            ind,
+            p.name,
+            term.calculated_amount || 0,
+            0,
+          );
         }
         // Received on term.payment_receive_date if status is paid
         if (

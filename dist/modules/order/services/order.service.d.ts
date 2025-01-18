@@ -185,6 +185,8 @@ export declare class OrderService {
             status: string;
             pending_amount: number;
             payment_identifier?: string | number;
+            client_name?: string;
+            product_name?: string;
         }[];
         pagination: {
             total: number;

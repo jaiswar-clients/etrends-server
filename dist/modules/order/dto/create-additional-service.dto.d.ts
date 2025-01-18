@@ -13,6 +13,9 @@ export declare class CreateAdditionalServiceDto {
     payment_receive_date: Date;
     cost: number;
     purchase_order_document?: string;
+    purchase_order_number?: string;
+    invoice_number?: string;
+    invoice_date?: string;
     service_document?: string;
 }
 export {};

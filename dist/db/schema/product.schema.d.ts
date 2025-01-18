@@ -4,6 +4,7 @@ export declare class Product extends Document {
     name: string;
     short_name: string;
     does_have_license: boolean;
+    default_number_of_licenses: number;
     description: string;
     modules: {
         name: string;

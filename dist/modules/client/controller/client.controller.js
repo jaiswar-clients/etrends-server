@@ -27,6 +27,9 @@ let ClientController = class ClientController {
         const fetchAll = Boolean(all);
         return this.clientService.getAllClients(parsedPage, parsedLimit, fetchAll);
     }
+    async generateClientId() {
+        return this.clientService.generateUniqueClientId();
+    }
     async getAllParentCompanies() {
         return this.clientService.getAllParentCompanies();
     }
@@ -56,6 +59,12 @@ __decorate([
     __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", Promise)
 ], ClientController.prototype, "getAllClients", null);
+__decorate([
+    (0, common_1.Get)('/generate-client-id'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], ClientController.prototype, "generateClientId", null);
 __decorate([
     (0, common_1.Get)('/parent-companies'),
     __metadata("design:type", Function),

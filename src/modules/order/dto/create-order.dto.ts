@@ -2,13 +2,10 @@ import { Types } from 'mongoose';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import {
   IsArray,
-  IsDate,
-  isEmpty,
   IsEnum,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
-  IsObject,
   IsOptional,
   IsString,
   ValidateNested,
@@ -27,24 +24,24 @@ class PaymentTermsDto {
   calculated_amount: number;
 
   @IsString()
-  @IsOptional()
-  date: Date;
-
-  @IsString()
   @IsEnum(PAYMENT_STATUS_ENUM)
   status: PAYMENT_STATUS_ENUM;
 
   @IsString()
   @IsOptional()
   payment_receive_date: Date;
-}
 
-class LicenseDetailsDto {
-  @IsNumber()
-  cost_per_license: number;
+  @IsString()
+  @IsOptional()
+  invoice_document: string; // cdn url
 
-  @IsNumber()
-  total_license: number;
+  @IsString()
+  @IsOptional()
+  invoice_number: string;
+
+  @IsString()
+  @IsOptional()
+  invoice_date: string;
 }
 
 class AmcRateDto {
@@ -70,12 +67,12 @@ export class CreateOrderDto {
   @IsNotEmpty()
   products: Types.ObjectId[];
 
-  @IsObject()
+  @IsArray()
   @IsOptional()
-  other_document: {
+  other_documents: {
     title: string;
     url: string;
-  };
+  }[];
 
   @IsNumber()
   base_cost: number;
@@ -112,19 +109,24 @@ export class CreateOrderDto {
   }[];
 
   @IsString()
-  invoice_document: string;
-
-  @IsString()
   @IsOptional()
   purchase_order_document: string;
 
   @IsString()
   @IsOptional()
+  purchase_order_number: string;
+
+  @IsString()
+  @IsOptional()
   amc_start_date: Date;
 
-  @ValidateNested()
-  @Type(() => LicenseDetailsDto)
-  license_details: LicenseDetailsDto;
+  @IsNumber()
+  @IsOptional()
+  cost_per_license: number;
+
+  @IsNumber()
+  @IsOptional()
+  licenses_with_base_price: number;
 
   @ValidateNested()
   @Type(() => CustomizationDto)

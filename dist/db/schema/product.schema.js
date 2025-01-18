@@ -29,6 +29,10 @@ __decorate([
     __metadata("design:type", Boolean)
 ], Product.prototype, "does_have_license", void 0);
 __decorate([
+    (0, mongoose_1.Prop)({ type: Number, default: 0 }),
+    __metadata("design:type", Number)
+], Product.prototype, "default_number_of_licenses", void 0);
+__decorate([
     (0, mongoose_1.Prop)({ type: String, required: true }),
     __metadata("design:type", String)
 ], Product.prototype, "description", void 0);

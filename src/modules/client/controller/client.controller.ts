@@ -29,6 +29,11 @@ export class ClientController {
     return this.clientService.getAllClients(parsedPage, parsedLimit, fetchAll);
   }
 
+  @Get('/generate-client-id')
+  async generateClientId() {
+    return this.clientService.generateUniqueClientId();
+  }
+
   @Get('/parent-companies')
   async getAllParentCompanies() {
     return this.clientService.getAllParentCompanies();

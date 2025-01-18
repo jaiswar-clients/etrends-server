@@ -31,8 +31,14 @@ class PaymentTerms {
   @Prop({ type: Number })
   calculated_amount: number;
 
+  @Prop({ type: String })
+  invoice_document: string; // cdn url
+
+  @Prop({ type: String })
+  invoice_number: string;
+
   @Prop({ type: Date })
-  date: Date;
+  invoice_date: Date;
 
   @Prop({
     type: String,
@@ -98,6 +104,12 @@ export class Order extends Document {
   @Prop({ type: String, enum: ORDER_STATUS_ENUM })
   status: ORDER_STATUS_ENUM;
 
+  @Prop({ type: Number, default: 0 })
+  licenses_with_base_price: number;
+
+  @Prop({ type: Number, default: 0 })
+  cost_per_license: number;
+
   @Prop({ type: [PaymentTerms] })
   payment_terms: PaymentTerms[];
 
@@ -125,22 +137,22 @@ export class Order extends Document {
   purchase_order_document: string; // cdn url
 
   @Prop({ type: String })
-  invoice_document: string; // cdn url
+  purchase_order_number: string;
 
   @Prop({ type: Date, default: Date.now })
   purchased_date: Date;
 
   @Prop({
-    type: {
+    type: [{
       title: String,
       url: String,
-    },
+    }],
     default: {},
   })
-  other_document: {
+  other_documents: {
     title: string;
     url: string;
-  }; // cdn url
+  }[]; // cdn url
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
   customizations: Types.ObjectId[]; // array of customization IDs

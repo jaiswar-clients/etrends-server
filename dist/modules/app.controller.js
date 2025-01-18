@@ -16,23 +16,57 @@ exports.AppController = void 0;
 const common_1 = require("@nestjs/common");
 const app_service_1 = require("./app.service");
 const auth_guard_1 = require("../common/guards/auth.guard");
+const platform_express_1 = require("@nestjs/platform-express");
+const class_validator_1 = require("class-validator");
+class UploadFileDto {
+}
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsNotEmpty)(),
+    __metadata("design:type", String)
+], UploadFileDto.prototype, "filename", void 0);
+class UploadMultipleFilesDto {
+}
+__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.IsNotEmpty)(),
+    __metadata("design:type", Array)
+], UploadMultipleFilesDto.prototype, "filenames", void 0);
 let AppController = class AppController {
     constructor(appService) {
         this.appService = appService;
     }
-    async getUrlForUpload(body) {
-        return this.appService.getUrlForUpload(body.filename);
+    async uploadFile(file, body) {
+        if (!file) {
+            throw new common_1.BadRequestException('File is required');
+        }
+        return this.appService.uploadFile(file, body.filename);
+    }
+    async uploadMultipleFiles(files, body) {
+        return this.appService.uploadFiles(files, body.filenames);
     }
 };
 exports.AppController = AppController;
 __decorate([
-    (0, common_1.Post)('/url-for-upload'),
+    (0, common_1.Post)('/upload'),
     (0, common_1.UseGuards)(auth_guard_1.AuthGuard),
-    __param(0, (0, common_1.Body)()),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file')),
+    __param(0, (0, common_1.UploadedFile)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, UploadFileDto]),
     __metadata("design:returntype", Promise)
-], AppController.prototype, "getUrlForUpload", null);
+], AppController.prototype, "uploadFile", null);
+__decorate([
+    (0, common_1.Post)('/upload-multiple'),
+    (0, common_1.UseGuards)(auth_guard_1.AuthGuard),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('files')),
+    __param(0, (0, common_1.UploadedFile)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Array, UploadMultipleFilesDto]),
+    __metadata("design:returntype", Promise)
+], AppController.prototype, "uploadMultipleFiles", null);
 exports.AppController = AppController = __decorate([
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [app_service_1.AppService])

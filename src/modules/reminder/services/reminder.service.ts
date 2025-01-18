@@ -494,6 +494,7 @@ export class ReminderService {
 
       // Filter orders with agreement expiry in next 30 days
       const expiringOrders = orders.filter((order) => {
+        if (!order?.agreements?.length) return false;
         const lastAgreement = order.agreements[order.agreements.length - 1];
         const expiryDate = new Date(lastAgreement.end);
         const today = new Date();

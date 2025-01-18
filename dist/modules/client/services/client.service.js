@@ -335,6 +335,7 @@ let ClientService = class ClientService {
                     order_id: order._id,
                     amc_rate: order.amc_rate,
                     total_cost: order.amc_id.total_cost,
+                    cost_per_license: order.cost_per_license,
                 }));
                 const uniqueProducts = [...acc];
                 productsWithOrderId.forEach((product) => {
@@ -464,6 +465,39 @@ let ClientService = class ClientService {
                 stack: error.stack,
             }));
             throw new common_1.HttpException(error.message ?? 'Failed to calculate profits', common_1.HttpStatus.BAD_GATEWAY);
+        }
+    }
+    async generateUniqueClientId() {
+        try {
+            this.loggerService.log(JSON.stringify({
+                message: 'generateUniqueClientId: Generating unique client ID',
+            }));
+            const yearSuffix = new Date().getFullYear().toString().slice(-2);
+            const latestClient = await this.clientModel
+                .findOne({
+                client_id: new RegExp(`^CL${yearSuffix}`),
+            })
+                .sort({ client_id: -1 })
+                .select('client_id')
+                .lean();
+            let nextNumber = 1;
+            if (latestClient) {
+                const currentNumber = parseInt(latestClient.client_id.slice(-4));
+                nextNumber = currentNumber + 1;
+            }
+            const newClientId = `CL${yearSuffix}${nextNumber.toString().padStart(4, '0')}`;
+            this.loggerService.log(JSON.stringify({
+                message: 'generateUniqueClientId: Generated unique client ID successfully',
+                clientId: newClientId,
+            }));
+            return newClientId;
+        }
+        catch (error) {
+            this.loggerService.error(JSON.stringify({
+                message: 'generateUniqueClientId: Failed to generate unique client ID',
+                error: error.message,
+            }));
+            throw new common_1.HttpException('Failed to generate unique client ID', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 };

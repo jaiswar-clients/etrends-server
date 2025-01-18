@@ -18,6 +18,9 @@ export declare class Customization extends Document {
     payment_status: PAYMENT_STATUS_ENUM;
     payment_receive_date: Date;
     purchase_order_document: string;
+    purchase_order_number: string;
+    invoice_number: string;
+    invoice_date: Date;
     invoice_document: string;
     createdAt?: Date;
     updatedAt?: Date;

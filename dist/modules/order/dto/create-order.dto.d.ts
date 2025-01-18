@@ -5,13 +5,11 @@ declare class PaymentTermsDto {
     name: string;
     percentage_from_base_cost: number;
     calculated_amount: number;
-    date: Date;
     status: PAYMENT_STATUS_ENUM;
     payment_receive_date: Date;
-}
-declare class LicenseDetailsDto {
-    cost_per_license: number;
-    total_license: number;
+    invoice_document: string;
+    invoice_number: string;
+    invoice_date: string;
 }
 declare class AmcRateDto {
     percentage: number;
@@ -23,10 +21,10 @@ declare class CustomizationDto {
 }
 export declare class CreateOrderDto {
     products: Types.ObjectId[];
-    other_document: {
+    other_documents: {
         title: string;
         url: string;
-    };
+    }[];
     base_cost: number;
     amc_rate: AmcRateDto;
     status: ORDER_STATUS_ENUM;
@@ -42,10 +40,11 @@ export declare class CreateOrderDto {
         end: Date;
         document: string;
     }[];
-    invoice_document: string;
     purchase_order_document: string;
+    purchase_order_number: string;
     amc_start_date: Date;
-    license_details: LicenseDetailsDto;
+    cost_per_license: number;
+    licenses_with_base_price: number;
     customization: CustomizationDto;
 }
 export {};

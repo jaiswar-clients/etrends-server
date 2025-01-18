@@ -8,6 +8,7 @@ const nestjs_pino_1 = require("nestjs-pino");
 const helmet_1 = require("helmet");
 const response_interceptor_1 = require("./interceptors/response.interceptor");
 const http_exception_filter_1 = require("./common/filters/http-exception.filter");
+const express = require("express");
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, {
         bufferLogs: true,
@@ -16,6 +17,7 @@ async function bootstrap() {
     });
     const configService = app.get(config_service_1.ConfigService);
     const port = configService.get('PORT');
+    const filesPath = configService.get('FILES_PATH');
     app.enableVersioning({
         type: common_1.VersioningType.URI,
         defaultVersion: '1',
@@ -26,6 +28,7 @@ async function bootstrap() {
     app.useBodyParser('text');
     app.useGlobalInterceptors(new response_interceptor_1.ResponseInterceptor(reflector));
     app.useGlobalFilters(new http_exception_filter_1.HttpExceptionInterceptor());
+    app.use('/v1/files', express.static(filesPath));
     app.useGlobalPipes(new common_1.ValidationPipe({
         whitelist: true,
         transform: true,

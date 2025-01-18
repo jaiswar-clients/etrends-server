@@ -503,7 +503,9 @@ let ReportService = class ReportService {
         });
         for (const order of orders) {
             for (const term of order.payment_terms || []) {
-                addBilling(term.date, { purchase: term.calculated_amount || 0 });
+                addBilling(term.payment_receive_date, {
+                    purchase: term.calculated_amount || 0,
+                });
             }
         }
         const customizations = await this.customizationModel.find();
@@ -701,8 +703,8 @@ let ReportService = class ReportService {
         });
         for (const ord of allOrders) {
             for (const t of ord.payment_terms || []) {
-                if (t.date)
-                    addData(t.date, t.calculated_amount || 0, 0);
+                if (t.payment_receive_date)
+                    addData(t.payment_receive_date, t.calculated_amount || 0, 0);
                 if (t.payment_receive_date && t.status === amc_schema_1.PAYMENT_STATUS_ENUM.PAID) {
                     addData(t.payment_receive_date, 0, t.calculated_amount || 0);
                 }
@@ -838,7 +840,7 @@ let ReportService = class ReportService {
                 : [];
             for (const term of order.payment_terms || []) {
                 for (const p of prods) {
-                    addData(term.date, ind, p.name, term.calculated_amount || 0, 0);
+                    addData(term.payment_receive_date, ind, p.name, term.calculated_amount || 0, 0);
                 }
                 if (term.payment_receive_date &&
                     term.status === amc_schema_1.PAYMENT_STATUS_ENUM.PAID) {

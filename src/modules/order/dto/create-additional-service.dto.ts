@@ -36,7 +36,7 @@ export class CreateAdditionalServiceDto {
   date: DateRange;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   invoice_document: string;
 
   @IsString()
@@ -55,6 +55,18 @@ export class CreateAdditionalServiceDto {
   @IsString()
   @IsOptional()
   purchase_order_document?: string;
+
+  @IsString()
+  @IsOptional()
+  purchase_order_number?: string;
+
+  @IsString()
+  @IsOptional()
+  invoice_number?: string;
+
+  @IsString()
+  @IsOptional()
+  invoice_date?: string;
 
   @IsString()
   @IsOptional()

@@ -4,6 +4,7 @@ export declare const app: (() => {
     JWT_SECRET: string;
     IV: string;
     ENCRYPTION_KEY: string;
+    FILES_PATH: string;
     CLIENT_URL: string;
     APP_URL: string;
     EMAIL_DOMAIN: string;
@@ -17,6 +18,7 @@ export declare const app: (() => {
     JWT_SECRET: string;
     IV: string;
     ENCRYPTION_KEY: string;
+    FILES_PATH: string;
     CLIENT_URL: string;
     APP_URL: string;
     EMAIL_DOMAIN: string;
@@ -24,21 +26,4 @@ export declare const app: (() => {
     EMAIL_SECURE: string;
     EMAIL_ID: string;
     EMAIL_PASSWORD: string;
-}>;
-export declare const awsServices: (() => {
-    AWS_SECRET_ACCESS_KEY: string;
-    AWS_ACCESS_KEY_ID: string;
-    AWS_CLOUDFRONT_KEY_PAIR: string;
-    AWS_CLOUDFRONT_PRIVATE_KEY: string;
-    AWS_CLOUDFRONT_DISTRIBUTION: string;
-    AWS_BUCKET_NAME: string;
-    AWS_REGION: string;
-}) & import("@nestjs/config").ConfigFactoryKeyHost<{
-    AWS_SECRET_ACCESS_KEY: string;
-    AWS_ACCESS_KEY_ID: string;
-    AWS_CLOUDFRONT_KEY_PAIR: string;
-    AWS_CLOUDFRONT_PRIVATE_KEY: string;
-    AWS_CLOUDFRONT_DISTRIBUTION: string;
-    AWS_BUCKET_NAME: string;
-    AWS_REGION: string;
 }>;

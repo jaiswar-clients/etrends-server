@@ -3,8 +3,8 @@ import { LoggerService } from '@/common/logger/services/logger.service';
 export declare class StorageService {
     private configService;
     private loggerService;
-    private readonly s3;
+    private readonly filesPath;
     constructor(configService: ConfigService, loggerService: LoggerService);
     get(filename: string): string;
-    generateUploadUrl(fileName: string): Promise<string>;
+    uploadFile(file: Express.Multer.File, fileName: string): Promise<string>;
 }

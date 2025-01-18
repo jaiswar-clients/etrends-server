@@ -20,7 +20,7 @@ exports.ConfigModule = ConfigModule = __decorate([
     (0, common_1.Module)({
         imports: [
             config_1.ConfigModule.forRoot({
-                load: [variables_1.app, variables_1.awsServices],
+                load: [variables_1.app],
                 cache: true,
                 expandVariables: true,
                 isGlobal: true,

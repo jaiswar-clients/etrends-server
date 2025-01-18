@@ -3,7 +3,7 @@ import {
   ConfigModule as NestJsConfigModule,
 } from '@nestjs/config';
 import { Global, Module } from '@nestjs/common';
-import { app, awsServices } from './variables';
+import { app } from './variables';
 import { validationSchema } from './config.validation';
 import { ConfigService } from './services/config.service';
 
@@ -11,7 +11,7 @@ import { ConfigService } from './services/config.service';
 @Module({
   imports: [
     NestJsConfigModule.forRoot({
-      load: [app, awsServices],
+      load: [app],
       cache: true,
       expandVariables: true,
       isGlobal: true,

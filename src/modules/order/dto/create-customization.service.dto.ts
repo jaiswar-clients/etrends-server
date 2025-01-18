@@ -42,6 +42,18 @@ export class CreateCustomizationDto {
   purchase_order_document: string;
 
   @IsString()
+  @IsOptional()
+  purchase_order_number: string;
+
+  @IsString()
+  @IsOptional()
+  invoice_number: string;
+
+  @IsString()
+  @IsOptional()
+  invoice_date: string;
+
+  @IsString()
   invoice_document: string;
 
   @IsString()

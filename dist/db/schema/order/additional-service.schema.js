@@ -64,6 +64,18 @@ __decorate([
 __decorate([
     (0, mongoose_1.Prop)({ type: String }),
     __metadata("design:type", String)
+], AdditionalService.prototype, "purchase_order_number", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: String }),
+    __metadata("design:type", String)
+], AdditionalService.prototype, "invoice_number", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Date }),
+    __metadata("design:type", Date)
+], AdditionalService.prototype, "invoice_date", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: String }),
+    __metadata("design:type", String)
 ], AdditionalService.prototype, "invoice_document", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: String }),

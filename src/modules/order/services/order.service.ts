@@ -72,7 +72,7 @@ export class OrderService {
         }),
       );
 
-      const { license_details, customization, products } = body;
+      const { customization, products } = body;
 
       const productsList = await this.productModel.find({
         _id: { $in: products },
@@ -89,49 +89,9 @@ export class OrderService {
         throw new Error('Invalid product id');
       }
 
-      let license_id: string | null = null;
-      // check if the products list have the does_have_license flag
       const doesHaveLicense = productsList.some(
         (product) => product.does_have_license,
       );
-
-      if (
-        doesHaveLicense &&
-        !license_details.cost_per_license &&
-        !license_details.total_license
-      ) {
-        throw new Error('License is required');
-      } else if (
-        doesHaveLicense &&
-        license_details.cost_per_license &&
-        license_details.total_license
-      ) {
-        // find the correct product id of the license to be purchased
-        const licenseProduct = productsList.find(
-          (product) => product.does_have_license,
-        );
-        if (!licenseProduct) {
-          throw new Error('License product not found');
-        }
-
-        const license = new this.licenseModel({
-          rate: {
-            amount: license_details.cost_per_license,
-            percentage: 0,
-          },
-          total_license: license_details.total_license,
-          product_id: licenseProduct._id,
-        });
-        await license.save();
-        license_id = license._id as string;
-
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'createOrder: Created license',
-            license_id,
-          }),
-        );
-      }
 
       let customization_id: string | null = null;
       if (customization.cost) {
@@ -156,14 +116,13 @@ export class OrderService {
         client_id: clientId,
         purchase_date: new Date(body.purchased_date),
       };
-      // remove the license_details and customization from the body
-      delete orderPayload.license_details;
+
       delete orderPayload.customization;
 
-      if (license_id) {
-        orderPayload['licenses'] = [license_id];
+      if (doesHaveLicense) {
         orderPayload['is_purchased_with_order.license'] = true;
       }
+
       if (customization_id) {
         orderPayload['customizations'] = [customization_id];
         orderPayload['is_purchased_with_order.customization'] = true;
@@ -183,11 +142,7 @@ export class OrderService {
       // calculate amc_percentage if order.amc_rate.amount is present
       let amcPercentage = order.amc_rate.percentage;
 
-      const licenseTotalCost =
-        license_details.cost_per_license * license_details.total_license || 0;
-
-      const amcTotalCost =
-        (customization.cost + licenseTotalCost || 0) + order.base_cost;
+      const amcTotalCost = (customization.cost || 0) + order.base_cost;
 
       const amcAmount = (amcTotalCost / 100) * amcPercentage;
 
@@ -207,6 +162,7 @@ export class OrderService {
               from_date: body.amc_start_date,
               to_date: till_date_of_payment,
               status: PAYMENT_STATUS_ENUM.PAID,
+              received_date: body.amc_start_date,
             },
           ]
         : [];
@@ -243,12 +199,6 @@ export class OrderService {
         }),
       );
 
-      // if customization_id and license_id, update its object with orderId
-      if (license_id) {
-        await this.licenseModel.findByIdAndUpdate(license_id, {
-          order_id: order._id,
-        });
-      }
       if (customization_id) {
         await this.customizationModel.findByIdAndUpdate(customization_id, {
           order_id: order._id,
@@ -310,7 +260,7 @@ export class OrderService {
         throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
       }
 
-      const { license_details, customization, products } = body;
+      const { customization, products } = body;
 
       const productsList = await this.productModel.find({
         _id: { $in: products },
@@ -320,44 +270,10 @@ export class OrderService {
         throw new Error('Invalid product id');
       }
 
-      let license_id: string | null =
-        existingOrder.licenses?.[0]?.toString() || null;
-      const doesHaveLicense = productsList.some(
-        (product) => product.does_have_license,
-      );
-
-      if (
-        doesHaveLicense &&
-        license_details?.cost_per_license &&
-        license_details?.total_license
-      ) {
-        const licenseProduct = productsList.find(
-          (product) => product.does_have_license,
-        );
-        if (!licenseProduct) {
-          throw new Error('License product not found');
-        }
-
-        const licenseUpdate = {
-          rate: {
-            amount: license_details.cost_per_license,
-            percentage: 0,
-          },
-          total_license: license_details.total_license,
-          product_id: licenseProduct._id,
-        };
-
-        if (license_id) {
-          await this.licenseModel.findByIdAndUpdate(license_id, licenseUpdate);
-        } else {
-          const license = await this.licenseModel.create(licenseUpdate);
-          license_id = license._id.toString();
-        }
-      }
-
       let customization_id: string | null =
         existingOrder.customizations?.[0]?.toString() || null;
-      if (customization?.modules?.length) {
+      let isNewCustomization = false;
+      if (customization.cost || customization?.modules?.length) {
         const customizationUpdate = {
           cost: customization.cost,
           modules: customization.modules,
@@ -370,33 +286,50 @@ export class OrderService {
             customizationUpdate,
           );
         } else {
-          const customizationData =
-            await this.customizationModel.create(customizationUpdate);
+          isNewCustomization = true;
+          const customizationData = new this.customizationModel(
+            customizationUpdate,
+          );
+          await customizationData.save();
           customization_id = customizationData._id.toString();
         }
       }
 
       const orderPayload = {
         ...body,
-        license_id,
-        customization_id,
+        customizations: isNewCustomization
+          ? [customization_id]
+          : existingOrder.customizations,
       };
-      delete orderPayload.license_details;
+
+      if (isNewCustomization) {
+        orderPayload['is_purchased_with_order.customization'] = true;
+      }
+
       delete orderPayload.customization;
+
+      if (orderPayload.payment_terms.length) {
+        orderPayload.payment_terms.map((term) => {
+          term.invoice_document = extractS3Key(term.invoice_document);
+          return term;
+        });
+      }
 
       orderPayload.purchase_order_document = extractS3Key(
         orderPayload.purchase_order_document,
       );
-      orderPayload.invoice_document = extractS3Key(
-        orderPayload.invoice_document,
-      );
 
-      orderPayload.other_document.url = extractS3Key(
-        orderPayload.other_document.url,
-      );
+      if (orderPayload.other_documents.length) {
+        orderPayload.other_documents = orderPayload.other_documents.map(
+          (doc) => {
+            doc.url = extractS3Key(doc.url);
+            return doc;
+          },
+        );
+      }
 
       orderPayload.agreements.map((agreement) => {
-          agreement.document = extractS3Key(agreement.document);
+        agreement.document = extractS3Key(agreement.document);
         return agreement;
       });
 
@@ -406,12 +339,8 @@ export class OrderService {
         { new: true },
       );
 
-      const licenseTotalCost =
-        license_details?.cost_per_license * license_details?.total_license || 0;
-
       const amcTotalCost =
-        ((customization?.cost || 0) + licenseTotalCost || 0) +
-        (updatedOrder.base_cost || 0);
+        (customization?.cost || 0) + (updatedOrder.base_cost || 0);
       let amcPercentage = updatedOrder.amc_rate?.percentage || 0;
 
       const amcAmount = (amcTotalCost / 100) * amcPercentage;
@@ -498,10 +427,9 @@ export class OrderService {
         }),
       );
 
-      const order = await this.orderModel.findById(orderId).populate([
-        { path: 'licenses', model: License.name },
-        { path: 'customizations', model: Customization.name },
-      ]);
+      const order = await this.orderModel
+        .findById(orderId)
+        .populate([{ path: 'customizations', model: Customization.name }]);
 
       if (!order) {
         this.loggerService.error(
@@ -514,10 +442,6 @@ export class OrderService {
       }
 
       const orderObj = order.toObject();
-      if (orderObj.licenses && orderObj.licenses.length > 0) {
-        orderObj['license'] = orderObj.licenses[0];
-        delete orderObj.licenses;
-      }
 
       if (orderObj.customizations && orderObj.customizations.length > 0) {
         orderObj['customization'] = orderObj.customizations[0];
@@ -537,16 +461,16 @@ export class OrderService {
         );
       }
 
-      if (orderObj.invoice_document) {
-        orderObj.invoice_document = this.storageService.get(
-          orderObj.invoice_document,
-        );
-      }
+      orderObj.payment_terms.map((term) => {
+        term.invoice_document = this.storageService.get(term.invoice_document);
+        return term;
+      });
 
-      if (orderObj.other_document) {
-        orderObj.other_document.url = this.storageService.get(
-          orderObj.other_document.url,
-        );
+      if (orderObj.other_documents.length) {
+        orderObj.other_documents = orderObj.other_documents.map((doc) => {
+          doc.url = this.storageService.get(doc.url);
+          return doc;
+        });
       }
 
       if (orderObj.agreements.length) {
@@ -559,6 +483,7 @@ export class OrderService {
 
       return orderObj;
     } catch (error: any) {
+      console.log({ error });
       this.loggerService.error(
         JSON.stringify({
           message: 'getOrderById: Error fetching order',
@@ -679,7 +604,7 @@ export class OrderService {
         order_id: orderId,
         purchase_date: body.purchase_date,
         purchase_order_document: body.purchase_order_document,
-        invoice: body.invoice,
+        invoice_document: body.invoice_document,
       });
       await license.save();
 
@@ -1062,15 +987,19 @@ export class OrderService {
       const amcObject = amc.toObject();
       amcObject['client'] = amcObject.client_id;
       delete amcObject.client_id;
-      if (amc.purchase_order_document) {
-        amcObject.purchase_order_document = this.storageService.get(
-          amcObject.purchase_order_document,
-        );
-      } else if (amc.invoice_document) {
-        amcObject.invoice_document = this.storageService.get(
-          amcObject.invoice_document,
-        );
-      }
+
+      amcObject.payments.forEach((payment) => {
+        if (payment.purchase_order_document) {
+          payment.purchase_order_document = this.storageService.get(
+            payment.purchase_order_document,
+          );
+        }
+        if (payment.invoice_document) {
+          payment.invoice_document = this.storageService.get(
+            payment.invoice_document,
+          );
+        }
+      });
 
       if (!amc) {
         this.loggerService.error(
@@ -1148,8 +1077,6 @@ export class OrderService {
           : amc.start_date,
       };
 
-      console.log(payload.payments);
-
       // // Merge changes from body.payments to amc.payments
       // if (body.payments) {
       //   payload.payments = amc.payments.map((payment: any) => {
@@ -1162,12 +1089,29 @@ export class OrderService {
 
       // Handle payments update for date/frequency changes
       if (body.start_date !== amc.start_date.toString()) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'updateAMC: Start date has changed',
+            previousStartDate: amc.start_date,
+            newStartDate: body.start_date,
+          }),
+        );
+
         const payments = [...payload.payments];
         const lastPayment = payments[payments.length - 1];
         const secondLastPayment = payments[payments.length - 2];
 
         // Only update if last payment is pending
         if (lastPayment && lastPayment.status === PAYMENT_STATUS_ENUM.PENDING) {
+          this.loggerService.log(
+            JSON.stringify({
+              message:
+                'updateAMC: Last payment is pending, updating payment dates',
+              lastPayment,
+              secondLastPayment,
+            }),
+          );
+
           const frequency =
             amc_frequency_in_months || DEFAULT_AMC_CYCLE_IN_MONTHS;
 
@@ -1175,6 +1119,13 @@ export class OrderService {
           if (secondLastPayment) {
             // If there's a second last payment, use its to_date as fromDate
             fromDate = secondLastPayment.to_date;
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'updateAMC: Using second last payment to_date as fromDate',
+                fromDate,
+              }),
+            );
           } else {
             // Otherwise find the last paid payment or use start_date
             const lastPaidPayment = [...payments]
@@ -1184,10 +1135,23 @@ export class OrderService {
             fromDate = lastPaidPayment
               ? lastPaidPayment.to_date
               : payload.start_date;
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'updateAMC: No second last payment found, using last paid payment or start_date',
+                fromDate,
+              }),
+            );
           }
 
           lastPayment.from_date = fromDate;
           lastPayment.to_date = this.getNextDate(new Date(fromDate), frequency);
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'updateAMC: Updated last payment dates',
+              lastPayment,
+            }),
+          );
         }
 
         payload.payments = payments;
@@ -1240,6 +1204,12 @@ export class OrderService {
       if (licenseObj.purchase_order_document) {
         licenseObj.purchase_order_document = this.storageService.get(
           licenseObj.purchase_order_document,
+        );
+      }
+
+      if (licenseObj.invoice_document) {
+        licenseObj.invoice_document = this.storageService.get(
+          licenseObj.invoice_document,
         );
       }
 
@@ -1475,7 +1445,7 @@ export class OrderService {
             product_id,
             purchase_date: body.purchase_date,
             purchase_order_document: body.purchase_order_document,
-            invoice: body.invoice,
+            invoice_document: body.invoice_document,
           },
         },
         {
@@ -1613,15 +1583,18 @@ export class OrderService {
         else if (amc.payments.length > 1 && filter === AMC_FILTER.FIRST)
           continue;
 
-        if (amcObj.purchase_order_document) {
-          amcObj.purchase_order_document = this.storageService.get(
-            amcObj.purchase_order_document,
-          );
-        } else if (amcObj.invoice_document) {
-          amcObj.invoice_document = this.storageService.get(
-            amcObj.invoice_document,
-          );
-        }
+        amcObj.payments.forEach((payment) => {
+          if (payment.purchase_order_document) {
+            payment.purchase_order_document = this.storageService.get(
+              payment.purchase_order_document,
+            );
+          }
+          if (payment.invoice_document) {
+            payment.invoice_document = this.storageService.get(
+              payment.invoice_document,
+            );
+          }
+        });
 
         amcObj['client'] = amcObj.client_id;
         delete amcObj.client_id;
@@ -1719,6 +1692,9 @@ export class OrderService {
                 amc_frequency_in_months,
               ),
               status: PAYMENT_STATUS_ENUM.PENDING,
+              purchase_order_document: '',
+              invoice_document: '',
+              received_date: undefined,
             };
 
             await this.amcModel.findByIdAndUpdate(_id, {
@@ -1933,32 +1909,40 @@ export class OrderService {
             'payments.1': { $exists: true },
             'payments.status': PAYMENT_STATUS_ENUM.PENDING,
           })
+          .populate('client_id', 'name')
+          .populate('products', 'name')
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.licenseModel
           .find({ payment_status: PAYMENT_STATUS_ENUM.PENDING })
-          .skip((page - 1) * pendingLimitForEachSchema)
-          .limit(pendingLimitForEachSchema)
+          .populate('order_id')
           .populate({
             path: 'product_id',
             select: 'name',
-          }),
+          })
+          .skip((page - 1) * pendingLimitForEachSchema)
+          .limit(pendingLimitForEachSchema),
         this.customizationModel
           .find({
             payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
+          .populate('order_id')
+          .populate('product_id', 'name')
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.additionalServiceModel
           .find({
             payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
+          .populate('order_id')
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.orderModel
           .find({
             'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
           })
+          .populate('client_id', 'name')
+          .populate('products', 'name')
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
       ]);
@@ -1974,6 +1958,8 @@ export class OrderService {
         status: string;
         pending_amount: number;
         payment_identifier?: string | number;
+        client_name?: string;
+        product_name?: string;
         [key: string]: any;
       }> = [];
 
@@ -1990,6 +1976,10 @@ export class OrderService {
                 payment_identifier: index,
                 payment_date: payment.from_date,
                 name: `AMC no ${index + 1}`,
+                client_name: (amc.client_id as any)?.name || 'N/A',
+                product_name:
+                  (amc.products as any[])?.map((p) => p.name).join(', ') ||
+                  'N/A',
               });
             }
           });
@@ -2000,6 +1990,7 @@ export class OrderService {
       for (const license of pendingLicenses) {
         const licenseCost =
           (license.rate?.amount || 0) * (license.total_license || 0);
+        const order = license.order_id as any;
         pendingPayments.push({
           _id: license._id.toString(),
           type: 'license',
@@ -2008,11 +1999,15 @@ export class OrderService {
           payment_identifier: license._id.toString(),
           payment_date: license.purchase_date,
           name: (license?.product_id as unknown as ProductDocument)?.name ?? '',
+          client_name: order?.client_id?.name || 'N/A',
+          product_name:
+            (license?.product_id as unknown as ProductDocument)?.name ?? 'N/A',
         });
       }
 
       // Customizations
       for (const customization of pendingCustomizations) {
+        const order = customization.order_id as any;
         pendingPayments.push({
           _id: customization._id.toString(),
           type: 'customization',
@@ -2021,11 +2016,16 @@ export class OrderService {
           payment_identifier: customization?._id?.toString(),
           payment_date: customization.purchased_date,
           name: customization?.title ?? '',
+          client_name: order?.client_id?.name || 'N/A',
+          product_name:
+            (customization?.product_id as unknown as ProductDocument)?.name ??
+            'N/A',
         });
       }
 
       // Additional Services
       for (const service of pendingServices) {
+        const order = service.order_id as any;
         pendingPayments.push({
           _id: service._id.toString(),
           type: 'additional_service',
@@ -2034,6 +2034,8 @@ export class OrderService {
           payment_identifier: service._id.toString(),
           payment_date: service.purchased_date,
           name: service.name,
+          client_name: order?.client_id?.name || 'N/A',
+          product_name: service.name || 'N/A',
         });
       }
 
@@ -2051,8 +2053,12 @@ export class OrderService {
                 status: PAYMENT_STATUS_ENUM.PENDING,
                 pending_amount: term.calculated_amount,
                 payment_identifier: index,
-                payment_date: term.date,
+                payment_date: term.payment_receive_date,
                 name: term.name,
+                client_name: (order.client_id as any)?.name || 'N/A',
+                product_name:
+                  (order.products as any[])?.map((p) => p.name).join(', ') ||
+                  'N/A',
               });
             }
           });
