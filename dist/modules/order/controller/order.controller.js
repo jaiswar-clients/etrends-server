@@ -32,11 +32,35 @@ let OrderController = class OrderController {
         const parsedLimit = parseInt(limit.toString());
         return this.orderService.loadAllOrdersWithAttributes(parsedPage, parsedLimit);
     }
-    async loadAllAMC(page, limit, filter, upcoming) {
-        const parsedPage = parseInt(page.toString());
-        const parsedLimit = parseInt(limit.toString());
-        const parsedUpcoming = parseInt(upcoming) || 1;
-        return this.orderService.loadAllAMC(parsedPage, parsedLimit, filter || order_enum_1.AMC_FILTER.UPCOMING, { upcoming: parsedUpcoming });
+    async loadAllAMC(page, limit, filter, upcoming, startDate, endDate) {
+        const parsedPage = Math.max(1, parseInt(page?.toString() || '1'));
+        const parsedLimit = Math.min(100, Math.max(1, parseInt(limit?.toString() || '10')));
+        const parsedUpcoming = Math.max(1, parseInt(upcoming?.toString() || '1'));
+        let parsedStartDate = undefined;
+        let parsedEndDate = undefined;
+        if (startDate !== 'undefined') {
+            parsedStartDate = new Date(startDate);
+            if (isNaN(parsedStartDate.getTime())) {
+                throw new common_1.HttpException('Invalid start date format', common_1.HttpStatus.BAD_REQUEST);
+            }
+        }
+        if (endDate !== 'undefined') {
+            parsedEndDate = new Date(endDate);
+            if (isNaN(parsedEndDate.getTime())) {
+                throw new common_1.HttpException('Invalid end date format', common_1.HttpStatus.BAD_REQUEST);
+            }
+        }
+        if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+            throw new common_1.HttpException('Start date cannot be after end date', common_1.HttpStatus.BAD_REQUEST);
+        }
+        if (filter && !Object.values(order_enum_1.AMC_FILTER).includes(filter)) {
+            throw new common_1.HttpException('Invalid filter value', common_1.HttpStatus.BAD_REQUEST);
+        }
+        return this.orderService.loadAllAMC(parsedPage, parsedLimit, filter || order_enum_1.AMC_FILTER.UPCOMING, {
+            upcoming: parsedUpcoming,
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
+        });
     }
     async getAllPendingPayments(page, limit) {
         const parsedPage = parseInt(page.toString());
@@ -110,8 +134,10 @@ __decorate([
     __param(1, (0, common_1.Query)('limit')),
     __param(2, (0, common_1.Query)('filter')),
     __param(3, (0, common_1.Query)('upcoming')),
+    __param(4, (0, common_1.Query)('startDate')),
+    __param(5, (0, common_1.Query)('endDate')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Number, Number, String, String]),
+    __metadata("design:paramtypes", [Number, Number, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "loadAllAMC", null);
 __decorate([

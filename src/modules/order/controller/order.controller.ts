@@ -7,6 +7,8 @@ import {
   Post,
   Query,
   UseGuards,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { OrderService } from '../services/order.service';
 import { CreateOrderDto } from '../dto/create-order.dto';
@@ -44,16 +46,63 @@ export class OrderController {
     @Query('limit') limit: number,
     @Query('filter') filter: AMC_FILTER,
     @Query('upcoming') upcoming: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
   ) {
-    const parsedPage = parseInt(page.toString());
-    const parsedLimit = parseInt(limit.toString());
-    const parsedUpcoming = parseInt(upcoming) || 1;
+    // Validate and parse pagination
+    const parsedPage = Math.max(1, parseInt(page?.toString() || '1'));
+    const parsedLimit = Math.min(
+      100,
+      Math.max(1, parseInt(limit?.toString() || '10')),
+    );
+    const parsedUpcoming = Math.max(1, parseInt(upcoming?.toString() || '1'));
+
+    // Validate dates
+    let parsedStartDate: Date | undefined = undefined;
+    let parsedEndDate: Date | undefined = undefined ;
+
+    if (startDate !== 'undefined') {
+      parsedStartDate = new Date(startDate);
+      if (isNaN(parsedStartDate.getTime())) {
+        throw new HttpException(
+          'Invalid start date format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    if (endDate !== 'undefined') {
+      parsedEndDate = new Date(endDate);
+      if (isNaN(parsedEndDate.getTime())) {
+        throw new HttpException(
+          'Invalid end date format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    // Validate date range
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      throw new HttpException(
+        'Start date cannot be after end date',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Validate filter
+    if (filter && !Object.values(AMC_FILTER).includes(filter)) {
+      throw new HttpException('Invalid filter value', HttpStatus.BAD_REQUEST);
+    }
 
     return this.orderService.loadAllAMC(
       parsedPage,
       parsedLimit,
       filter || AMC_FILTER.UPCOMING,
-      { upcoming: parsedUpcoming },
+      {
+        upcoming: parsedUpcoming,
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
+      },
     );
   }
 

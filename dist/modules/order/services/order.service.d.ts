@@ -166,7 +166,17 @@ export declare class OrderService {
     }>;
     loadAllAMC(page: number, limit: number, filter: AMC_FILTER, options?: {
         upcoming: number;
-    }): Promise<any[]>;
+        startDate?: Date;
+        endDate?: Date;
+    }): Promise<{
+        data: any[];
+        pagination: {
+            total: number;
+            page: number;
+            limit: number;
+            totalPages: number;
+        };
+    }>;
     private getNextDate;
     updateAMCPayments(): Promise<{
         processed: number;

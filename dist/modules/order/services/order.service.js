@@ -989,67 +989,107 @@ let OrderService = class OrderService {
         try {
             this.loggerService.log(JSON.stringify({
                 message: 'loadAllAMC: Fetching all AMC',
+                filter,
+                options,
             }));
-            let findFilter = {};
-            switch (filter) {
-                case order_enum_1.AMC_FILTER.ALL:
-                    findFilter = {};
-                    break;
-                case order_enum_1.AMC_FILTER.UPCOMING:
-                    const nextMonth = new Date();
-                    nextMonth.setMonth(nextMonth.getMonth() + 1);
-                    findFilter = {
-                        'payments.from_date': {
-                            $gte: new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 2),
-                            $lte: new Date(nextMonth.getFullYear(), nextMonth.getMonth() + options.upcoming, 0),
-                        },
-                        'payments.status': amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
-                    };
-                    break;
-                case order_enum_1.AMC_FILTER.PAID:
-                    findFilter = {
-                        $expr: {
-                            $eq: [
-                                { $arrayElemAt: ['$payments.status', -1] },
-                                amc_schema_1.PAYMENT_STATUS_ENUM.PAID,
-                            ],
-                        },
-                    };
-                    break;
-                case order_enum_1.AMC_FILTER.PENDING:
-                    findFilter = {
-                        $expr: {
-                            $eq: [
-                                { $arrayElemAt: ['$payments.status', -1] },
-                                amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
-                            ],
-                        },
-                    };
-                    break;
-                case order_enum_1.AMC_FILTER.OVERDUE:
-                    findFilter = {
-                        $expr: {
-                            $and: [
-                                {
-                                    $lt: [
-                                        { $arrayElemAt: ['$payments.to_date', -1] },
-                                        new Date(),
-                                    ],
-                                },
-                                {
-                                    $eq: [
-                                        { $arrayElemAt: ['$payments.status', -1] },
-                                        amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
-                                    ],
-                                },
-                            ],
-                        },
-                    };
-                    break;
+            let findFilter = {
+                payments: { $exists: true },
+            };
+            if (options.startDate || options.endDate) {
+                const dateFilter = {};
+                if (options.startDate) {
+                    const startDate = new Date(options.startDate);
+                    startDate.setHours(0, 0, 0, 0);
+                    dateFilter.$gte = startDate;
+                }
+                if (options.endDate) {
+                    const endDate = new Date(options.endDate);
+                    endDate.setHours(23, 59, 59, 999);
+                    dateFilter.$lte = endDate;
+                }
+                findFilter['payments.from_date'] = dateFilter;
+                if (filter === order_enum_1.AMC_FILTER.UPCOMING) {
+                    findFilter['payments.status'] = amc_schema_1.PAYMENT_STATUS_ENUM.PENDING;
+                }
             }
+            else {
+                switch (filter) {
+                    case order_enum_1.AMC_FILTER.ALL:
+                        break;
+                    case order_enum_1.AMC_FILTER.UPCOMING:
+                        const nextMonth = new Date();
+                        nextMonth.setMonth(nextMonth.getMonth() + 1);
+                        nextMonth.setHours(0, 0, 0, 0);
+                        const endDate = new Date(nextMonth);
+                        endDate.setMonth(endDate.getMonth() + options.upcoming);
+                        endDate.setHours(23, 59, 59, 999);
+                        findFilter = {
+                            ...findFilter,
+                            'payments.from_date': {
+                                $gte: nextMonth,
+                                $lte: endDate,
+                            },
+                            'payments.status': amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                        };
+                        break;
+                    case order_enum_1.AMC_FILTER.PAID:
+                        findFilter = {
+                            ...findFilter,
+                            $expr: {
+                                $eq: [
+                                    { $arrayElemAt: ['$payments.status', -1] },
+                                    amc_schema_1.PAYMENT_STATUS_ENUM.PAID,
+                                ],
+                            },
+                        };
+                        break;
+                    case order_enum_1.AMC_FILTER.PENDING:
+                        findFilter = {
+                            ...findFilter,
+                            $expr: {
+                                $eq: [
+                                    { $arrayElemAt: ['$payments.status', -1] },
+                                    amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                                ],
+                            },
+                        };
+                        break;
+                    case order_enum_1.AMC_FILTER.OVERDUE:
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        findFilter = {
+                            ...findFilter,
+                            $expr: {
+                                $and: [
+                                    {
+                                        $lt: [
+                                            { $arrayElemAt: ['$payments.to_date', -1] },
+                                            today,
+                                        ],
+                                    },
+                                    {
+                                        $eq: [
+                                            { $arrayElemAt: ['$payments.status', -1] },
+                                            amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
+                                        ],
+                                    },
+                                ],
+                            },
+                        };
+                        break;
+                }
+            }
+            this.loggerService.log(JSON.stringify({
+                message: 'loadAllAMC: Applying filter',
+                findFilter,
+            }));
+            const skip = (page - 1) * limit;
+            const totalCount = await this.amcModel.countDocuments(findFilter);
             const amcs = await this.amcModel
                 .find(findFilter)
                 .sort({ _id: -1 })
+                .skip(skip)
+                .limit(limit)
                 .populate([
                 {
                     path: 'client_id',
@@ -1066,31 +1106,58 @@ let OrderService = class OrderService {
             ]);
             this.loggerService.log(JSON.stringify({
                 message: 'loadAllAMC: AMC fetched successfully',
+                totalCount,
+                returnedCount: amcs.length,
             }));
             const amcsList = [];
             for (const amc of amcs) {
                 const amcObj = amc.toObject();
+                if (!Array.isArray(amcObj.payments)) {
+                    this.loggerService.error(JSON.stringify({
+                        message: 'loadAllAMC: Invalid payments array found',
+                        amcId: amc._id,
+                    }));
+                    continue;
+                }
                 if (amc.payments.length <= 1 && filter !== order_enum_1.AMC_FILTER.FIRST)
                     continue;
                 else if (amc.payments.length > 1 && filter === order_enum_1.AMC_FILTER.FIRST)
                     continue;
-                amcObj.payments.forEach((payment) => {
-                    if (payment.purchase_order_document) {
-                        payment.purchase_order_document = this.storageService.get(payment.purchase_order_document);
-                    }
-                    if (payment.invoice_document) {
-                        payment.invoice_document = this.storageService.get(payment.invoice_document);
-                    }
-                });
-                amcObj['client'] = amcObj.client_id;
-                delete amcObj.client_id;
-                amcObj['order'] = amcObj.order_id;
-                delete amcObj.order_id;
-                const lastPayment = amcObj.payments[amcObj.payments.length - 1];
-                amcObj['last_payment'] = lastPayment;
-                amcsList.push(amcObj);
+                try {
+                    amcObj.payments.forEach((payment) => {
+                        if (payment.purchase_order_document) {
+                            payment.purchase_order_document = this.storageService.get(payment.purchase_order_document);
+                        }
+                        if (payment.invoice_document) {
+                            payment.invoice_document = this.storageService.get(payment.invoice_document);
+                        }
+                    });
+                    amcObj['client'] = amcObj.client_id;
+                    delete amcObj.client_id;
+                    amcObj['order'] = amcObj.order_id;
+                    delete amcObj.order_id;
+                    const lastPayment = amcObj.payments[amcObj.payments.length - 1];
+                    amcObj['last_payment'] = lastPayment;
+                    amcsList.push(amcObj);
+                }
+                catch (error) {
+                    this.loggerService.error(JSON.stringify({
+                        message: 'loadAllAMC: Error processing AMC object',
+                        amcId: amc._id,
+                        error: error.message,
+                    }));
+                    continue;
+                }
             }
-            return amcsList;
+            return {
+                data: amcsList,
+                pagination: {
+                    total: totalCount,
+                    page,
+                    limit,
+                    totalPages: Math.ceil(totalCount / limit),
+                },
+            };
         }
         catch (error) {
             this.loggerService.error(JSON.stringify({
