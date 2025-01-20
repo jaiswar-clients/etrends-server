@@ -3,4 +3,4 @@ export declare const responseGenerator: (message?: string, data?: any, success?:
     data: any;
     success: boolean;
 };
-export declare const extractS3Key: (signedUrl: string) => string;
+export declare const extractFileKey: (signedUrl: string) => string;

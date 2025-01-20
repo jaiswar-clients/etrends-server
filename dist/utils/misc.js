@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.extractS3Key = exports.responseGenerator = void 0;
+exports.extractFileKey = exports.responseGenerator = void 0;
 const responseGenerator = (message, data, success = true) => {
     return {
         message,
@@ -9,19 +9,17 @@ const responseGenerator = (message, data, success = true) => {
     };
 };
 exports.responseGenerator = responseGenerator;
-const extractS3Key = (signedUrl) => {
+const extractFileKey = (signedUrl) => {
     if (!signedUrl)
         return null;
-    if (!signedUrl.includes('https://'))
-        return signedUrl;
-    const regex = /https:\/\/[^\/]+\/([^?]+)/;
-    const match = signedUrl.match(regex);
-    if (match && match[1]) {
-        return match[1];
+    try {
+        new URL(signedUrl);
+        const parts = signedUrl.split('/');
+        return parts[parts.length - 1] || null;
     }
-    else {
-        return null;
+    catch {
+        return signedUrl;
     }
 };
-exports.extractS3Key = extractS3Key;
+exports.extractFileKey = extractFileKey;
 //# sourceMappingURL=misc.js.map

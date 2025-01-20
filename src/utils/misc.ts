@@ -10,16 +10,18 @@ export const responseGenerator = (
   };
 };
 
-export const extractS3Key = (signedUrl: string) => {
-  if(!signedUrl) return null;
-  if (!signedUrl.includes('https://')) return signedUrl;
-  // Regular expression to match the S3 key in the URL
-  const regex = /https:\/\/[^\/]+\/([^?]+)/;
-  const match = signedUrl.match(regex);
+export const extractFileKey = (signedUrl: string) => {
+  if (!signedUrl) return null;
 
-  if (match && match[1]) {
-    return match[1]; // Return the S3 key
-  } else {
-    return null; // Return null if no match found
+  try {
+    // Check if it's a valid URL
+    new URL(signedUrl);
+    
+    // Extract everything after the last '/'
+    const parts = signedUrl.split('/');
+    return parts[parts.length - 1] || null;
+  } catch {
+    // If not a valid URL, return as is assuming it's already a key
+    return signedUrl;
   }
 };

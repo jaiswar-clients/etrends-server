@@ -32,7 +32,7 @@ import {
 } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
 import { UpdateAMCDto } from '../dto/update-amc.dto';
-import { extractS3Key } from '@/utils/misc';
+import { extractFileKey } from '@/utils/misc';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 
 @Injectable()
@@ -94,8 +94,9 @@ export class OrderService {
       );
 
       let customization_id: string | null = null;
+      let customizationData: CustomizationDocument | null = null;
       if (customization.cost) {
-        const customizationData = new this.customizationModel({
+        customizationData = new this.customizationModel({
           cost: customization.cost,
           modules: customization.modules,
           product_id: products[0],
@@ -310,26 +311,26 @@ export class OrderService {
 
       if (orderPayload.payment_terms.length) {
         orderPayload.payment_terms.map((term) => {
-          term.invoice_document = extractS3Key(term.invoice_document);
+          term.invoice_document = extractFileKey(term.invoice_document);
           return term;
         });
       }
 
-      orderPayload.purchase_order_document = extractS3Key(
+      orderPayload.purchase_order_document = extractFileKey(
         orderPayload.purchase_order_document,
       );
 
       if (orderPayload.other_documents.length) {
         orderPayload.other_documents = orderPayload.other_documents.map(
           (doc) => {
-            doc.url = extractS3Key(doc.url);
+            doc.url = extractFileKey(doc.url);
             return doc;
           },
         );
       }
 
       orderPayload.agreements.map((agreement) => {
-        agreement.document = extractS3Key(agreement.document);
+        agreement.document = extractFileKey(agreement.document);
         return agreement;
       });
 
@@ -1479,7 +1480,7 @@ export class OrderService {
     page: number,
     limit: number,
     filter: AMC_FILTER,
-    options: { 
+    options: {
       upcoming: number;
       startDate?: Date;
       endDate?: Date;
@@ -1493,7 +1494,7 @@ export class OrderService {
           options,
         }),
       );
-      
+
       let findFilter: any = {
         // Base filter to ensure we have payments array
         payments: { $exists: true },
@@ -1502,14 +1503,14 @@ export class OrderService {
       // Handle date range filtering
       if (options.startDate || options.endDate) {
         const dateFilter: any = {};
-        
+
         if (options.startDate) {
           // Set time to start of day
           const startDate = new Date(options.startDate);
           startDate.setHours(0, 0, 0, 0);
           dateFilter.$gte = startDate;
         }
-        
+
         if (options.endDate) {
           // Set time to end of day
           const endDate = new Date(options.endDate);
@@ -1529,16 +1530,16 @@ export class OrderService {
           case AMC_FILTER.ALL:
             // Keep base filter only
             break;
-            
+
           case AMC_FILTER.UPCOMING:
             const nextMonth = new Date();
             nextMonth.setMonth(nextMonth.getMonth() + 1);
             nextMonth.setHours(0, 0, 0, 0); // Start of day
-            
+
             const endDate = new Date(nextMonth);
             endDate.setMonth(endDate.getMonth() + options.upcoming);
             endDate.setHours(23, 59, 59, 999); // End of day
-            
+
             findFilter = {
               ...findFilter,
               'payments.from_date': {
@@ -1548,7 +1549,7 @@ export class OrderService {
               'payments.status': PAYMENT_STATUS_ENUM.PENDING,
             };
             break;
-            
+
           case AMC_FILTER.PAID:
             findFilter = {
               ...findFilter,
@@ -1560,7 +1561,7 @@ export class OrderService {
               },
             };
             break;
-            
+
           case AMC_FILTER.PENDING:
             findFilter = {
               ...findFilter,
@@ -1572,20 +1573,17 @@ export class OrderService {
               },
             };
             break;
-            
+
           case AMC_FILTER.OVERDUE:
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            
+
             findFilter = {
               ...findFilter,
               $expr: {
                 $and: [
                   {
-                    $lt: [
-                      { $arrayElemAt: ['$payments.to_date', -1] },
-                      today,
-                    ],
+                    $lt: [{ $arrayElemAt: ['$payments.to_date', -1] }, today],
                   },
                   {
                     $eq: [
@@ -1609,7 +1607,7 @@ export class OrderService {
 
       // Apply pagination with proper skip calculation
       const skip = (page - 1) * limit;
-      
+
       // Get total count for pagination
       const totalCount = await this.amcModel.countDocuments(findFilter);
 

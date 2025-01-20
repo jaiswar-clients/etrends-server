@@ -63,8 +63,9 @@ let OrderService = class OrderService {
             }
             const doesHaveLicense = productsList.some((product) => product.does_have_license);
             let customization_id = null;
+            let customizationData = null;
             if (customization.cost) {
-                const customizationData = new this.customizationModel({
+                customizationData = new this.customizationModel({
                     cost: customization.cost,
                     modules: customization.modules,
                     product_id: products[0],
@@ -217,19 +218,19 @@ let OrderService = class OrderService {
             delete orderPayload.customization;
             if (orderPayload.payment_terms.length) {
                 orderPayload.payment_terms.map((term) => {
-                    term.invoice_document = (0, misc_1.extractS3Key)(term.invoice_document);
+                    term.invoice_document = (0, misc_1.extractFileKey)(term.invoice_document);
                     return term;
                 });
             }
-            orderPayload.purchase_order_document = (0, misc_1.extractS3Key)(orderPayload.purchase_order_document);
+            orderPayload.purchase_order_document = (0, misc_1.extractFileKey)(orderPayload.purchase_order_document);
             if (orderPayload.other_documents.length) {
                 orderPayload.other_documents = orderPayload.other_documents.map((doc) => {
-                    doc.url = (0, misc_1.extractS3Key)(doc.url);
+                    doc.url = (0, misc_1.extractFileKey)(doc.url);
                     return doc;
                 });
             }
             orderPayload.agreements.map((agreement) => {
-                agreement.document = (0, misc_1.extractS3Key)(agreement.document);
+                agreement.document = (0, misc_1.extractFileKey)(agreement.document);
                 return agreement;
             });
             const updatedOrder = await this.orderModel.findByIdAndUpdate(orderId, orderPayload, { new: true });
@@ -1062,10 +1063,7 @@ let OrderService = class OrderService {
                             $expr: {
                                 $and: [
                                     {
-                                        $lt: [
-                                            { $arrayElemAt: ['$payments.to_date', -1] },
-                                            today,
-                                        ],
+                                        $lt: [{ $arrayElemAt: ['$payments.to_date', -1] }, today],
                                     },
                                     {
                                         $eq: [
