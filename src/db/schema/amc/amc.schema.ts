@@ -11,6 +11,23 @@ export enum PAYMENT_STATUS_ENUM {
   PARTIAL = 'partial',
 }
 
+export interface IAMCPayment {
+  _id?: any;
+  from_date: Date;
+  to_date: Date;
+  status: PAYMENT_STATUS_ENUM; // AMC is free for 1 year that's status will be paid
+  received_date?: Date;
+  amc_rate_applied?: number;
+  amc_rate_amount?: number;
+  total_cost?: number;
+  purchase_order_number?: string;
+  purchase_order_document?: string;
+  purchase_order_date?: Date;
+  invoice_document?: string;
+  invoice_number?: string;
+  invoice_date?: Date;
+}
+
 // Main schema
 @Schema({ timestamps: true })
 export class AMC extends Document {
@@ -23,8 +40,8 @@ export class AMC extends Document {
   @Prop({ required: true, type: Number })
   total_cost: number;
 
-  @Prop({ type: Date })
-  start_date: Date;
+  // @Prop({ type: Date })
+  // start_date: Date;
 
   @Prop({
     type: [
@@ -35,29 +52,21 @@ export class AMC extends Document {
           type: String,
           enum: Object.values(PAYMENT_STATUS_ENUM),
         },
+        amc_rate_applied: { type: Number },
+        amc_rate_amount: { type: Number },
+        total_cost: { type: Number },
         received_date: { type: Date },
         purchase_order_number: String,
         purchase_order_document: String,
         purchase_order_date: { type: Date },
         invoice_document: String,
         invoice_number: String,
-        invoice_date: { type: Date }
+
+        invoice_date: { type: Date },
       },
     ],
   })
-  payments: {
-    _id: any;
-    from_date: Date;
-    to_date: Date;
-    status: PAYMENT_STATUS_ENUM; // AMC is free for 1 year that's status will be paid
-    received_date: Date;
-    purchase_order_number: string;
-    purchase_order_document: string;
-    purchase_order_date: Date;
-    invoice_document: string;
-    invoice_number: string;
-    invoice_date: Date;
-  }[];
+  payments: IAMCPayment[];
 
   @Prop({ required: true, type: Number })
   amount: number;

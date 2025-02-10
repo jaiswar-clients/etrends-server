@@ -35,10 +35,6 @@ __decorate([
     __metadata("design:type", Number)
 ], AMC.prototype, "total_cost", void 0);
 __decorate([
-    (0, mongoose_1.Prop)({ type: Date }),
-    __metadata("design:type", Date)
-], AMC.prototype, "start_date", void 0);
-__decorate([
     (0, mongoose_1.Prop)({
         type: [
             {
@@ -48,13 +44,16 @@ __decorate([
                     type: String,
                     enum: Object.values(PAYMENT_STATUS_ENUM),
                 },
+                amc_rate_applied: { type: Number },
+                amc_rate_amount: { type: Number },
+                total_cost: { type: Number },
                 received_date: { type: Date },
                 purchase_order_number: String,
                 purchase_order_document: String,
                 purchase_order_date: { type: Date },
                 invoice_document: String,
                 invoice_number: String,
-                invoice_date: { type: Date }
+                invoice_date: { type: Date },
             },
         ],
     }),

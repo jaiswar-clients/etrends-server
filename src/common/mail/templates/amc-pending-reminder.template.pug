@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+doctype html
 html(lang="en")
     head
         meta(charset="UTF-8")
@@ -18,45 +18,40 @@ html(lang="en")
     body
         .container
             .header
-                h2 Order Agreement Expiry Reminder
+                h2 AMC Payment Overdue Reminder
             
             .content
                 p Dear Team,
                 
-                p This is to inform you about the upcoming expiry of the order agreements for the following clients:
+                p This is to inform you about the overdue AMC payment for:
 
                 table
                     tr
                         th Customer Name
                         td #{client}
                     tr
-                        th Customer ID
-                        td #{clientId}
-                    tr
                         th Product
                         td #{product}
 
-
-                h3 Agreement Details:
-
+                h3 AMC Details:
                 table
                     thead
                         tr
-                            th Product
-                            th Expiry Date
-                            th Days to Expiry
-                            th View Agreement
+                            th AMC Cycle
+                            th Overdue Days
+                            th Due Amount
+                            th Due Date
+                            th View Details
                     tbody
+                        tr
+                            td= amc.cycle || 'N/A'
+                            td.highlight #{amc.overdue} days
+                            td.highlight= amc.amount ? `${amc.amount}` : 'N/A'
+                            td.highlight= amc.date || 'N/A'
+                            td
+                                a(href=amc.link) View Details
 
-                each agreement in agreements
-                    tr
-                        td #{agreement.product}
-                        td.highlight #{agreement.expiryDate}
-                        td.highlight #{agreement.daysToExpiry}
-                        td
-                            a(href=agreement.link) View Agreement
-
-                p Please take necessary action to follow up with the clients regarding the agreement renewals.
+                p Please take necessary action to follow up with the client regarding the pending payment.
                 
                 strong Contact Persons:
                 table
@@ -77,4 +72,3 @@ html(lang="en")
             .footer
                 p This is an automated reminder. Please do not reply to this email.
                 p If you have any questions, please contact the system administrator.
-                

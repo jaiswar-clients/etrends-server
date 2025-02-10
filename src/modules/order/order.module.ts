@@ -39,8 +39,8 @@ export class OrderModule implements OnModuleInit {
   constructor(private orderService: OrderService) {}
 
   async onModuleInit() {
-    // await this.orderService.updateAMCPayments();
-    // const data = await this.orderService.getAllPendingPayments();
-    // console.log(data);  
+    console.log('Migrating order data');
+    // await this.orderService.migrateOrderData();
+    // await this.orderService.updateAMCPayments()
   }
 }

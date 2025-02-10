@@ -14,7 +14,7 @@ import { CreateCustomizationDto } from '../dto/create-customization.service.dto'
 import { AMC_FILTER, ORDER_STATUS_ENUM, PURCHASE_TYPE } from '@/common/types/enums/order.enum';
 import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
-import { UpdateAMCDto } from '../dto/update-amc.dto';
+import { AddAMCPaymentDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 export declare class OrderService {
     private orderModel;
@@ -113,7 +113,7 @@ export declare class OrderService {
     }> & {
         __v: number;
     }>;
-    updateAMC(orderId: string, body: UpdateAMCDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, AMC> & AMC & Required<{
+    updateAmcPaymentById(id: string, paymentId: string, body: UpdateAMCPaymentDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, AMC> & AMC & Required<{
         _id: unknown;
     }> & {
         __v: number;
@@ -169,12 +169,14 @@ export declare class OrderService {
         startDate?: Date;
         endDate?: Date;
     }): Promise<{
-        data: any[];
-        pagination: {
-            total: number;
-            page: number;
-            limit: number;
-            totalPages: number;
+        data: {
+            pagination: {
+                total: number;
+                page: number;
+                limit: number;
+                pages: number;
+            };
+            data: any[];
         };
     }>;
     private getNextDate;
@@ -183,9 +185,7 @@ export declare class OrderService {
         updated: number;
         skipped: number;
         errors: number;
-    }>;
-    deleteAllOrdersForAllClients(): Promise<{
-        message: string;
+        newPaymentsAdded: number;
     }>;
     getAllPendingPayments(page?: number, limit?: number): Promise<{
         pending_payments: {
@@ -211,4 +211,31 @@ export declare class OrderService {
         status: PAYMENT_STATUS_ENUM;
         payment_receive_date: string;
     }): Promise<any>;
+    getAmcReviewByOrderId(orderId: string): Promise<{
+        from_date: Date;
+        is_free_amc: boolean;
+        to_date: Date;
+        status: PAYMENT_STATUS_ENUM;
+        amc_rate_applied: number;
+        amc_rate_amount: number;
+        amc_frequency: number;
+        total_cost: number;
+    }[]>;
+    addPaymentsIntoAmc(amcId: string, payments: AddAMCPaymentDto[]): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, AMC> & AMC & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }> & import("mongoose").Document<unknown, {}, AMC> & AMC & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }>;
+    deleteAllOrdersForAllClients(): Promise<{
+        message: string;
+    }>;
+    migrateOrderData(): Promise<void>;
+    removeClientsData(): Promise<{
+        message: string;
+        status: string;
+    }>;
 }

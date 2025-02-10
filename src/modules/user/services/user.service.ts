@@ -82,7 +82,7 @@ export class UserService {
         }),
       );
 
-      return savedUser;
+      return responseGenerator('User created successfully', savedUser);
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
@@ -133,6 +133,52 @@ export class UserService {
       });
     } catch (error: any) {
       this.loggerService.error('Login failed for user: ' + email, error.stack); // Log the error stack
+      throw new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async getInternalTeamEmails() {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getInternalTeamEmails: Fetching all users',
+        }),
+      );
+
+      const users = await this.userModel.find();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getInternalTeamEmails: Successfully fetched users',
+          data: { count: users.length },
+        }),
+      );
+
+      const emails = users.map((user) => ({
+        name: user.name,
+        email: user.email,
+      }));
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getInternalTeamEmails: Extracted emails from users',
+          data: { emailCount: emails.length },
+        }),
+      );
+
+      return responseGenerator(
+        'Internal team emails fetched successfully',
+        emails,
+      );
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getInternalTeamEmails: Error fetching internal team emails',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+
       throw new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }

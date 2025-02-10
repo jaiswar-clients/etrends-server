@@ -85,6 +85,9 @@ let OrderController = class OrderController {
     async getCustomizationById(orderId) {
         return this.orderService.getCustomizationById(orderId);
     }
+    async getAmcReviewByOrderId(orderId) {
+        return this.orderService.getAmcReviewByOrderId(orderId);
+    }
     async createOrder(clientId, body) {
         return this.orderService.createOrder(clientId, body);
     }
@@ -109,8 +112,11 @@ let OrderController = class OrderController {
     async updateAdditionalServiceById(id, body) {
         return this.orderService.updateAdditionalServiceById(id, body);
     }
-    async updateAMC(orderId, body) {
-        return this.orderService.updateAMC(orderId, body);
+    async addPaymentsIntoAMC(amcId, body) {
+        return this.orderService.addPaymentsIntoAmc(amcId, body);
+    }
+    async updateAMCPaymentById(id, paymentId, body) {
+        return this.orderService.updateAmcPaymentById(id, paymentId, body);
     }
     async updatePendingPaymentStatus(id, body) {
         return this.orderService.updatePendingPayment(id, body.type, body.payment_identifier, {
@@ -191,6 +197,13 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "getCustomizationById", null);
 __decorate([
+    (0, common_1.Get)('/amc-payments-review/:id'),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], OrderController.prototype, "getAmcReviewByOrderId", null);
+__decorate([
     (0, common_1.Post)('/:clientId'),
     __param(0, (0, common_1.Param)('clientId')),
     __param(1, (0, common_1.Body)()),
@@ -255,13 +268,22 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "updateAdditionalServiceById", null);
 __decorate([
-    (0, common_1.Patch)('/:orderId/amc'),
-    __param(0, (0, common_1.Param)('orderId')),
+    (0, common_1.Patch)('/amc/:id/payments'),
+    __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, update_amc_dto_1.UpdateAMCDto]),
+    __metadata("design:paramtypes", [String, Array]),
     __metadata("design:returntype", Promise)
-], OrderController.prototype, "updateAMC", null);
+], OrderController.prototype, "addPaymentsIntoAMC", null);
+__decorate([
+    (0, common_1.Patch)('/amc/:id/payment/:paymentId'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Param)('paymentId')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, update_amc_dto_1.UpdateAMCPaymentDto]),
+    __metadata("design:returntype", Promise)
+], OrderController.prototype, "updateAMCPaymentById", null);
 __decorate([
     (0, common_1.Patch)('/pending-payments/:id'),
     __param(0, (0, common_1.Param)('id')),

@@ -19,6 +19,7 @@ const user_service_1 = require("../services/user.service");
 const login_user_dto_1 = require("../dto/login-user.dto");
 const serialize_interceptor_1 = require("../../../interceptors/serialize.interceptor");
 const user_response_dto_1 = require("../dto/user-response.dto");
+const auth_guard_1 = require("../../../common/guards/auth.guard");
 let UserController = class UserController {
     constructor(userService) {
         this.userService = userService;
@@ -28,6 +29,9 @@ let UserController = class UserController {
     }
     async loginUser(body) {
         return this.userService.loginHandler(body.email, body.password);
+    }
+    async getInternalTeamEmails() {
+        return this.userService.getInternalTeamEmails();
     }
 };
 exports.UserController = UserController;
@@ -45,6 +49,13 @@ __decorate([
     __metadata("design:paramtypes", [login_user_dto_1.LoginUserDto]),
     __metadata("design:returntype", Promise)
 ], UserController.prototype, "loginUser", null);
+__decorate([
+    (0, common_1.Get)('/internal-team-emails'),
+    (0, common_1.UseGuards)(auth_guard_1.AuthGuard),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], UserController.prototype, "getInternalTeamEmails", null);
 exports.UserController = UserController = __decorate([
     (0, common_1.Controller)('users'),
     (0, serialize_interceptor_1.Serialize)(user_response_dto_1.UserResponseDto),

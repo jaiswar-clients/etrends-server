@@ -66,7 +66,7 @@ let UserService = class UserService {
                 userId: savedUser._id,
                 email,
             }));
-            return savedUser;
+            return (0, misc_1.responseGenerator)('User created successfully', savedUser);
         }
         catch (error) {
             this.loggerService.error(JSON.stringify({
@@ -102,6 +102,35 @@ let UserService = class UserService {
         }
         catch (error) {
             this.loggerService.error('Login failed for user: ' + email, error.stack);
+            throw new common_1.HttpException('Server error', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    async getInternalTeamEmails() {
+        try {
+            this.loggerService.log(JSON.stringify({
+                message: 'getInternalTeamEmails: Fetching all users',
+            }));
+            const users = await this.userModel.find();
+            this.loggerService.log(JSON.stringify({
+                message: 'getInternalTeamEmails: Successfully fetched users',
+                data: { count: users.length },
+            }));
+            const emails = users.map((user) => ({
+                name: user.name,
+                email: user.email,
+            }));
+            this.loggerService.log(JSON.stringify({
+                message: 'getInternalTeamEmails: Extracted emails from users',
+                data: { emailCount: emails.length },
+            }));
+            return (0, misc_1.responseGenerator)('Internal team emails fetched successfully', emails);
+        }
+        catch (error) {
+            this.loggerService.error(JSON.stringify({
+                message: 'getInternalTeamEmails: Error fetching internal team emails',
+                error: error.message,
+                stack: error.stack,
+            }));
             throw new common_1.HttpException('Server error', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }

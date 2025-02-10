@@ -28,10 +28,15 @@ import {
 import {
   AMC,
   AMCDocument,
+  IAMCPayment,
   PAYMENT_STATUS_ENUM,
 } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
-import { UpdateAMCDto } from '../dto/update-amc.dto';
+import {
+  AddAMCPaymentDto,
+  UpdateAMCDto,
+  UpdateAMCPaymentDto,
+} from '../dto/update-amc.dto';
 import { extractFileKey } from '@/utils/misc';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 
@@ -71,6 +76,19 @@ export class OrderService {
           message: 'createOrder: Creating new order',
         }),
       );
+
+      const client = await this.clientModel
+        .findById(clientId)
+        .select('amc_frequency_in_months');
+
+      if (!client) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'createOrder: Client not found',
+          }),
+        );
+        throw new HttpException('Client not found', HttpStatus.NOT_FOUND);
+      }
 
       const { customization, products } = body;
 
@@ -156,18 +174,6 @@ export class OrderService {
         }),
       );
 
-      const till_date_of_payment = this.getNextDate(body.amc_start_date, 12);
-      const payments = body.amc_start_date
-        ? [
-            {
-              from_date: body.amc_start_date,
-              to_date: till_date_of_payment,
-              status: PAYMENT_STATUS_ENUM.PAID,
-              received_date: body.amc_start_date,
-            },
-          ]
-        : [];
-
       const amc = new this.amcModel({
         order_id: order._id,
         client_id: clientId,
@@ -178,7 +184,7 @@ export class OrderService {
         start_date: body.amc_start_date
           ? new Date(body.amc_start_date)
           : undefined,
-        payments,
+        payments: [],
       });
 
       await amc.save();
@@ -346,25 +352,134 @@ export class OrderService {
 
       const amcAmount = (amcTotalCost / 100) * amcPercentage;
 
+      /**
+       * TODO: TEST THE FLOW OF AMC PAYMENTS
+       */
       if (updatedOrder.amc_id) {
-        const DEFAULT_AMC_CYCLE_IN_MONTHS = 12;
-        const till_date_of_payment = this.getNextDate(
-          body.amc_start_date,
-          DEFAULT_AMC_CYCLE_IN_MONTHS,
-        );
+        const amc = await this.amcModel.findById(updatedOrder.amc_id).populate({
+          path: 'client_id',
+          select: 'amc_frequency_in_months',
+        });
 
-        const amc = await this.amcModel.findById(updatedOrder.amc_id);
+        let payments = amc?.payments || [];
 
-        const payments =
-          !amc?.payments?.length && body.amc_start_date
-            ? [
-                {
-                  from_date: body.amc_start_date,
-                  to_date: till_date_of_payment,
-                  status: PAYMENT_STATUS_ENUM.PAID,
-                },
-              ]
-            : amc?.payments || [];
+        // If payments array is empty and amc_start_date is provided, calculate payments
+        if ((!payments || !payments.length) && body.amc_start_date) {
+          const amc_frequency_in_months =
+            (amc.client_id as any)?.amc_frequency_in_months || 12;
+          const currentYear = new Date().getFullYear();
+          let lastToDate = new Date(body.amc_start_date);
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'updateOrder: Calculating AMC payments',
+              amc_start_date: body.amc_start_date,
+              amc_frequency_in_months,
+              currentYear,
+            }),
+          );
+
+          // Calculate all payments from start date to current year
+          while (lastToDate.getFullYear() < currentYear) {
+            const from_date = new Date(lastToDate);
+            const to_date = this.getNextDate(
+              from_date,
+              amc_frequency_in_months,
+            );
+
+            payments.push({
+              from_date,
+              to_date,
+              status: PAYMENT_STATUS_ENUM.PAID,
+            });
+
+            lastToDate = to_date;
+          }
+
+          // Add current year payment as pending
+          payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
+        }
+
+        // Handle payments update for date/frequency changes
+        if (
+          body?.amc_start_date?.toString() !==
+          existingOrder?.amc_start_date?.toString()
+        ) {
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'updateAMC: Start date has changed',
+              previousStartDate: existingOrder.amc_start_date,
+              newStartDate: body.amc_start_date,
+            }),
+          );
+
+          const payments = [...amc.payments];
+          const lastPayment = payments[payments.length - 1];
+          const secondLastPayment = payments[payments.length - 2];
+
+          // Only update if last payment is pending
+          if (
+            lastPayment &&
+            lastPayment.status === PAYMENT_STATUS_ENUM.PENDING
+          ) {
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'updateAMC: Last payment is pending, updating payment dates',
+                lastPayment,
+                secondLastPayment,
+              }),
+            );
+
+            const amc_frequency_in_months =
+              (amc.client_id as any)?.amc_frequency_in_months ||
+              DEFAULT_AMC_CYCLE_IN_MONTHS;
+
+            let fromDate;
+            if (secondLastPayment) {
+              // If there's a second last payment, use its to_date as fromDate
+              fromDate = secondLastPayment.to_date;
+              this.loggerService.log(
+                JSON.stringify({
+                  message:
+                    'updateAMC: Using second last payment to_date as fromDate',
+                  fromDate,
+                }),
+              );
+            } else {
+              // Otherwise find the last paid payment or use start_date
+              const lastPaidPayment = [...payments]
+                .slice(0, -1)
+                .reverse()
+                .find((p) => p.status === PAYMENT_STATUS_ENUM.PAID);
+              fromDate = lastPaidPayment
+                ? lastPaidPayment.to_date
+                : body.amc_start_date;
+              this.loggerService.log(
+                JSON.stringify({
+                  message:
+                    'updateAMC: No second last payment found, using last paid payment or start_date',
+                  fromDate,
+                }),
+              );
+            }
+
+            lastPayment.from_date = fromDate;
+            lastPayment.to_date = this.getNextDate(
+              new Date(fromDate),
+              amc_frequency_in_months,
+            );
+            this.loggerService.log(
+              JSON.stringify({
+                message: 'updateAMC: Updated last payment dates',
+                lastPayment,
+              }),
+            );
+          }
+
+          amc.payments = payments;
+          await amc.save();
+        }
 
         await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
           total_cost: amcTotalCost,
@@ -844,14 +959,23 @@ export class OrderService {
         licenses = [],
         additional_services = [];
 
-      const ordersList = orders.map((order) => {
+      const ordersList = [];
+      for (const order of orders) {
         const orderObj = order.toObject() as any;
 
-        if (
-          orderObj.is_purchased_with_order?.license &&
-          orderObj.licenses?.length
-        ) {
-          orderObj.license = orderObj.licenses[0];
+        if (orderObj?.client_id?.parent_company_id) {
+          const parentCompany = await this.clientModel
+            .findById(orderObj?.client_id?.parent_company_id)
+            .select('name');
+          orderObj['client_id']['parent_company'] = parentCompany;
+        }
+
+        // Process all licenses
+        if (orderObj.licenses?.length) {
+          // If it was purchased with order, mark the first one as primary
+          if (orderObj.is_purchased_with_order?.license) {
+            orderObj.license = orderObj.licenses[0];
+          }
           orderObj.licenses.forEach(
             (license) => (license.status = order.status),
           );
@@ -859,11 +983,12 @@ export class OrderService {
           delete orderObj.licenses;
         }
 
-        if (
-          orderObj.is_purchased_with_order?.customization &&
-          orderObj.customizations?.length
-        ) {
-          orderObj.customization = orderObj.customizations[0];
+        // Process all customizations
+        if (orderObj.customizations?.length) {
+          // If it was purchased with order, mark the first one as primary
+          if (orderObj.is_purchased_with_order?.customization) {
+            orderObj.customization = orderObj.customizations[0];
+          }
           orderObj.customizations.forEach(
             (customization) => (customization.status = order.status),
           );
@@ -892,8 +1017,8 @@ export class OrderService {
           delete orderObj.additional_services;
         }
 
-        return orderObj;
-      });
+        ordersList.push(orderObj);
+      }
 
       const purchases = [
         ...ordersList.map((order: OrderDocument) => ({
@@ -985,6 +1110,16 @@ export class OrderService {
         },
       ]);
 
+      if (!amc) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getAmcByOrderId: AMC not found',
+            orderId,
+          }),
+        );
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
       const amcObject = amc.toObject();
       amcObject['client'] = amcObject.client_id;
       delete amcObject.client_id;
@@ -1002,22 +1137,16 @@ export class OrderService {
         }
       });
 
-      if (!amc) {
-        this.loggerService.error(
-          JSON.stringify({
-            message: 'getAmcByOrderId: AMC not found',
-            orderId,
-          }),
-        );
-        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
-      }
-
       this.loggerService.log(
         JSON.stringify({
           message: 'getAmcByOrderId: AMC found successfully',
           orderId,
         }),
       );
+
+      if (amcObject.payments.length > 0) {
+        amcObject.payments[0]['is_free_amc'] = true;
+      }
 
       return amcObject;
     } catch (error: any) {
@@ -1034,152 +1163,61 @@ export class OrderService {
     }
   }
 
-  async updateAMC(orderId: string, body: UpdateAMCDto) {
-    if (!orderId) {
-      this.loggerService.error(
-        JSON.stringify({
-          message: 'updateAMC: Order id is required',
-        }),
-      );
-      throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
-    }
-
+  async updateAmcPaymentById(
+    id: string,
+    paymentId: string,
+    body: UpdateAMCPaymentDto,
+  ) {
     try {
       this.loggerService.log(
         JSON.stringify({
-          message: 'updateAMC: Updating AMC',
-          orderId,
+          message: 'updateAmcPaymentById: Updating AMC payment',
+          id,
+          paymentId,
           body,
         }),
       );
 
-      const amc = await this.amcModel.findOne({ order_id: orderId }).populate({
-        path: 'client_id',
-        model: Client.name,
-      });
-
-      const amc_frequency_in_months = (amc.client_id as any)
-        .amc_frequency_in_months;
+      const amc = await this.amcModel.findById(id);
 
       if (!amc) {
         this.loggerService.error(
           JSON.stringify({
-            message: 'updateAMC: AMC not found',
-            orderId,
+            message: 'updateAmcPaymentById: AMC not found',
+            id,
           }),
         );
         throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
       }
 
-      const payload = {
-        ...body,
-        start_date: body.start_date
-          ? new Date(body.start_date)
-          : amc.start_date,
-      };
+      // Find the payment index in the payments array
+      const paymentIndex = amc.payments.findIndex(
+        (payment) => payment._id.toString() === paymentId.toString(),
+      );
 
-      // // Merge changes from body.payments to amc.payments
-      // if (body.payments) {
-      //   payload.payments = amc.payments.map((payment: any) => {
-      //     const updatedPayment = body.payments.find(
-      //       (p: any) => p._id.toString() === payment._id.toString(),
-      //     );
-      //     return updatedPayment || payment;
-      //   });
-      // }
-
-      // Handle payments update for date/frequency changes
-      if (body.start_date !== amc.start_date.toString()) {
-        this.loggerService.log(
+      if (paymentIndex === -1) {
+        this.loggerService.error(
           JSON.stringify({
-            message: 'updateAMC: Start date has changed',
-            previousStartDate: amc.start_date,
-            newStartDate: body.start_date,
+            message: 'updateAmcPaymentById: AMC payment not found',
+            id,
+            paymentId,
           }),
         );
-
-        const payments = [...payload.payments];
-        const lastPayment = payments[payments.length - 1];
-        const secondLastPayment = payments[payments.length - 2];
-
-        // Only update if last payment is pending
-        if (lastPayment && lastPayment.status === PAYMENT_STATUS_ENUM.PENDING) {
-          this.loggerService.log(
-            JSON.stringify({
-              message:
-                'updateAMC: Last payment is pending, updating payment dates',
-              lastPayment,
-              secondLastPayment,
-            }),
-          );
-
-          const frequency =
-            amc_frequency_in_months || DEFAULT_AMC_CYCLE_IN_MONTHS;
-
-          let fromDate;
-          if (secondLastPayment) {
-            // If there's a second last payment, use its to_date as fromDate
-            fromDate = secondLastPayment.to_date;
-            this.loggerService.log(
-              JSON.stringify({
-                message:
-                  'updateAMC: Using second last payment to_date as fromDate',
-                fromDate,
-              }),
-            );
-          } else {
-            // Otherwise find the last paid payment or use start_date
-            const lastPaidPayment = [...payments]
-              .slice(0, -1)
-              .reverse()
-              .find((p) => p.status === PAYMENT_STATUS_ENUM.PAID);
-            fromDate = lastPaidPayment
-              ? lastPaidPayment.to_date
-              : payload.start_date;
-            this.loggerService.log(
-              JSON.stringify({
-                message:
-                  'updateAMC: No second last payment found, using last paid payment or start_date',
-                fromDate,
-              }),
-            );
-          }
-
-          lastPayment.from_date = fromDate;
-          lastPayment.to_date = this.getNextDate(new Date(fromDate), frequency);
-          this.loggerService.log(
-            JSON.stringify({
-              message: 'updateAMC: Updated last payment dates',
-              lastPayment,
-            }),
-          );
-        }
-
-        payload.payments = payments;
+        throw new HttpException('AMC payment not found', HttpStatus.NOT_FOUND);
       }
 
-      const updatedAMC = await this.amcModel.findByIdAndUpdate(
-        amc._id,
-        {
-          $set: payload,
-        },
-        {
-          new: true,
-        },
-      );
+      amc.payments[paymentIndex] = {
+        ...amc.payments[paymentIndex],
+        ...body,
+      };
 
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'updateAMC: AMC updated successfully',
-          orderId,
-        }),
-      );
+      await amc.save();
 
-      return updatedAMC;
+      return amc;
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
-          message: 'updateAMC: Error updating AMC',
+          message: 'updateAmcPaymentById: Error updating AMC payment',
           error: error.message,
         }),
       );
@@ -1696,12 +1734,14 @@ export class OrderService {
       }
 
       return {
-        data: amcsList,
-        pagination: {
-          total: totalCount,
-          page,
-          limit,
-          totalPages: Math.ceil(totalCount / limit),
+        data: {
+          pagination: {
+            total: totalCount,
+            page,
+            limit,
+            pages: Math.ceil(totalCount / limit),
+          },
+          data: amcsList,
         },
       };
     } catch (error: any) {
@@ -1739,14 +1779,27 @@ export class OrderService {
         }),
       );
 
-      // Find only AMCs that have payments
+      // Find AMCs with populated relationships
       const amcs = await this.amcModel
-        .find({
-          payments: { $exists: true, $ne: [] },
-        })
+        .find({}) // Removed payments filter to get all AMCs
         .populate({
-          path: 'client_id',
-          select: 'amc_frequency_in_months',
+          path: 'order_id',
+          model: Order.name,
+          populate: [
+            {
+              path: 'customizations',
+              model: Customization.name,
+            },
+            {
+              path: 'licenses',
+              model: License.name,
+            },
+            {
+              path: 'client_id',
+              model: Client.name,
+              select: 'amc_frequency_in_months',
+            },
+          ],
         });
 
       this.loggerService.log(
@@ -1760,46 +1813,104 @@ export class OrderService {
       let updatedPaymentsCount = 0;
       let skippedCount = 0;
       let errorCount = 0;
+      let newPaymentsAdded = 0;
 
       const updates = amcs.map(async (amc) => {
         try {
-          const amc_frequency_in_months =
-            (amc.client_id as any)?.amc_frequency_in_months ||
-            DEFAULT_AMC_CYCLE_IN_MONTHS;
+          const order = amc.order_id as any;
+          if (!order || !order.amc_start_date) {
+            skippedCount++;
+            return;
+          }
 
-          const { payments, _id } = amc;
-          const lastPayment = payments[payments.length - 1];
+          // Check if payments array is empty
+          if (!amc.payments || amc.payments.length === 0) {
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'updateAMCPayments: Empty payments array found, generating review',
+                amcId: amc._id,
+              }),
+            );
+
+            // Get AMC review for the order
+            const amcReview = await this.getAmcReviewByOrderId(
+              order._id.toString(),
+            );
+
+            // Type check and handle the review data
+            if (amcReview) {
+              // Add payments to AMC
+              const payments = amcReview.map((payment) => ({
+                ...payment,
+                received_date: new Date(), // Add required received_date field
+              }));
+              await this.addPaymentsIntoAmc(amc._id.toString(), payments);
+              newPaymentsAdded++;
+              return;
+            }
+          }
+
+          const amc_frequency_in_months =
+            order.client_id?.amc_frequency_in_months || 12;
+          const lastPayment = amc.payments[amc.payments.length - 1];
 
           this.loggerService.log(
             JSON.stringify({
               message: 'updateAMCPayments: Processing AMC',
-              amcId: _id,
+              amcId: amc._id,
               lastPaymentDate: lastPayment.to_date,
               frequency: amc_frequency_in_months,
             }),
           );
 
+          // Check if we need to add a new payment
           if (today > new Date(lastPayment.to_date)) {
+            // Calculate total cost including customizations and licenses
+            let totalCost = order.base_cost;
+
+            // Add customization costs
+            const customizations = order.customizations || [];
+            for (const customization of customizations) {
+              totalCost += customization.cost || 0;
+            }
+
+            // Add license costs
+            const licenses = order.licenses || [];
+            for (const license of licenses) {
+              const licenseCost =
+                (license.rate?.amount || 0) * (license.total_license || 0);
+              totalCost += licenseCost;
+            }
+
+            // Calculate AMC amount based on total cost
+            const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
+
             const newPayment = {
-              from_date: lastPayment.to_date,
+              from_date: new Date(lastPayment.to_date),
               to_date: this.getNextDate(
-                lastPayment.to_date,
+                new Date(lastPayment.to_date),
                 amc_frequency_in_months,
               ),
               status: PAYMENT_STATUS_ENUM.PENDING,
-              purchase_order_document: '',
-              invoice_document: '',
-              received_date: undefined,
+              is_free_amc: false,
+              amc_frequency: amc_frequency_in_months,
+              total_cost: totalCost,
+              amc_rate_applied: order.amc_rate.percentage,
+              amc_rate_amount: amcAmount,
             };
 
-            await this.amcModel.findByIdAndUpdate(_id, {
+            // Update AMC with new payment and latest amounts
+            await this.amcModel.findByIdAndUpdate(amc._id, {
               $push: { payments: newPayment },
+              amount: amcAmount,
+              total_cost: totalCost,
             });
 
             this.loggerService.log(
               JSON.stringify({
                 message: 'updateAMCPayments: Added new payment',
-                amcId: _id,
+                amcId: amc._id,
                 newPayment,
               }),
             );
@@ -1810,7 +1921,7 @@ export class OrderService {
             this.loggerService.log(
               JSON.stringify({
                 message: 'updateAMCPayments: Skipped AMC - payment not due',
-                amcId: _id,
+                amcId: amc._id,
               }),
             );
           }
@@ -1836,6 +1947,7 @@ export class OrderService {
             updated: updatedPaymentsCount,
             skipped: skippedCount,
             errors: errorCount,
+            newPaymentsAdded,
             completionTime: new Date().toISOString(),
           },
         }),
@@ -1846,6 +1958,7 @@ export class OrderService {
         updated: updatedPaymentsCount,
         skipped: skippedCount,
         errors: errorCount,
+        newPaymentsAdded,
       };
     } catch (error: any) {
       this.loggerService.error(
@@ -1858,100 +1971,6 @@ export class OrderService {
         }),
       );
       throw error;
-    }
-  }
-
-  async deleteAllOrdersForAllClients() {
-    try {
-      this.loggerService.log(
-        JSON.stringify({
-          message:
-            'deleteAllOrdersForAllClients: Starting deletion process for all clients',
-        }),
-      );
-
-      // Get all clients
-      const clients = await this.clientModel.find();
-
-      for (const client of clients) {
-        // Get all orders for this client
-        const orders = client.orders;
-
-        if (orders && orders.length > 0) {
-          for (const orderId of orders) {
-            // Delete the order and its related documents
-            try {
-              // Get the order and its related documents
-              const order = await this.orderModel.findById(orderId);
-              if (order) {
-                // Delete related licenses
-                if (order.licenses?.length) {
-                  await this.licenseModel.deleteMany({
-                    _id: { $in: order.licenses },
-                  });
-                }
-
-                // Delete related customizations
-                if (order.customizations?.length) {
-                  await this.customizationModel.deleteMany({
-                    _id: { $in: order.customizations },
-                  });
-                }
-
-                // Delete related additional services
-                if (order.additional_services?.length) {
-                  await this.additionalServiceModel.deleteMany({
-                    _id: { $in: order.additional_services },
-                  });
-                }
-
-                // Delete related AMC
-                if (order.amc_id) {
-                  await this.amcModel.findByIdAndDelete(order.amc_id);
-                }
-
-                // Delete the order itself
-                await this.orderModel.findByIdAndDelete(orderId);
-              }
-            } catch (error: any) {
-              this.loggerService.error(
-                JSON.stringify({
-                  message: `Error deleting order ${orderId} for client ${client._id}`,
-                  error: error.message,
-                }),
-              );
-            }
-          }
-
-          // Clear the orders and amcs arrays from client
-          await this.clientModel.findByIdAndUpdate(client._id, {
-            $set: { orders: [], amcs: [] },
-          });
-        }
-      }
-
-      this.loggerService.log(
-        JSON.stringify({
-          message:
-            'deleteAllOrdersForAllClients: Successfully completed deletion process',
-        }),
-      );
-
-      return {
-        message: 'All orders and related documents deleted successfully',
-      };
-    } catch (error: any) {
-      this.loggerService.error(
-        JSON.stringify({
-          message:
-            'deleteAllOrdersForAllClients: Error during deletion process',
-          error: error.message,
-        }),
-      );
-      throw new HttpException(
-        error.message || 'Server error',
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
-      );
     }
   }
 
@@ -2005,15 +2024,21 @@ export class OrderService {
             'payments.status': PAYMENT_STATUS_ENUM.PENDING,
           })
           .populate('client_id', 'name')
-          .populate('products', 'name')
+          .populate('products', 'short_name')
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.licenseModel
           .find({ payment_status: PAYMENT_STATUS_ENUM.PENDING })
-          .populate('order_id')
+          .populate({
+            path: 'order_id',
+            populate: {
+              path: 'client_id',
+              select: 'name',
+            },
+          })
           .populate({
             path: 'product_id',
-            select: 'name',
+            select: 'short_name',
           })
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
@@ -2021,23 +2046,44 @@ export class OrderService {
           .find({
             payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
-          .populate('order_id')
-          .populate('product_id', 'name')
+          .populate({
+            path: 'order_id',
+            populate: {
+              path: 'client_id',
+              select: 'name',
+            },
+          })
+          .populate('product_id', 'short_name')
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.additionalServiceModel
           .find({
             payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
-          .populate('order_id')
+          .populate({
+            path: 'order_id',
+            populate: {
+              path: 'client_id',
+              select: 'name',
+            },
+          })
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.orderModel
           .find({
             'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
           })
-          .populate('client_id', 'name')
-          .populate('products', 'name')
+          .populate([
+            {
+              path: 'client_id',
+              select: 'name',
+            },
+            {
+              path: 'products',
+              select: 'name short_name',
+              model: Product.name,
+            },
+          ])
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
       ]);
@@ -2073,8 +2119,9 @@ export class OrderService {
                 name: `AMC no ${index + 1}`,
                 client_name: (amc.client_id as any)?.name || 'N/A',
                 product_name:
-                  (amc.products as any[])?.map((p) => p.name).join(', ') ||
-                  'N/A',
+                  (amc.products as unknown as ProductDocument[])
+                    ?.map((p) => p.short_name)
+                    .join(', ') || 'N/A',
               });
             }
           });
@@ -2093,10 +2140,13 @@ export class OrderService {
           pending_amount: licenseCost,
           payment_identifier: license._id.toString(),
           payment_date: license.purchase_date,
-          name: (license?.product_id as unknown as ProductDocument)?.name ?? '',
+          name:
+            (license?.product_id as unknown as ProductDocument)?.short_name ??
+            '',
           client_name: order?.client_id?.name || 'N/A',
           product_name:
-            (license?.product_id as unknown as ProductDocument)?.name ?? 'N/A',
+            (license?.product_id as unknown as ProductDocument)?.short_name ??
+            'N/A',
         });
       }
 
@@ -2113,8 +2163,8 @@ export class OrderService {
           name: customization?.title ?? '',
           client_name: order?.client_id?.name || 'N/A',
           product_name:
-            (customization?.product_id as unknown as ProductDocument)?.name ??
-            'N/A',
+            (customization?.product_id as unknown as ProductDocument)
+              ?.short_name ?? 'N/A',
         });
       }
 
@@ -2137,6 +2187,7 @@ export class OrderService {
       // Orders
       for (const order of pendingOrders) {
         if (Array.isArray(order.payment_terms)) {
+          console.log(order);
           order.payment_terms.forEach((term, index) => {
             if (
               term.status === PAYMENT_STATUS_ENUM.PENDING &&
@@ -2148,12 +2199,13 @@ export class OrderService {
                 status: PAYMENT_STATUS_ENUM.PENDING,
                 pending_amount: term.calculated_amount,
                 payment_identifier: index,
-                payment_date: term.payment_receive_date,
+                payment_date: term.invoice_date,
                 name: term.name,
                 client_name: (order.client_id as any)?.name || 'N/A',
                 product_name:
-                  (order.products as any[])?.map((p) => p.name).join(', ') ||
-                  'N/A',
+                  (order.products as unknown as ProductDocument[])
+                    ?.map((p) => p.short_name)
+                    .join(', ') || 'N/A',
               });
             }
           });
@@ -2290,6 +2342,469 @@ export class OrderService {
         JSON.stringify({
           message: 'updatePendingPayment: Error updating payment',
           error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async getAmcReviewByOrderId(orderId: string): Promise<
+    {
+      from_date: Date;
+      is_free_amc: boolean;
+      to_date: Date;
+      status: PAYMENT_STATUS_ENUM;
+      amc_rate_applied: number;
+      amc_rate_amount: number;
+      amc_frequency: number;
+      total_cost: number;
+    }[]
+  > {
+    try {
+      // Fetch order with populated relationships
+      const order = await this.orderModel.findById(orderId).populate([
+        {
+          path: 'customizations',
+          model: Customization.name,
+        },
+        {
+          path: 'licenses',
+          model: License.name,
+        },
+        {
+          path: 'client_id',
+          model: Client.name,
+          select: 'amc_frequency_in_months',
+        },
+      ]);
+
+      if (!order) {
+        throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Verify AMC exists
+      const amc = await this.amcModel.findById(order.amc_id);
+      if (!amc) {
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Get years for comparison
+      const currentYear = new Date().getFullYear();
+      const amcStartDateYear = new Date(order.amc_start_date).getFullYear();
+
+      const payments = [];
+
+      // Only process if AMC has started in a previous year
+      if (currentYear - amcStartDateYear > 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: Starting Review Process',
+            orderId,
+            amcStartDateYear,
+            currentYear,
+          }),
+        );
+
+        // Get AMC frequency from client settings or default to yearly
+        const amc_frequency_in_months =
+          (order.client_id as any)?.amc_frequency_in_months || 12;
+
+        // Initialize date tracking
+        let lastToDate = new Date(order.amc_start_date);
+        let index = 0;
+
+        // Generate payment schedule from start date to current year
+        while (lastToDate.getFullYear() < currentYear + 1) {
+          const from_date = new Date(lastToDate);
+          const to_date = this.getNextDate(from_date, amc_frequency_in_months);
+
+          payments.push({
+            from_date: from_date.toDateString(),
+            is_free_amc: index === 0, // First payment period is free
+            to_date: to_date.toDateString(),
+            status: PAYMENT_STATUS_ENUM.PAID,
+            amc_frequency: amc_frequency_in_months,
+          });
+
+          lastToDate = to_date;
+          index++;
+        }
+
+        // Mark most recent payment as pending
+        payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
+
+        // Initialize AMC rate tracking
+        let currentAmcRate = order.amc_rate; // Start with current rate
+
+        // Check if historical rates exist
+        if (order.amc_rate_history && order.amc_rate_history.length > 0) {
+          let currentHistoryInCheckIndex = order.amc_rate_history.length - 1;
+          let currentHistoryInCheck =
+            order.amc_rate_history[currentHistoryInCheckIndex];
+
+          // Process payments in reverse order to apply historical rates
+          for (let i = payments.length - 1; i >= 0; i--) {
+            const payment = payments[i];
+            const fromYear = new Date(payment.from_date).getFullYear();
+            const historyDateChangeYear = new Date(
+              currentHistoryInCheck.date,
+            ).getFullYear();
+
+            // Check if payment year matches a rate change year
+            const difference = fromYear - historyDateChangeYear;
+
+            if (difference === 0) {
+              // Update current rate to historical rate
+              currentAmcRate = {
+                percentage: currentHistoryInCheck.percentage,
+                amount: currentHistoryInCheck.amount,
+              };
+
+              // Move to next historical rate if available
+              if (currentHistoryInCheckIndex > 0) {
+                currentHistoryInCheckIndex = currentHistoryInCheckIndex - 1;
+                currentHistoryInCheck =
+                  order.amc_rate_history[currentHistoryInCheckIndex];
+              }
+            }
+
+            // Apply current rate to payment
+            payment.amc_rate_applied = currentAmcRate.percentage;
+            payment.amc_rate_amount = currentAmcRate.amount;
+            payment.total_cost = order.base_cost;
+          }
+        } else {
+          // If no historical rates, apply current rate to all payments
+          for (const payment of payments) {
+            payment.amc_rate_applied = currentAmcRate.percentage;
+            payment.amc_rate_amount = currentAmcRate.amount;
+            payment.total_cost = order.base_cost;
+          }
+        }
+
+        // Now Calculating Additional Purchase on the Order
+        const customizations =
+          order.customizations as unknown as CustomizationDocument[];
+
+        for (const customization of customizations) {
+          const customizationYear = new Date(
+            customization.purchased_date,
+          ).getFullYear();
+          const paymentIndex = payments.findIndex((payment) => {
+            const paymentYear = new Date(payment.from_date).getFullYear();
+            console.log({ paymentYear, customizationYear });
+            return paymentYear === customizationYear;
+          });
+
+          for (let i = paymentIndex + 1; i < payments.length; i++) {
+            const payment = payments[i];
+            const newTotalCost = payment.total_cost + customization.cost;
+            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+
+            payment.amc_rate_amount = newAmount;
+            payment.total_cost = newTotalCost;
+          }
+        }
+
+        const licenses = order.licenses as unknown as LicenseDocument[];
+
+        for (const license of licenses) {
+          const licenseYear = new Date(license.purchase_date).getFullYear();
+          const paymentIndex = payments.findIndex((payment) => {
+            const paymentYear = new Date(payment.from_date).getFullYear();
+            return paymentYear === licenseYear;
+          });
+
+          for (let i = paymentIndex + 1; i < payments.length; i++) {
+            const payment = payments[i];
+
+            const licenseCost = license.rate?.amount * license.total_license;
+
+            const newTotalCost = payment.total_cost + licenseCost;
+            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+
+            payment.amc_rate_amount = newAmount;
+            payment.total_cost = newTotalCost;
+          }
+        }
+
+        return payments;
+      }
+
+      // Return basic info if AMC hasn't started yet
+      return payments;
+    } catch (error: any) {
+      console.log(error);
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'getAmcReviewByOrderId: Error getting amc review by order id',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async addPaymentsIntoAmc(amcId: string, payments: AddAMCPaymentDto[]) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addPaymentsIntoAmc: Starting to add payments into AMC',
+          data: { amcId, paymentsCount: payments.length },
+        }),
+      );
+
+      const amc = await this.amcModel.findById(amcId);
+
+      if (!amc) {
+        this.loggerService.warn(
+          JSON.stringify({
+            message: 'addPaymentsIntoAmc: AMC not found',
+            data: { amcId },
+          }),
+        );
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addPaymentsIntoAmc: Found AMC, updating payments',
+          data: { amcId },
+        }),
+      );
+
+      amc.payments = payments;
+      await amc.save();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'addPaymentsIntoAmc: Successfully updated AMC payments',
+          data: { amcId, paymentsCount: payments.length },
+        }),
+      );
+
+      return amc;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'addPaymentsIntoAmc: Error adding payments into amc',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /** *********************************** TEMPORARY FUNCTIONS *********************************** */
+
+  async deleteAllOrdersForAllClients() {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'deleteAllOrdersForAllClients: Starting deletion process for all clients',
+        }),
+      );
+
+      // Get all clients
+      const clients = await this.clientModel.find();
+
+      for (const client of clients) {
+        // Get all orders for this client
+        const orders = client.orders;
+
+        if (orders && orders.length > 0) {
+          for (const orderId of orders) {
+            // Delete the order and its related documents
+            try {
+              // Get the order and its related documents
+              const order = await this.orderModel.findById(orderId);
+              if (order) {
+                // Delete related licenses
+                if (order.licenses?.length) {
+                  await this.licenseModel.deleteMany({
+                    _id: { $in: order.licenses },
+                  });
+                }
+
+                // Delete related customizations
+                if (order.customizations?.length) {
+                  await this.customizationModel.deleteMany({
+                    _id: { $in: order.customizations },
+                  });
+                }
+
+                // Delete related additional services
+                if (order.additional_services?.length) {
+                  await this.additionalServiceModel.deleteMany({
+                    _id: { $in: order.additional_services },
+                  });
+                }
+
+                // Delete related AMC
+                if (order.amc_id) {
+                  await this.amcModel.findByIdAndDelete(order.amc_id);
+                }
+
+                // Delete the order itself
+                await this.orderModel.findByIdAndDelete(orderId);
+              }
+            } catch (error: any) {
+              this.loggerService.error(
+                JSON.stringify({
+                  message: `Error deleting order ${orderId} for client ${client._id}`,
+                  error: error.message,
+                }),
+              );
+            }
+          }
+
+          // Clear the orders and amcs arrays from client
+          await this.clientModel.findByIdAndUpdate(client._id, {
+            $set: { orders: [], amcs: [] },
+          });
+        }
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'deleteAllOrdersForAllClients: Successfully completed deletion process',
+        }),
+      );
+
+      return {
+        message: 'All orders and related documents deleted successfully',
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'deleteAllOrdersForAllClients: Error during deletion process',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async migrateOrderData() {
+    try {
+      // const orders = await this.orderModel.find({}).lean();
+      // for (const order of orders) {
+      //   const amc_rate = order['amc_rates'];
+      //   if (amc_rate) {
+      //     console.log('Migrating order data', order._id);
+      //     (order['amc_rate'] = {
+      //       percentage: amc_rate.percentage,
+      //       amount: amc_rate.amount,
+      //     }),
+      //       // remove amc_rate from order and add amc_rates to order
+      //       await this.orderModel.findByIdAndUpdate(order._id, {
+      //         $unset: { amc_rates: 1 },
+      //         amc_rate: order['amc_rate'],
+      //       });
+      //   }
+      // }
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'migrateOrderData: Error migrating order data',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async removeClientsData() {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Starting data cleanup process',
+        }),
+      );
+
+      // Delete all orders and related data
+      await this.orderModel.deleteMany({});
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Deleted all orders',
+        }),
+      );
+
+      // Delete all licenses
+      await this.licenseModel.deleteMany({});
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Deleted all licenses',
+        }),
+      );
+
+      // Delete all customizations
+      await this.customizationModel.deleteMany({});
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Deleted all customizations',
+        }),
+      );
+
+      // Delete all additional services
+      await this.additionalServiceModel.deleteMany({});
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Deleted all additional services',
+        }),
+      );
+
+      // Delete all AMCs
+      await this.amcModel.deleteMany({});
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Deleted all AMCs',
+        }),
+      );
+
+      // Update all clients to empty their orders and AMCs arrays
+      await this.clientModel.updateMany({}, { $set: { orders: [], amcs: [] } });
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Reset all client orders and AMCs arrays',
+        }),
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'removeClientsData: Successfully completed data cleanup',
+        }),
+      );
+
+      return {
+        message: 'Successfully removed all data except clients and users',
+        status: 'success',
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'removeClientsData: Error during data cleanup',
+          error: error.message,
+          stack: error.stack,
         }),
       );
       throw new HttpException(

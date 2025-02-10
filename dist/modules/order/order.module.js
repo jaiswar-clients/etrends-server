@@ -28,6 +28,7 @@ let OrderModule = class OrderModule {
         this.orderService = orderService;
     }
     async onModuleInit() {
+        console.log('Migrating order data');
     }
 };
 exports.OrderModule = OrderModule;

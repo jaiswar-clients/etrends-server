@@ -9,7 +9,7 @@ declare class PointOfContact {
 }
 export declare class Client extends Document {
     name: string;
-    parent_company_id: string;
+    parent_company_id: Types.ObjectId;
     pan_number: string;
     gst_number: string;
     address: string;

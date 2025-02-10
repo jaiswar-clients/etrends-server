@@ -46,5 +46,11 @@ export declare class CreateOrderDto {
     cost_per_license: number;
     licenses_with_base_price: number;
     customization: CustomizationDto;
+    status_logs: {
+        from: ORDER_STATUS_ENUM;
+        to: ORDER_STATUS_ENUM;
+        date: Date;
+        user: Types.ObjectId;
+    }[];
 }
 export {};

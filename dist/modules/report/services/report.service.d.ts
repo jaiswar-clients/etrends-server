@@ -62,9 +62,4 @@ export declare class ReportService {
         year?: number;
         quarter?: string;
     }): Promise<any[]>;
-    getPieChartSalesData(filter: ReportFilterType, options?: ReportFilterOptions & {
-        month?: number;
-        year?: number;
-        quarter?: string;
-    }): Promise<void>;
 }

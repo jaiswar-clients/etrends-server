@@ -38,7 +38,7 @@ let ClientService = class ClientService {
                 clients = await this.clientModel
                     .find({ is_parent_company: false })
                     .sort({ createdAt: -1 })
-                    .select('orders name industry createdAt')
+                    .select('orders name industry createdAt parent_company_id')
                     .populate({
                     path: 'orders',
                     model: 'Order',
@@ -54,7 +54,7 @@ let ClientService = class ClientService {
                 clients = await this.clientModel
                     .find({ is_parent_company: false })
                     .sort({ createdAt: -1 })
-                    .select('orders name industry createdAt')
+                    .select('orders name industry createdAt parent_company_id')
                     .skip((page - 1) * limit)
                     .limit(limit)
                     .populate({
@@ -68,16 +68,38 @@ let ClientService = class ClientService {
                     },
                 });
             }
-            clients = clients.map((client) => {
+            const transformedClients = [];
+            for (const client of clients) {
+                console.log(client.parent_company_id);
                 let products = [];
-                client.orders.map((order) => {
+                for (const order of client.orders) {
                     products = order.products.map((product) => product.name);
-                });
-                return {
-                    ...client.toObject(),
+                }
+                let first_order_date = null;
+                if (client.orders && client.orders.length > 0) {
+                    const firstOrder = await this.orderModel
+                        .findById(client.orders[0])
+                        .select('purchased_date')
+                        .lean();
+                    first_order_date = firstOrder?.purchased_date || null;
+                }
+                const clientObj = client.toObject();
+                let parent_company = null;
+                if (clientObj.parent_company_id) {
+                    const parentCompany = await this.clientModel
+                        .findById(clientObj.parent_company_id)
+                        .select('name')
+                        .lean();
+                    parent_company = parentCompany?.name || null;
+                }
+                transformedClients.push({
+                    ...clientObj,
                     products,
-                };
-            });
+                    first_order_date,
+                    parent_company,
+                });
+            }
+            clients = transformedClients;
             this.loggerService.warn(JSON.stringify({
                 message: 'getAllClients: Clients Fetched',
                 clients,

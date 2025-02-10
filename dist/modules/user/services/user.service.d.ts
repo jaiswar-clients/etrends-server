@@ -10,12 +10,17 @@ export declare class UserService {
     private loggerService;
     private readonly jwtService;
     constructor(userModel: SoftDeleteModel<User>, configService: ConfigService, loggerService: LoggerService, jwtService: JwtService);
-    createUser(body: CreateUserDto): Promise<import("mongoose").Document<unknown, {}, User> & User & Required<{
-        _id: unknown;
-    }> & {
-        __v: number;
+    createUser(body: CreateUserDto): Promise<{
+        message: string;
+        data: any;
+        success: boolean;
     }>;
     loginHandler(email: string, password: string): Promise<{
+        message: string;
+        data: any;
+        success: boolean;
+    }>;
+    getInternalTeamEmails(): Promise<{
         message: string;
         data: any;
         success: boolean;

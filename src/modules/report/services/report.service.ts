@@ -761,7 +761,9 @@ export class ReportService {
     const amcs = await this.amcModel.find();
     for (const amc of amcs) {
       for (const payment of amc.payments || []) {
-        addBilling(payment.from_date, { amc: amc.amount || 0 });
+        addBilling(payment.from_date, {
+          amc: payment.total_cost || amc.amount || 0,
+        });
       }
     }
 
@@ -789,7 +791,9 @@ export class ReportService {
       return 0;
     };
 
-    return resultArray.sort((a, b) => sortByPeriod(a.period, b.period));
+    return resultArray
+      .filter((d) => d.period !== 'Invalid Date')
+      .sort((a, b) => sortByPeriod(a.period, b.period));
   }
 
   async getAMCAnnualBreakdown(
@@ -848,8 +852,6 @@ export class ReportService {
           start = new Date(new Date().getFullYear(), 0, 1);
           end = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
       }
-
-      console.log({ start, end, filter, options });
 
       const groupByPeriod = (date: Date) => {
         switch (filter) {
@@ -1044,12 +1046,15 @@ export class ReportService {
       // First payment is free, so skip index 0
       for (const pay of a.payments.slice(1)) {
         if (pay.from_date >= start && pay.from_date <= end) {
-          // Entire amount is expected at from_date
-          addData(pay.from_date, a.amount || 0, 0);
-          // If paid, add to received as well
-          if (pay.status === PAYMENT_STATUS_ENUM.PAID) {
-            // There's no distinct payment_receive_date for AMC, so we just reuse from_date
-            addData(pay.from_date, 0, a.amount || 0);
+          // Expected amount is the total_cost or amc_rate_amount for the period
+          const expectedAmount =
+            pay.total_cost || pay.amc_rate_amount || a.amount || 0;
+          addData(new Date(pay.from_date), expectedAmount, 0);
+
+          // If paid, add to received based on actual payment_amount
+          if (pay.status === PAYMENT_STATUS_ENUM.PAID && pay.received_date) {
+            const receivedAmount = pay.total_cost || expectedAmount;
+            addData(new Date(pay.received_date), 0, receivedAmount);
           }
         }
       }
@@ -1388,12 +1393,12 @@ export class ReportService {
     return output.sort((x, y) => sortEntries(x.period, y.period));
   }
 
-  async getPieChartSalesData(
-    filter: ReportFilterType,
-    options?: ReportFilterOptions & {
-      month?: number;
-      year?: number;
-      quarter?: string;
-    },
-  ) {}
+  // async getPieChartSalesData(
+  //   filter: ReportFilterType,
+  //   options?: ReportFilterOptions & {
+  //     month?: number;
+  //     year?: number;
+  //     quarter?: string;
+  //   },
+  // ) {}
 }

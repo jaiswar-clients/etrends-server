@@ -131,4 +131,15 @@ export class CreateOrderDto {
   @ValidateNested()
   @Type(() => CustomizationDto)
   customization: CustomizationDto;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => Object)
+  status_logs: {
+    from: ORDER_STATUS_ENUM;
+    to: ORDER_STATUS_ENUM;
+    date: Date;
+    user: Types.ObjectId;
+  }[];
 }

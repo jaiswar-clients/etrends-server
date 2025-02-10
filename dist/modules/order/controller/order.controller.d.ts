@@ -3,7 +3,7 @@ import { CreateOrderDto } from '../dto/create-order.dto';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
-import { UpdateAMCDto } from '../dto/update-amc.dto';
+import { AddAMCPaymentDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 export type UpdateOrderType = CreateOrderDto;
@@ -37,12 +37,14 @@ export declare class OrderController {
         })[];
     }>;
     loadAllAMC(page: number, limit: number, filter: AMC_FILTER, upcoming: string, startDate: string, endDate: string): Promise<{
-        data: any[];
-        pagination: {
-            total: number;
-            page: number;
-            limit: number;
-            totalPages: number;
+        data: {
+            pagination: {
+                total: number;
+                page: number;
+                limit: number;
+                pages: number;
+            };
+            data: any[];
         };
     }>;
     getAllPendingPayments(page: number, limit: number): Promise<{
@@ -95,6 +97,16 @@ export declare class OrderController {
     }> & {
         __v: number;
     }>;
+    getAmcReviewByOrderId(orderId: string): Promise<{
+        from_date: Date;
+        is_free_amc: boolean;
+        to_date: Date;
+        status: import("../../../db/schema/amc/amc.schema").PAYMENT_STATUS_ENUM;
+        amc_rate_applied: number;
+        amc_rate_amount: number;
+        amc_frequency: number;
+        total_cost: number;
+    }[]>;
     createOrder(clientId: string, body: CreateOrderDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, import("../../../db/schema/order/product-order.schema").Order> & import("../../../db/schema/order/product-order.schema").Order & Required<{
         _id: unknown;
     }> & {
@@ -167,7 +179,16 @@ export declare class OrderController {
     }> & {
         __v: number;
     }>;
-    updateAMC(orderId: string, body: UpdateAMCDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, import("../../../db/schema/amc/amc.schema").AMC> & import("../../../db/schema/amc/amc.schema").AMC & Required<{
+    addPaymentsIntoAMC(amcId: string, body: AddAMCPaymentDto[]): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, import("../../../db/schema/amc/amc.schema").AMC> & import("../../../db/schema/amc/amc.schema").AMC & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }> & import("mongoose").Document<unknown, {}, import("../../../db/schema/amc/amc.schema").AMC> & import("../../../db/schema/amc/amc.schema").AMC & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }>;
+    updateAMCPaymentById(id: string, paymentId: string, body: UpdateAMCPaymentDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, import("../../../db/schema/amc/amc.schema").AMC> & import("../../../db/schema/amc/amc.schema").AMC & Required<{
         _id: unknown;
     }> & {
         __v: number;

@@ -15,7 +15,11 @@ import { CreateOrderDto } from '../dto/create-order.dto';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
-import { UpdateAMCDto } from '../dto/update-amc.dto';
+import {
+  AddAMCPaymentDto,
+  UpdateAMCDto,
+  UpdateAMCPaymentDto,
+} from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
@@ -59,7 +63,7 @@ export class OrderController {
 
     // Validate dates
     let parsedStartDate: Date | undefined = undefined;
-    let parsedEndDate: Date | undefined = undefined ;
+    let parsedEndDate: Date | undefined = undefined;
 
     if (startDate !== 'undefined') {
       parsedStartDate = new Date(startDate);
@@ -146,6 +150,11 @@ export class OrderController {
     return this.orderService.getCustomizationById(orderId);
   }
 
+  @Get('/amc-payments-review/:id')
+  async getAmcReviewByOrderId(@Param('id') orderId: string) {
+    return this.orderService.getAmcReviewByOrderId(orderId);
+  }
+
   @Post('/:clientId')
   async createOrder(
     @Param('clientId') clientId: string,
@@ -207,12 +216,22 @@ export class OrderController {
     return this.orderService.updateAdditionalServiceById(id, body);
   }
 
-  @Patch('/:orderId/amc')
-  async updateAMC(
-    @Param('orderId') orderId: string,
-    @Body() body: UpdateAMCDto,
+
+  @Patch('/amc/:id/payments')
+  async addPaymentsIntoAMC(
+    @Param('id') amcId: string,
+    @Body() body: AddAMCPaymentDto[],
   ) {
-    return this.orderService.updateAMC(orderId, body);
+    return this.orderService.addPaymentsIntoAmc(amcId, body);
+  }
+
+  @Patch('/amc/:id/payment/:paymentId')
+  async updateAMCPaymentById(
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: UpdateAMCPaymentDto,
+  ) {
+    return this.orderService.updateAmcPaymentById(id, paymentId, body);
   }
 
   @Patch('/pending-payments/:id')

@@ -157,10 +157,12 @@ __decorate([
 ], Order.prototype, "purchased_date", void 0);
 __decorate([
     (0, mongoose_1.Prop)({
-        type: [{
+        type: [
+            {
                 title: String,
                 url: String,
-            }],
+            },
+        ],
         default: {},
     }),
     __metadata("design:type", Array)
@@ -198,6 +200,33 @@ __decorate([
     }),
     __metadata("design:type", Object)
 ], Order.prototype, "is_purchased_with_order", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: [
+            {
+                from: String,
+                to: String,
+                date: Date,
+                user: mongoose_2.Types.ObjectId,
+            },
+        ],
+        default: [],
+    }),
+    __metadata("design:type", Array)
+], Order.prototype, "status_logs", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({
+        type: [
+            {
+                percentage: Number,
+                amount: Number,
+                date: Date,
+            },
+        ],
+        default: [],
+    }),
+    __metadata("design:type", Array)
+], Order.prototype, "amc_rate_history", void 0);
 exports.Order = Order = __decorate([
     (0, mongoose_1.Schema)({ timestamps: true })
 ], Order);

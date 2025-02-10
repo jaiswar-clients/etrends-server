@@ -4,12 +4,17 @@ import { LoginUserDto } from '../dto/login-user.dto';
 export declare class UserController {
     private userService;
     constructor(userService: UserService);
-    createUser(body: CreateUserDto): Promise<import("mongoose").Document<unknown, {}, import("../../../db/schema/user.schema").User> & import("../../../db/schema/user.schema").User & Required<{
-        _id: unknown;
-    }> & {
-        __v: number;
+    createUser(body: CreateUserDto): Promise<{
+        message: string;
+        data: any;
+        success: boolean;
     }>;
     loginUser(body: LoginUserDto): Promise<{
+        message: string;
+        data: any;
+        success: boolean;
+    }>;
+    getInternalTeamEmails(): Promise<{
         message: string;
         data: any;
         success: boolean;

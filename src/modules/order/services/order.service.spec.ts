@@ -46,28 +46,60 @@ describe('OrderService', () => {
     expect(service).toBeDefined();
   });
 
-describe('updateAMCPayments - with multiple payments', () => {
+  describe('updateAMCPayments - with multiple payments', () => {
+    const mockOrder = {
+      _id: 'order1',
+      amc_start_date: new Date('2024-01-01'),
+      base_cost: 10000,
+      amc_rate: {
+        percentage: 20,
+        amount: 2000
+      },
+      client_id: {
+        amc_frequency_in_months: 12
+      },
+      customizations: [
+        {
+          purchased_date: new Date('2024-06-01'),
+          cost: 5000
+        }
+      ],
+      licenses: [
+        {
+          purchase_date: new Date('2024-08-01'),
+          rate: {
+            amount: 1000
+          },
+          total_license: 2
+        }
+      ]
+    };
+
     const mockAmcs = [
       {
         _id: 'amc1',
+        order_id: mockOrder,
         payments: [
           {
-            from_date: new Date('2024-12-03T00:00:00.000Z'),
-            to_date: new Date('2025-12-03T00:00:00.000Z'),
+            from_date: new Date('2024-01-01'),
+            to_date: new Date('2025-01-01'),
             status: PAYMENT_STATUS_ENUM.PAID,
-          },
-          {
-            from_date: new Date('2025-12-03T00:00:00.000Z'),
-            to_date: new Date('2026-12-03T00:00:00.000Z'),
-            status: PAYMENT_STATUS_ENUM.PAID,
-          },
-        ],
-        amc_frequency_in_months: 12,
-      },
+          }
+        ]
+      }
     ];
 
     beforeEach(() => {
-      jest.spyOn(amcModel, 'find').mockResolvedValue(mockAmcs as any);
+      const findMock = jest.fn().mockReturnThis();
+      const populateMock = jest.fn().mockReturnThis();
+      
+      findMock.mockReturnValue({
+        populate: populateMock,
+      });
+      
+      populateMock.mockResolvedValue(mockAmcs);
+      
+      jest.spyOn(amcModel, 'find').mockImplementation(findMock);
       jest.spyOn(amcModel, 'findByIdAndUpdate').mockResolvedValue(null);
       jest.spyOn(loggerService, 'log').mockImplementation();
       jest.spyOn(loggerService, 'error').mockImplementation();
@@ -78,110 +110,187 @@ describe('updateAMCPayments - with multiple payments', () => {
       jest.restoreAllMocks();
     });
 
-    it('should not create a new payment when today is before the last payment to_date', async () => {
+    it('should add new payment when current date is after last payment end date', async () => {
+      // Mock current date to be after the last payment's end date
       jest
         .spyOn(Date, 'now')
-        .mockReturnValue(new Date('2025-11-30T00:00:00.000Z').getTime());
+        .mockReturnValue(new Date('2025-02-01').getTime());
 
       const result = await service.updateAMCPayments();
 
+      // Verify AMC model was queried correctly
       expect(amcModel.find).toHaveBeenCalledWith({
         payments: { $exists: true, $ne: [] },
-        amc_frequency_in_months: { $exists: true },
       });
+
+      // Verify the update was called with correct new payment
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        'amc1',
+        {
+          $push: {
+            payments: {
+              from_date: new Date('2025-01-01'),
+              to_date: new Date('2026-01-01'),
+              status: PAYMENT_STATUS_ENUM.PENDING,
+              is_free_amc: false,
+              amc_frequency: 12,
+              total_cost: 17000, // base_cost + customization + license costs
+              amc_rate_applied: 20,
+              amc_rate_amount: 3400 // 20% of 17000
+            }
+          },
+          amount: 3400,
+          total_cost: 17000
+        }
+      );
+
+      expect(result).toEqual({
+        processed: 1,
+        updated: 1,
+        skipped: 0,
+        errors: 0,
+      });
+    });
+
+    it('should not add new payment when current date is before last payment end date', async () => {
+      // Mock current date to be before the last payment's end date
+      jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(new Date('2024-12-01').getTime());
+
+      const result = await service.updateAMCPayments();
+
       expect(amcModel.findByIdAndUpdate).not.toHaveBeenCalled();
       expect(result).toEqual({
         processed: 1,
         updated: 0,
         skipped: 1,
-        errors: 0
+        errors: 0,
       });
     });
 
-    it('should create a new payment when today is after the last payment to_date', async () => {
-      const mockAmcs = [
+    it('should skip AMC if order is not found', async () => {
+      const mocksWithoutOrder = [
         {
           _id: 'amc1',
+          order_id: null,
           payments: [
             {
-              from_date: new Date('2024-12-03T00:00:00.000Z'),
-              to_date: new Date('2026-12-03T00:00:00.000Z'),
+              from_date: new Date('2024-01-01'),
+              to_date: new Date('2025-01-01'),
               status: PAYMENT_STATUS_ENUM.PAID,
-            },
-          ],
-          amc_frequency_in_months: 12,
-        },
+            }
+          ]
+        }
       ];
 
-      jest.spyOn(amcModel, 'find').mockResolvedValue(mockAmcs as any);
-      const mockUpdate = jest.spyOn(amcModel, 'findByIdAndUpdate');
-
-      jest
-        .spyOn(Date, 'now')
-        .mockReturnValue(new Date('2027-01-01T00:00:00.000Z').getTime());
+      const findMock = jest.fn().mockReturnThis();
+      const populateMock = jest.fn().mockReturnThis();
+      
+      findMock.mockReturnValue({
+        populate: populateMock,
+      });
+      
+      populateMock.mockResolvedValue(mocksWithoutOrder);
+      
+      jest.spyOn(amcModel, 'find').mockImplementation(findMock);
 
       const result = await service.updateAMCPayments();
 
-      expect(amcModel.find).toHaveBeenCalledWith({
-        payments: { $exists: true, $ne: [] },
-        amc_frequency_in_months: { $exists: true },
-      });
-      expect(mockUpdate).toHaveBeenCalledWith('amc1', {
-        $push: {
-          payments: {
-            from_date: new Date('2026-12-03T00:00:00.000Z'),
-            to_date: new Date('2027-12-03T00:00:00.000Z'),
-            status: PAYMENT_STATUS_ENUM.PENDING,
-          },
-        },
-      });
-      expect(result).toEqual({
-        processed: 1,
-        updated: 1,
-        skipped: 0,
-        errors: 0
-      });
-    });
-
-    it('should handle empty payments array', async () => {
-      const mockAmcsEmpty = [
-        {
-          _id: 'amc1',
-          payments: [],
-          amc_frequency_in_months: 12,
-        },
-      ];
-
-      jest.spyOn(amcModel, 'find').mockResolvedValue(mockAmcsEmpty as any);
-
-      const result = await service.updateAMCPayments();
-
-      expect(amcModel.find).toHaveBeenCalledWith({
-        payments: { $exists: true, $ne: [] },
-        amc_frequency_in_months: { $exists: true },
-      });
       expect(amcModel.findByIdAndUpdate).not.toHaveBeenCalled();
       expect(result).toEqual({
         processed: 1,
         updated: 0,
-        skipped: 0,
-        errors: 0
+        skipped: 1,
+        errors: 0,
       });
     });
 
-    it('should handle error during AMC update', async () => {
-      const mockError = new Error('Database error');
+    it('should handle error during payment calculation', async () => {
+      const mockError = new Error('Calculation error');
       jest.spyOn(amcModel, 'findByIdAndUpdate').mockRejectedValue(mockError);
+      
+      // Set date to trigger payment addition
+      jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(new Date('2025-02-01').getTime());
 
       const result = await service.updateAMCPayments();
 
+      expect(loggerService.error).toHaveBeenCalledWith(
+        expect.stringContaining('Error processing individual AMC')
+      );
       expect(result).toEqual({
         processed: 1,
         updated: 0,
         skipped: 0,
-        errors: 1
+        errors: 1,
       });
-      expect(loggerService.error).toHaveBeenCalled();
+    });
+
+    it('should calculate correct amount with no additional purchases', async () => {
+      const mockOrderWithoutAdditions = {
+        ...mockOrder,
+        customizations: [],
+        licenses: []
+      };
+
+      const mocksWithoutAdditions = [
+        {
+          _id: 'amc1',
+          order_id: mockOrderWithoutAdditions,
+          payments: [
+            {
+              from_date: new Date('2024-01-01'),
+              to_date: new Date('2025-01-01'),
+              status: PAYMENT_STATUS_ENUM.PAID,
+            }
+          ]
+        }
+      ];
+
+      const findMock = jest.fn().mockReturnThis();
+      const populateMock = jest.fn().mockReturnThis();
+      
+      findMock.mockReturnValue({
+        populate: populateMock,
+      });
+      
+      populateMock.mockResolvedValue(mocksWithoutAdditions);
+      
+      jest.spyOn(amcModel, 'find').mockImplementation(findMock);
+      jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(new Date('2025-02-01').getTime());
+
+      const result = await service.updateAMCPayments();
+
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        'amc1',
+        {
+          $push: {
+            payments: {
+              from_date: new Date('2025-01-01'),
+              to_date: new Date('2026-01-01'),
+              status: PAYMENT_STATUS_ENUM.PENDING,
+              is_free_amc: false,
+              amc_frequency: 12,
+              total_cost: 10000, // Only base cost
+              amc_rate_applied: 20,
+              amc_rate_amount: 2000 // 20% of 10000
+            }
+          },
+          amount: 2000,
+          total_cost: 10000
+        }
+      );
+
+      expect(result).toEqual({
+        processed: 1,
+        updated: 1,
+        skipped: 0,
+        errors: 0,
+      });
     });
   });
 });

@@ -5,24 +5,27 @@ export declare enum PAYMENT_STATUS_ENUM {
     PENDING = "pending",
     PARTIAL = "partial"
 }
+export interface IAMCPayment {
+    _id?: any;
+    from_date: Date;
+    to_date: Date;
+    status: PAYMENT_STATUS_ENUM;
+    received_date?: Date;
+    amc_rate_applied?: number;
+    amc_rate_amount?: number;
+    total_cost?: number;
+    purchase_order_number?: string;
+    purchase_order_document?: string;
+    purchase_order_date?: Date;
+    invoice_document?: string;
+    invoice_number?: string;
+    invoice_date?: Date;
+}
 export declare class AMC extends Document {
     order_id: MongooseSchema.Types.ObjectId;
     client_id: MongooseSchema.Types.ObjectId;
     total_cost: number;
-    start_date: Date;
-    payments: {
-        _id: any;
-        from_date: Date;
-        to_date: Date;
-        status: PAYMENT_STATUS_ENUM;
-        received_date: Date;
-        purchase_order_number: string;
-        purchase_order_document: string;
-        purchase_order_date: Date;
-        invoice_document: string;
-        invoice_number: string;
-        invoice_date: Date;
-    }[];
+    payments: IAMCPayment[];
     amount: number;
     amc_percentage: number;
     products: MongooseSchema.Types.ObjectId[];

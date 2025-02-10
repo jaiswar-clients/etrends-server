@@ -16,7 +16,7 @@ import { AuthGuard } from '@/common/guards/auth.guard';
 @UseGuards(AuthGuard)
 export class ClientController {
   constructor(private clientService: ClientService) {}
-
+  
   @Get()
   async getAllClients(
     @Query('page') page: string,

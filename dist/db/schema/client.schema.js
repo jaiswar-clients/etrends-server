@@ -45,7 +45,7 @@ __decorate([
 ], Client.prototype, "name", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: mongoose_2.Types.ObjectId, ref: 'Client' }),
-    __metadata("design:type", String)
+    __metadata("design:type", mongoose_2.Types.ObjectId)
 ], Client.prototype, "parent_company_id", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: String }),

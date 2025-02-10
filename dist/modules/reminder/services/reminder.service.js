@@ -26,6 +26,7 @@ const reminder_schema_1 = require("../../../db/schema/reminders/reminder.schema"
 const config_service_1 = require("../../../common/config/services/config.service");
 const storage_service_1 = require("../../../common/storage/services/storage.service");
 const email_template_schema_1 = require("../../../db/schema/reminders/email.template.schema");
+const misc_1 = require("../../../utils/misc");
 let ReminderService = class ReminderService {
     constructor(orderModel, amcModel, reminderModel, emailTemplateModel, loggerService, mailService, configService, storageService) {
         this.orderModel = orderModel;
@@ -73,6 +74,12 @@ let ReminderService = class ReminderService {
                 }
                 const amcsOverDueDetails = this.getOverdueAMCDetails([amc])[0];
                 const products = this.getUniqueProducts([amc]);
+                if (!amcsOverDueDetails) {
+                    this.loggerService.log(JSON.stringify({
+                        message: 'Skipping reminder - no overdue payments',
+                    }));
+                    continue;
+                }
                 this.loggerService.log(JSON.stringify({
                     message: 'Preparing email context',
                     clientName: client.name,
@@ -191,13 +198,21 @@ let ReminderService = class ReminderService {
             const pendingPayments = amc.payments.filter((p) => p.status === amc_schema_1.PAYMENT_STATUS_ENUM.PENDING);
             return pendingPayments
                 .map((payment) => {
+                const MILLISECONDS_PER_SECOND = 1000;
+                const SECONDS_PER_MINUTE = 60;
+                const MINUTES_PER_HOUR = 60;
+                const HOURS_PER_DAY = 24;
+                const MILLISECONDS_PER_DAY = MILLISECONDS_PER_SECOND *
+                    SECONDS_PER_MINUTE *
+                    MINUTES_PER_HOUR *
+                    HOURS_PER_DAY;
                 const overdueDays = Math.floor((new Date().getTime() - new Date(payment.from_date).getTime()) /
-                    (1000 * 60 * 60 * 24));
+                    MILLISECONDS_PER_DAY);
                 if (overdueDays <= 0)
                     return null;
                 return {
                     cycle: `${new Date(payment.from_date).toLocaleDateString()} to ${new Date(payment.to_date).toLocaleDateString()}`,
-                    amount: amc.amount.toFixed(2),
+                    amount: (0, misc_1.formatCurrency)(amc.amount),
                     date: new Date(payment.from_date).toLocaleDateString(),
                     overdue: overdueDays,
                     link: `${this.configService.get('CLIENT_URL')}/amc/${amc.order_id}`,
@@ -246,6 +261,12 @@ let ReminderService = class ReminderService {
                     return (dueDate.getMonth() === nextMonth.getMonth() &&
                         dueDate.getFullYear() === nextMonth.getFullYear());
                 });
+                if (!upcomingPayment) {
+                    this.loggerService.log(JSON.stringify({
+                        message: 'Skipping reminder - no upcoming payments',
+                    }));
+                    continue;
+                }
                 const uniqueProducts = this.getUniqueProducts([amc]);
                 const reminderId = `${client._id}-${amc._id}-${upcomingPayment._id}`;
                 const shouldSkipReminder = await this.shouldSkipReminder(reminderId);
@@ -263,6 +284,11 @@ let ReminderService = class ReminderService {
                     contacts: client.point_of_contacts,
                     amc: amcDetail[0],
                 };
+                this.loggerService.log(JSON.stringify({
+                    message: 'Sending reminder email',
+                    to: this.INTERNAL_TEAM_EMAIL,
+                    amcId: amc._id,
+                }));
                 const emailStatus = await this.sendReminderEmail1(this.INTERNAL_TEAM_EMAIL, 'AMC Payment Reminder Alert', mail_service_1.MAIL_TEMPLATES.SEND_UPCOMING_AMC_REMINDER, emailContext);
                 await this.updateReminder({
                     reminder_id: reminderId,

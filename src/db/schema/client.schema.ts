@@ -28,7 +28,7 @@ export class Client extends Document {
   name: string;
 
   @Prop({ type: Types.ObjectId, ref: 'Client' })
-  parent_company_id: string;
+  parent_company_id: Types.ObjectId;
 
   @Prop({ type: String })
   pan_number: string;

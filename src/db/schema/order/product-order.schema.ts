@@ -143,10 +143,12 @@ export class Order extends Document {
   purchased_date: Date;
 
   @Prop({
-    type: [{
-      title: String,
-      url: String,
-    }],
+    type: [
+      {
+        title: String,
+        url: String,
+      },
+    ],
     default: {},
   })
   other_documents: {
@@ -183,6 +185,40 @@ export class Order extends Document {
     customization: boolean; // if customization is purchased with order than it always the first elemenet of the customizations array
     license: boolean;
   };
+
+  @Prop({
+    type: [
+      {
+        from: String,
+        to: String,
+        date: Date,
+        user: Types.ObjectId,
+      },
+    ],
+    default: [],
+  })
+  status_logs: {
+    from: ORDER_STATUS_ENUM;
+    to: ORDER_STATUS_ENUM;
+    date: Date;
+    user: Types.ObjectId;
+  }[];
+
+  @Prop({
+    type: [
+      {
+        percentage: Number,
+        amount: Number,
+        date: Date,
+      },
+    ],
+    default: [],
+  })
+  amc_rate_history: {
+    percentage: number;
+    amount: number;
+    date: Date;
+  }[];
 }
 
 // Define schema with plugins and virtuals as needed

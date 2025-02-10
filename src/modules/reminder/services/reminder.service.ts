@@ -40,6 +40,7 @@ import {
   EmailTemplate,
   EmailTemplateDocument,
 } from '@/db/schema/reminders/email.template.schema';
+import { formatCurrency } from '@/utils/misc';
 
 @Injectable()
 export class ReminderService {
@@ -118,6 +119,15 @@ export class ReminderService {
 
         const amcsOverDueDetails = this.getOverdueAMCDetails([amc])[0];
         const products = this.getUniqueProducts([amc]);
+
+        if (!amcsOverDueDetails) {
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'Skipping reminder - no overdue payments',
+            }),
+          );
+          continue;
+        }
 
         this.loggerService.log(
           JSON.stringify({
@@ -300,16 +310,26 @@ export class ReminderService {
 
         return pendingPayments
           .map((payment) => {
+            const MILLISECONDS_PER_SECOND = 1000;
+            const SECONDS_PER_MINUTE = 60;
+            const MINUTES_PER_HOUR = 60;
+            const HOURS_PER_DAY = 24;
+            const MILLISECONDS_PER_DAY =
+              MILLISECONDS_PER_SECOND *
+              SECONDS_PER_MINUTE *
+              MINUTES_PER_HOUR *
+              HOURS_PER_DAY;
+
             const overdueDays = Math.floor(
               (new Date().getTime() - new Date(payment.from_date).getTime()) /
-                (1000 * 60 * 60 * 24),
+                MILLISECONDS_PER_DAY,
             );
 
             if (overdueDays <= 0) return null;
 
             return {
               cycle: `${new Date(payment.from_date).toLocaleDateString()} to ${new Date(payment.to_date).toLocaleDateString()}`,
-              amount: amc.amount.toFixed(2),
+              amount: formatCurrency(amc.amount),
               date: new Date(payment.from_date).toLocaleDateString(),
               overdue: overdueDays,
               link: `${this.configService.get('CLIENT_URL')}/amc/${amc.order_id}`,
@@ -381,6 +401,14 @@ export class ReminderService {
             dueDate.getFullYear() === nextMonth.getFullYear()
           );
         });
+        if (!upcomingPayment) {
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'Skipping reminder - no upcoming payments',
+            }),
+          );
+          continue;
+        }
         const uniqueProducts = this.getUniqueProducts([amc as AMCDocument]);
         const reminderId = `${client._id}-${amc._id}-${upcomingPayment._id}`;
 
@@ -402,6 +430,14 @@ export class ReminderService {
           contacts: client.point_of_contacts,
           amc: amcDetail[0],
         };
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'Sending reminder email',
+            to: this.INTERNAL_TEAM_EMAIL,
+            amcId: amc._id,
+          }),
+        );
 
         const emailStatus = await this.sendReminderEmail1(
           this.INTERNAL_TEAM_EMAIL,

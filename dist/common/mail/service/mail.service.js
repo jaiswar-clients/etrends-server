@@ -47,6 +47,7 @@ let MailService = class MailService {
             return status;
         }
         catch (error) {
+            console.log(error, context);
             this.loggerService.error(JSON.stringify({
                 message: 'Error sending email',
                 error,

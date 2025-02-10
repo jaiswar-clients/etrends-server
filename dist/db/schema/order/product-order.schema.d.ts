@@ -57,6 +57,17 @@ export declare class Order extends Document {
         customization: boolean;
         license: boolean;
     };
+    status_logs: {
+        from: ORDER_STATUS_ENUM;
+        to: ORDER_STATUS_ENUM;
+        date: Date;
+        user: Types.ObjectId;
+    }[];
+    amc_rate_history: {
+        percentage: number;
+        amount: number;
+        date: Date;
+    }[];
 }
 declare const OrderSchema: MongooseSchema<Order, import("mongoose").Model<Order, any, any, any, Document<unknown, any, Order> & Order & Required<{
     _id: unknown;
