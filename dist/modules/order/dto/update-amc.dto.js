@@ -16,14 +16,9 @@ class UpdateAMCDto {
 }
 exports.UpdateAMCDto = UpdateAMCDto;
 __decorate([
-    (0, class_validator_1.IsOptional)(),
-    __metadata("design:type", Array)
-], UpdateAMCDto.prototype, "payments", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.IsOptional)(),
-    __metadata("design:type", String)
-], UpdateAMCDto.prototype, "start_date", void 0);
+    (0, class_validator_1.IsNumber)(),
+    __metadata("design:type", Number)
+], UpdateAMCDto.prototype, "amount", void 0);
 class UpdateAMCPaymentDto {
 }
 exports.UpdateAMCPaymentDto = UpdateAMCPaymentDto;

@@ -216,6 +216,10 @@ export class OrderController {
     return this.orderService.updateAdditionalServiceById(id, body);
   }
 
+  @Patch('/amc/:id')
+  async updateAMCById(@Param('id') id: string, @Body() body: UpdateAMCDto) {
+    return this.orderService.updateAMCById(id, body);
+  }
 
   @Patch('/amc/:id/payments')
   async addPaymentsIntoAMC(

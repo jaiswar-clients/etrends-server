@@ -112,6 +112,9 @@ let OrderController = class OrderController {
     async updateAdditionalServiceById(id, body) {
         return this.orderService.updateAdditionalServiceById(id, body);
     }
+    async updateAMCById(id, body) {
+        return this.orderService.updateAMCById(id, body);
+    }
     async addPaymentsIntoAMC(amcId, body) {
         return this.orderService.addPaymentsIntoAmc(amcId, body);
     }
@@ -267,6 +270,14 @@ __decorate([
     __metadata("design:paramtypes", [String, create_additional_service_dto_1.CreateAdditionalServiceDto]),
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "updateAdditionalServiceById", null);
+__decorate([
+    (0, common_1.Patch)('/amc/:id'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, update_amc_dto_1.UpdateAMCDto]),
+    __metadata("design:returntype", Promise)
+], OrderController.prototype, "updateAMCById", null);
 __decorate([
     (0, common_1.Patch)('/amc/:id/payments'),
     __param(0, (0, common_1.Param)('id')),

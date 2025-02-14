@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import { ResponseInterceptor } from '@/interceptors/response.interceptor';
 import { HttpExceptionInterceptor as HttpExceptionFilter } from '@/common/filters/http-exception.filter';
 import * as express from 'express';
+import { AppClusterService } from './cluster';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -48,5 +49,4 @@ async function bootstrap() {
   await app.listen(port);
 }
 
-// AppClusterService.clusterize(bootstrap); // uncomment this to enable clustering
-bootstrap();
+AppClusterService.clusterize(bootstrap);

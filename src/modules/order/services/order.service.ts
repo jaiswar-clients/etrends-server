@@ -22,13 +22,11 @@ import { CreateCustomizationDto } from '../dto/create-customization.service.dto'
 import {
   AMC_FILTER,
   DEFAULT_AMC_CYCLE_IN_MONTHS,
-  ORDER_STATUS_ENUM,
   PURCHASE_TYPE,
 } from '@/common/types/enums/order.enum';
 import {
   AMC,
   AMCDocument,
-  IAMCPayment,
   PAYMENT_STATUS_ENUM,
 } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
@@ -90,7 +88,7 @@ export class OrderService {
         throw new HttpException('Client not found', HttpStatus.NOT_FOUND);
       }
 
-      const { customization, products } = body;
+      const { products } = body;
 
       const productsList = await this.productModel.find({
         _id: { $in: products },
@@ -107,45 +105,11 @@ export class OrderService {
         throw new Error('Invalid product id');
       }
 
-      const doesHaveLicense = productsList.some(
-        (product) => product.does_have_license,
-      );
-
-      let customization_id: string | null = null;
-      let customizationData: CustomizationDocument | null = null;
-      if (customization.cost) {
-        customizationData = new this.customizationModel({
-          cost: customization.cost,
-          modules: customization.modules,
-          product_id: products[0],
-        });
-        await customizationData.save();
-        customization_id = customizationData._id as string;
-
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'createOrder: Created customization',
-            customization_id,
-          }),
-        );
-      }
-
       const orderPayload = {
         ...body,
         client_id: clientId,
         purchase_date: new Date(body.purchased_date),
       };
-
-      delete orderPayload.customization;
-
-      if (doesHaveLicense) {
-        orderPayload['is_purchased_with_order.license'] = true;
-      }
-
-      if (customization_id) {
-        orderPayload['customizations'] = [customization_id];
-        orderPayload['is_purchased_with_order.customization'] = true;
-      }
 
       this.loggerService.log(
         JSON.stringify({
@@ -161,7 +125,7 @@ export class OrderService {
       // calculate amc_percentage if order.amc_rate.amount is present
       let amcPercentage = order.amc_rate.percentage;
 
-      const amcTotalCost = (customization.cost || 0) + order.base_cost;
+      const amcTotalCost = order.base_cost;
 
       const amcAmount = (amcTotalCost / 100) * amcPercentage;
 
@@ -205,12 +169,6 @@ export class OrderService {
           order_id: order._id,
         }),
       );
-
-      if (customization_id) {
-        await this.customizationModel.findByIdAndUpdate(customization_id, {
-          order_id: order._id,
-        });
-      }
 
       // Use findOneAndUpdate with upsert to handle both cases in a single query
       const updatedClient = await this.clientModel.findOneAndUpdate(
@@ -267,7 +225,7 @@ export class OrderService {
         throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
       }
 
-      const { customization, products } = body;
+      const { products } = body;
 
       const productsList = await this.productModel.find({
         _id: { $in: products },
@@ -277,43 +235,9 @@ export class OrderService {
         throw new Error('Invalid product id');
       }
 
-      let customization_id: string | null =
-        existingOrder.customizations?.[0]?.toString() || null;
-      let isNewCustomization = false;
-      if (customization.cost || customization?.modules?.length) {
-        const customizationUpdate = {
-          cost: customization.cost,
-          modules: customization.modules,
-          product_id: products[0],
-        };
-
-        if (customization_id) {
-          await this.customizationModel.findByIdAndUpdate(
-            customization_id,
-            customizationUpdate,
-          );
-        } else {
-          isNewCustomization = true;
-          const customizationData = new this.customizationModel(
-            customizationUpdate,
-          );
-          await customizationData.save();
-          customization_id = customizationData._id.toString();
-        }
-      }
-
       const orderPayload = {
         ...body,
-        customizations: isNewCustomization
-          ? [customization_id]
-          : existingOrder.customizations,
       };
-
-      if (isNewCustomization) {
-        orderPayload['is_purchased_with_order.customization'] = true;
-      }
-
-      delete orderPayload.customization;
 
       if (orderPayload.payment_terms.length) {
         orderPayload.payment_terms.map((term) => {
@@ -346,8 +270,7 @@ export class OrderService {
         { new: true },
       );
 
-      const amcTotalCost =
-        (customization?.cost || 0) + (updatedOrder.base_cost || 0);
+      const amcTotalCost = updatedOrder.base_cost;
       let amcPercentage = updatedOrder.amc_rate?.percentage || 0;
 
       const amcAmount = (amcTotalCost / 100) * amcPercentage;
@@ -362,43 +285,6 @@ export class OrderService {
         });
 
         let payments = amc?.payments || [];
-
-        // If payments array is empty and amc_start_date is provided, calculate payments
-        if ((!payments || !payments.length) && body.amc_start_date) {
-          const amc_frequency_in_months =
-            (amc.client_id as any)?.amc_frequency_in_months || 12;
-          const currentYear = new Date().getFullYear();
-          let lastToDate = new Date(body.amc_start_date);
-
-          this.loggerService.log(
-            JSON.stringify({
-              message: 'updateOrder: Calculating AMC payments',
-              amc_start_date: body.amc_start_date,
-              amc_frequency_in_months,
-              currentYear,
-            }),
-          );
-
-          // Calculate all payments from start date to current year
-          while (lastToDate.getFullYear() < currentYear) {
-            const from_date = new Date(lastToDate);
-            const to_date = this.getNextDate(
-              from_date,
-              amc_frequency_in_months,
-            );
-
-            payments.push({
-              from_date,
-              to_date,
-              status: PAYMENT_STATUS_ENUM.PAID,
-            });
-
-            lastToDate = to_date;
-          }
-
-          // Add current year payment as pending
-          payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
-        }
 
         // Handle payments update for date/frequency changes
         if (
@@ -479,7 +365,7 @@ export class OrderService {
 
           amc.payments = payments;
           await amc.save();
-        }
+        }   
 
         await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
           total_cost: amcTotalCost,
@@ -526,15 +412,6 @@ export class OrderService {
       throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
     }
 
-    // update all orders agreemtent_date to be an array i.e documents which has agreements.start and agreements.end move that object into an array
-    const orders = await this.orderModel.find();
-    for (const order of orders) {
-      if (order.agreements && !Array.isArray(order.agreements)) {
-        order.agreements = [order.agreements];
-        await order.save();
-      }
-    }
-
     try {
       this.loggerService.log(
         JSON.stringify({
@@ -545,7 +422,8 @@ export class OrderService {
 
       const order = await this.orderModel
         .findById(orderId)
-        .populate([{ path: 'customizations', model: Customization.name }]);
+        .populate([{ path: 'customizations', model: Customization.name }])
+        .populate({ path: 'amc_id', select: 'amount', model: AMC.name });
 
       if (!order) {
         this.loggerService.error(
@@ -558,11 +436,6 @@ export class OrderService {
       }
 
       const orderObj = order.toObject();
-
-      if (orderObj.customizations && orderObj.customizations.length > 0) {
-        orderObj['customization'] = orderObj.customizations[0];
-        delete orderObj.customizations;
-      }
 
       this.loggerService.log(
         JSON.stringify({
@@ -597,9 +470,13 @@ export class OrderService {
         }
       }
 
+      if (orderObj.amc_id) {
+        orderObj['amc_amount'] = (orderObj.amc_id as any).amount;
+        delete orderObj.amc_id;
+      }
+
       return orderObj;
     } catch (error: any) {
-      console.log({ error });
       this.loggerService.error(
         JSON.stringify({
           message: 'getOrderById: Error fetching order',
@@ -1425,6 +1302,36 @@ export class OrderService {
     }
   }
 
+  async updateAMCById(id: string, body: UpdateAMCDto) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateAMCById: Updating AMC',
+          id,
+          body,
+        }),
+      );
+      const amc = await this.amcModel.findByIdAndUpdate(id, body, {
+        new: true,
+      });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateAMCById: AMC updated successfully',
+          id,
+        }),
+      );
+      return amc;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'updateAMCById: Error updating AMC',
+          error: error.message,
+        }),
+      );
+    }
+  }
+
   async updateCustomizationById(id: string, body: CreateCustomizationDto) {
     try {
       this.loggerService.log(
@@ -2187,7 +2094,6 @@ export class OrderService {
       // Orders
       for (const order of pendingOrders) {
         if (Array.isArray(order.payment_terms)) {
-          console.log(order);
           order.payment_terms.forEach((term, index) => {
             if (
               term.status === PAYMENT_STATUS_ENUM.PENDING &&
@@ -2495,7 +2401,6 @@ export class OrderService {
           ).getFullYear();
           const paymentIndex = payments.findIndex((payment) => {
             const paymentYear = new Date(payment.from_date).getFullYear();
-            console.log({ paymentYear, customizationYear });
             return paymentYear === customizationYear;
           });
 

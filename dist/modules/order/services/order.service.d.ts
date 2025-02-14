@@ -11,10 +11,10 @@ import { CreateLicenseDto } from '../dto/create-license.dto';
 import { AdditionalService, AdditionalServiceDocument } from '@/db/schema/order/additional-service.schema';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
-import { AMC_FILTER, ORDER_STATUS_ENUM, PURCHASE_TYPE } from '@/common/types/enums/order.enum';
+import { AMC_FILTER, PURCHASE_TYPE } from '@/common/types/enums/order.enum';
 import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
-import { AddAMCPaymentDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
+import { AddAMCPaymentDto, UpdateAMCDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 export declare class OrderService {
     private orderModel;
@@ -89,7 +89,7 @@ export declare class OrderService {
             };
             purchase_type: PURCHASE_TYPE;
             products: Types.ObjectId[];
-            status: ORDER_STATUS_ENUM;
+            status: import("@/common/types/enums/order.enum").ORDER_STATUS_ENUM;
             amc_start_date: Date;
             id: unknown;
         } | {
@@ -142,6 +142,15 @@ export declare class OrderService {
     }> & {
         __v: number;
     }> & import("mongoose").Document<unknown, {}, AdditionalService> & AdditionalService & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }>;
+    updateAMCById(id: string, body: UpdateAMCDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, AMC> & AMC & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }> & import("mongoose").Document<unknown, {}, AMC> & AMC & Required<{
         _id: unknown;
     }> & {
         __v: number;

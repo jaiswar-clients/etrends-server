@@ -131,6 +131,10 @@ __decorate([
     __metadata("design:type", Array)
 ], Order.prototype, "licenses", void 0);
 __decorate([
+    (0, mongoose_1.Prop)({ type: Number, default: 0 }),
+    __metadata("design:type", Number)
+], Order.prototype, "training_and_implementation_cost", void 0);
+__decorate([
     (0, mongoose_1.Prop)({
         type: [
             {
@@ -171,6 +175,10 @@ __decorate([
     (0, mongoose_1.Prop)({ type: [{ type: mongoose_2.Types.ObjectId, ref: 'Customization' }] }),
     __metadata("design:type", Array)
 ], Order.prototype, "customizations", void 0);
+__decorate([
+    (0, mongoose_1.Prop)({ type: Number, default: 0 }),
+    __metadata("design:type", Number)
+], Order.prototype, "amc_rate_change_frequency_in_years", void 0);
 __decorate([
     (0, mongoose_1.Prop)({ type: [{ type: mongoose_2.Types.ObjectId, ref: 'Additional' }] }),
     __metadata("design:type", Array)

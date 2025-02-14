@@ -15,10 +15,6 @@ declare class AmcRateDto {
     percentage: number;
     amount: number;
 }
-declare class CustomizationDto {
-    cost: number;
-    modules: string[];
-}
 export declare class CreateOrderDto {
     products: Types.ObjectId[];
     other_documents: {
@@ -35,6 +31,8 @@ export declare class CreateOrderDto {
         amount: number;
         percentage: number;
     }[];
+    training_and_implementation_cost: number;
+    amc_rate_change_frequency_in_years: number;
     agreements: {
         start: Date;
         end: Date;
@@ -45,7 +43,6 @@ export declare class CreateOrderDto {
     amc_start_date: Date;
     cost_per_license: number;
     licenses_with_base_price: number;
-    customization: CustomizationDto;
     status_logs: {
         from: ORDER_STATUS_ENUM;
         to: ORDER_STATUS_ENUM;

@@ -63,17 +63,6 @@ __decorate([
     (0, class_validator_1.IsNumber)(),
     __metadata("design:type", Number)
 ], AmcRateDto.prototype, "amount", void 0);
-class CustomizationDto {
-}
-__decorate([
-    (0, class_validator_1.IsNumber)(),
-    __metadata("design:type", Number)
-], CustomizationDto.prototype, "cost", void 0);
-__decorate([
-    (0, class_validator_1.IsArray)(),
-    (0, class_validator_1.IsString)({ each: true }),
-    __metadata("design:type", Array)
-], CustomizationDto.prototype, "modules", void 0);
 class CreateOrderDto {
 }
 exports.CreateOrderDto = CreateOrderDto;
@@ -117,6 +106,16 @@ __decorate([
     __metadata("design:type", Array)
 ], CreateOrderDto.prototype, "base_cost_seperation", void 0);
 __decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateOrderDto.prototype, "training_and_implementation_cost", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Number)
+], CreateOrderDto.prototype, "amc_rate_change_frequency_in_years", void 0);
+__decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsArray)(),
     __metadata("design:type", Array)
@@ -146,11 +145,6 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", Number)
 ], CreateOrderDto.prototype, "licenses_with_base_price", void 0);
-__decorate([
-    (0, class_validator_1.ValidateNested)(),
-    (0, class_transformer_1.Type)(() => CustomizationDto),
-    __metadata("design:type", CustomizationDto)
-], CreateOrderDto.prototype, "customization", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsArray)(),

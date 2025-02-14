@@ -52,15 +52,6 @@ class AmcRateDto {
   amount: number;
 }
 
-class CustomizationDto {
-  @IsNumber()
-  cost: number;
-
-  @IsArray()
-  @IsString({ each: true })
-  modules: string[];
-}
-
 export class CreateOrderDto {
   @IsArray()
   @IsMongoId({ each: true })
@@ -100,6 +91,14 @@ export class CreateOrderDto {
     percentage: number;
   }[];
 
+  @IsNumber()
+  @IsOptional()
+  training_and_implementation_cost: number;
+
+  @IsNumber()
+  @IsOptional()
+  amc_rate_change_frequency_in_years: number;
+
   @IsOptional()
   @IsArray()
   agreements: {
@@ -127,10 +126,6 @@ export class CreateOrderDto {
   @IsNumber()
   @IsOptional()
   licenses_with_base_price: number;
-
-  @ValidateNested()
-  @Type(() => CustomizationDto)
-  customization: CustomizationDto;
 
   @IsOptional()
   @IsArray()

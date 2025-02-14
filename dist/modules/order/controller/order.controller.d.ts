@@ -3,7 +3,7 @@ import { CreateOrderDto } from '../dto/create-order.dto';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
-import { AddAMCPaymentDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
+import { AddAMCPaymentDto, UpdateAMCDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 export type UpdateOrderType = CreateOrderDto;
@@ -175,6 +175,15 @@ export declare class OrderController {
     }> & {
         __v: number;
     }> & import("mongoose").Document<unknown, {}, import("../../../db/schema/order/additional-service.schema").AdditionalService> & import("../../../db/schema/order/additional-service.schema").AdditionalService & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }>;
+    updateAMCById(id: string, body: UpdateAMCDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, import("../../../db/schema/amc/amc.schema").AMC> & import("../../../db/schema/amc/amc.schema").AMC & Required<{
+        _id: unknown;
+    }> & {
+        __v: number;
+    }> & import("mongoose").Document<unknown, {}, import("../../../db/schema/amc/amc.schema").AMC> & import("../../../db/schema/amc/amc.schema").AMC & Required<{
         _id: unknown;
     }> & {
         __v: number;

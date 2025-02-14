@@ -59,7 +59,7 @@ let OrderService = class OrderService {
                 }));
                 throw new common_1.HttpException('Client not found', common_1.HttpStatus.NOT_FOUND);
             }
-            const { customization, products } = body;
+            const { products } = body;
             const productsList = await this.productModel.find({
                 _id: { $in: products },
             });
@@ -70,42 +70,18 @@ let OrderService = class OrderService {
             if (productsList.length !== products.length) {
                 throw new Error('Invalid product id');
             }
-            const doesHaveLicense = productsList.some((product) => product.does_have_license);
-            let customization_id = null;
-            let customizationData = null;
-            if (customization.cost) {
-                customizationData = new this.customizationModel({
-                    cost: customization.cost,
-                    modules: customization.modules,
-                    product_id: products[0],
-                });
-                await customizationData.save();
-                customization_id = customizationData._id;
-                this.loggerService.log(JSON.stringify({
-                    message: 'createOrder: Created customization',
-                    customization_id,
-                }));
-            }
             const orderPayload = {
                 ...body,
                 client_id: clientId,
                 purchase_date: new Date(body.purchased_date),
             };
-            delete orderPayload.customization;
-            if (doesHaveLicense) {
-                orderPayload['is_purchased_with_order.license'] = true;
-            }
-            if (customization_id) {
-                orderPayload['customizations'] = [customization_id];
-                orderPayload['is_purchased_with_order.customization'] = true;
-            }
             this.loggerService.log(JSON.stringify({
                 message: 'createOrder: Creating order',
                 orderPayload,
             }));
             const order = new this.orderModel(orderPayload);
             let amcPercentage = order.amc_rate.percentage;
-            const amcTotalCost = (customization.cost || 0) + order.base_cost;
+            const amcTotalCost = order.base_cost;
             const amcAmount = (amcTotalCost / 100) * amcPercentage;
             this.loggerService.log(JSON.stringify({
                 message: 'createOrder: Creating AMC',
@@ -136,11 +112,6 @@ let OrderService = class OrderService {
                 message: 'createOrder: Order created successfully',
                 order_id: order._id,
             }));
-            if (customization_id) {
-                await this.customizationModel.findByIdAndUpdate(customization_id, {
-                    order_id: order._id,
-                });
-            }
             const updatedClient = await this.clientModel.findOneAndUpdate({ _id: clientId }, {
                 $push: { orders: order._id, amcs: amc._id },
             }, { new: true });
@@ -179,41 +150,16 @@ let OrderService = class OrderService {
             if (!existingOrder) {
                 throw new common_1.HttpException('Order not found', common_1.HttpStatus.NOT_FOUND);
             }
-            const { customization, products } = body;
+            const { products } = body;
             const productsList = await this.productModel.find({
                 _id: { $in: products },
             });
             if (productsList.length !== products.length) {
                 throw new Error('Invalid product id');
             }
-            let customization_id = existingOrder.customizations?.[0]?.toString() || null;
-            let isNewCustomization = false;
-            if (customization.cost || customization?.modules?.length) {
-                const customizationUpdate = {
-                    cost: customization.cost,
-                    modules: customization.modules,
-                    product_id: products[0],
-                };
-                if (customization_id) {
-                    await this.customizationModel.findByIdAndUpdate(customization_id, customizationUpdate);
-                }
-                else {
-                    isNewCustomization = true;
-                    const customizationData = new this.customizationModel(customizationUpdate);
-                    await customizationData.save();
-                    customization_id = customizationData._id.toString();
-                }
-            }
             const orderPayload = {
                 ...body,
-                customizations: isNewCustomization
-                    ? [customization_id]
-                    : existingOrder.customizations,
             };
-            if (isNewCustomization) {
-                orderPayload['is_purchased_with_order.customization'] = true;
-            }
-            delete orderPayload.customization;
             if (orderPayload.payment_terms.length) {
                 orderPayload.payment_terms.map((term) => {
                     term.invoice_document = (0, misc_1.extractFileKey)(term.invoice_document);
@@ -232,7 +178,7 @@ let OrderService = class OrderService {
                 return agreement;
             });
             const updatedOrder = await this.orderModel.findByIdAndUpdate(orderId, orderPayload, { new: true });
-            const amcTotalCost = (customization?.cost || 0) + (updatedOrder.base_cost || 0);
+            const amcTotalCost = updatedOrder.base_cost;
             let amcPercentage = updatedOrder.amc_rate?.percentage || 0;
             const amcAmount = (amcTotalCost / 100) * amcPercentage;
             if (updatedOrder.amc_id) {
@@ -241,28 +187,6 @@ let OrderService = class OrderService {
                     select: 'amc_frequency_in_months',
                 });
                 let payments = amc?.payments || [];
-                if ((!payments || !payments.length) && body.amc_start_date) {
-                    const amc_frequency_in_months = amc.client_id?.amc_frequency_in_months || 12;
-                    const currentYear = new Date().getFullYear();
-                    let lastToDate = new Date(body.amc_start_date);
-                    this.loggerService.log(JSON.stringify({
-                        message: 'updateOrder: Calculating AMC payments',
-                        amc_start_date: body.amc_start_date,
-                        amc_frequency_in_months,
-                        currentYear,
-                    }));
-                    while (lastToDate.getFullYear() < currentYear) {
-                        const from_date = new Date(lastToDate);
-                        const to_date = this.getNextDate(from_date, amc_frequency_in_months);
-                        payments.push({
-                            from_date,
-                            to_date,
-                            status: amc_schema_1.PAYMENT_STATUS_ENUM.PAID,
-                        });
-                        lastToDate = to_date;
-                    }
-                    payments[payments.length - 1].status = amc_schema_1.PAYMENT_STATUS_ENUM.PENDING;
-                }
                 if (body?.amc_start_date?.toString() !==
                     existingOrder?.amc_start_date?.toString()) {
                     this.loggerService.log(JSON.stringify({
@@ -346,13 +270,6 @@ let OrderService = class OrderService {
             }));
             throw new common_1.HttpException('Order id is required', common_1.HttpStatus.BAD_REQUEST);
         }
-        const orders = await this.orderModel.find();
-        for (const order of orders) {
-            if (order.agreements && !Array.isArray(order.agreements)) {
-                order.agreements = [order.agreements];
-                await order.save();
-            }
-        }
         try {
             this.loggerService.log(JSON.stringify({
                 message: 'getOrderById: Fetching order',
@@ -360,7 +277,8 @@ let OrderService = class OrderService {
             }));
             const order = await this.orderModel
                 .findById(orderId)
-                .populate([{ path: 'customizations', model: customization_schema_1.Customization.name }]);
+                .populate([{ path: 'customizations', model: customization_schema_1.Customization.name }])
+                .populate({ path: 'amc_id', select: 'amount', model: amc_schema_1.AMC.name });
             if (!order) {
                 this.loggerService.error(JSON.stringify({
                     message: 'getOrderById: Order not found',
@@ -369,10 +287,6 @@ let OrderService = class OrderService {
                 throw new common_1.HttpException('Order not found', common_1.HttpStatus.NOT_FOUND);
             }
             const orderObj = order.toObject();
-            if (orderObj.customizations && orderObj.customizations.length > 0) {
-                orderObj['customization'] = orderObj.customizations[0];
-                delete orderObj.customizations;
-            }
             this.loggerService.log(JSON.stringify({
                 message: 'getOrderById: Order found successfully',
                 orderId: order._id,
@@ -395,10 +309,13 @@ let OrderService = class OrderService {
                     orderObj.agreements[i].document = this.storageService.get(orderObj.agreements[i].document);
                 }
             }
+            if (orderObj.amc_id) {
+                orderObj['amc_amount'] = orderObj.amc_id.amount;
+                delete orderObj.amc_id;
+            }
             return orderObj;
         }
         catch (error) {
-            console.log({ error });
             this.loggerService.error(JSON.stringify({
                 message: 'getOrderById: Error fetching order',
                 error: error.message,
@@ -945,6 +862,29 @@ let OrderService = class OrderService {
                 error: error.message,
             }));
             throw new common_1.HttpException(error.message || 'Server error', error.status || common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    async updateAMCById(id, body) {
+        try {
+            this.loggerService.log(JSON.stringify({
+                message: 'updateAMCById: Updating AMC',
+                id,
+                body,
+            }));
+            const amc = await this.amcModel.findByIdAndUpdate(id, body, {
+                new: true,
+            });
+            this.loggerService.log(JSON.stringify({
+                message: 'updateAMCById: AMC updated successfully',
+                id,
+            }));
+            return amc;
+        }
+        catch (error) {
+            this.loggerService.error(JSON.stringify({
+                message: 'updateAMCById: Error updating AMC',
+                error: error.message,
+            }));
         }
     }
     async updateCustomizationById(id, body) {
@@ -1503,7 +1443,6 @@ let OrderService = class OrderService {
             }
             for (const order of pendingOrders) {
                 if (Array.isArray(order.payment_terms)) {
-                    console.log(order);
                     order.payment_terms.forEach((term, index) => {
                         if (term.status === amc_schema_1.PAYMENT_STATUS_ENUM.PENDING &&
                             term.calculated_amount) {
@@ -1705,7 +1644,6 @@ let OrderService = class OrderService {
                     const customizationYear = new Date(customization.purchased_date).getFullYear();
                     const paymentIndex = payments.findIndex((payment) => {
                         const paymentYear = new Date(payment.from_date).getFullYear();
-                        console.log({ paymentYear, customizationYear });
                         return paymentYear === customizationYear;
                     });
                     for (let i = paymentIndex + 1; i < payments.length; i++) {

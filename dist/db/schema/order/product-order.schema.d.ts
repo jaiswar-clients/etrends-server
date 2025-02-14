@@ -35,6 +35,7 @@ export declare class Order extends Document {
     cost_per_license: number;
     payment_terms: PaymentTerms[];
     licenses: Types.ObjectId[];
+    training_and_implementation_cost: number;
     agreements: {
         _id: any;
         start: Date;
@@ -49,6 +50,7 @@ export declare class Order extends Document {
         url: string;
     }[];
     customizations: Types.ObjectId[];
+    amc_rate_change_frequency_in_years: number;
     additional_services: Types.ObjectId[];
     amc_start_date: Date;
     createdAt?: Date;

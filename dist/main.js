@@ -9,6 +9,7 @@ const helmet_1 = require("helmet");
 const response_interceptor_1 = require("./interceptors/response.interceptor");
 const http_exception_filter_1 = require("./common/filters/http-exception.filter");
 const express = require("express");
+const cluster_1 = require("./cluster");
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, {
         bufferLogs: true,
@@ -37,5 +38,5 @@ async function bootstrap() {
     }));
     await app.listen(port);
 }
-bootstrap();
+cluster_1.AppClusterService.clusterize(bootstrap);
 //# sourceMappingURL=main.js.map

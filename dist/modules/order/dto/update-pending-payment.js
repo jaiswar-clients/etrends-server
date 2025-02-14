@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdatePendingPaymentDto = void 0;
 const class_validator_1 = require("class-validator");
 const product_order_schema_1 = require("../../../db/schema/order/product-order.schema");
+const class_transformer_1 = require("class-transformer");
 class UpdatePendingPaymentDto {
 }
 exports.UpdatePendingPaymentDto = UpdatePendingPaymentDto;
@@ -21,7 +22,11 @@ __decorate([
     __metadata("design:type", String)
 ], UpdatePendingPaymentDto.prototype, "type", void 0);
 __decorate([
+    (0, class_transformer_1.Transform)(({ value }) => (isNaN(value) ? value : Number(value))),
+    (0, class_validator_1.ValidateIf)((_, value) => typeof value === 'number'),
     (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.ValidateIf)((_, value) => typeof value === 'string'),
+    (0, class_validator_1.IsString)(),
     __metadata("design:type", Object)
 ], UpdatePendingPaymentDto.prototype, "payment_identifier", void 0);
 __decorate([
