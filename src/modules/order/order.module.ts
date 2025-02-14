@@ -1,4 +1,4 @@
-import { Module, OnModuleInit } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { OrderController } from './controller/order.controller';
 import { OrderService } from './services/order.service';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -35,12 +35,4 @@ import { MailService } from '@/common/mail/service/mail.service';
   providers: [OrderService, MailService],
   exports: [OrderService],
 })
-export class OrderModule implements OnModuleInit {
-  constructor(private orderService: OrderService) {}
-
-  async onModuleInit() {
-    console.log('Migrating order data');
-    // await this.orderService.migrateOrderData();
-    // await this.orderService.updateAMCPayments()
-  }
-}
+export class OrderModule {}

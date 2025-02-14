@@ -5,9 +5,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
-var __metadata = (this && this.__metadata) || function (k, v) {
-    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderModule = void 0;
 const common_1 = require("@nestjs/common");
@@ -24,12 +21,6 @@ const client_schema_1 = require("../../db/schema/client.schema");
 const amc_schema_1 = require("../../db/schema/amc/amc.schema");
 const mail_service_1 = require("../../common/mail/service/mail.service");
 let OrderModule = class OrderModule {
-    constructor(orderService) {
-        this.orderService = orderService;
-    }
-    async onModuleInit() {
-        console.log('Migrating order data');
-    }
 };
 exports.OrderModule = OrderModule;
 exports.OrderModule = OrderModule = __decorate([
@@ -49,7 +40,6 @@ exports.OrderModule = OrderModule = __decorate([
         controllers: [order_controller_1.OrderController],
         providers: [order_service_1.OrderService, mail_service_1.MailService],
         exports: [order_service_1.OrderService],
-    }),
-    __metadata("design:paramtypes", [order_service_1.OrderService])
+    })
 ], OrderModule);
 //# sourceMappingURL=order.module.js.map

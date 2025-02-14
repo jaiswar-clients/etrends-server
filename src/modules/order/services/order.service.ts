@@ -289,7 +289,8 @@ export class OrderService {
         // Handle payments update for date/frequency changes
         if (
           body?.amc_start_date?.toString() !==
-          existingOrder?.amc_start_date?.toString()
+            existingOrder?.amc_start_date?.toString() &&
+          payments.length
         ) {
           this.loggerService.log(
             JSON.stringify({
@@ -365,7 +366,7 @@ export class OrderService {
 
           amc.payments = payments;
           await amc.save();
-        }   
+        }
 
         await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
           total_cost: amcTotalCost,
@@ -1730,32 +1731,16 @@ export class OrderService {
             return;
           }
 
-          // Check if payments array is empty
+          // Skip if payments array is empty
           if (!amc.payments || amc.payments.length === 0) {
             this.loggerService.log(
               JSON.stringify({
-                message:
-                  'updateAMCPayments: Empty payments array found, generating review',
+                message: 'updateAMCPayments: Skipping AMC with empty payments array',
                 amcId: amc._id,
               }),
             );
-
-            // Get AMC review for the order
-            const amcReview = await this.getAmcReviewByOrderId(
-              order._id.toString(),
-            );
-
-            // Type check and handle the review data
-            if (amcReview) {
-              // Add payments to AMC
-              const payments = amcReview.map((payment) => ({
-                ...payment,
-                received_date: new Date(), // Add required received_date field
-              }));
-              await this.addPaymentsIntoAmc(amc._id.toString(), payments);
-              newPaymentsAdded++;
-              return;
-            }
+            skippedCount++;
+            return;
           }
 
           const amc_frequency_in_months =

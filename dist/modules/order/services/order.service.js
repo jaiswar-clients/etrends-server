@@ -188,7 +188,8 @@ let OrderService = class OrderService {
                 });
                 let payments = amc?.payments || [];
                 if (body?.amc_start_date?.toString() !==
-                    existingOrder?.amc_start_date?.toString()) {
+                    existingOrder?.amc_start_date?.toString() &&
+                    payments.length) {
                     this.loggerService.log(JSON.stringify({
                         message: 'updateAMC: Start date has changed',
                         previousStartDate: existingOrder.amc_start_date,
@@ -1175,19 +1176,11 @@ let OrderService = class OrderService {
                     }
                     if (!amc.payments || amc.payments.length === 0) {
                         this.loggerService.log(JSON.stringify({
-                            message: 'updateAMCPayments: Empty payments array found, generating review',
+                            message: 'updateAMCPayments: Skipping AMC with empty payments array',
                             amcId: amc._id,
                         }));
-                        const amcReview = await this.getAmcReviewByOrderId(order._id.toString());
-                        if (amcReview) {
-                            const payments = amcReview.map((payment) => ({
-                                ...payment,
-                                received_date: new Date(),
-                            }));
-                            await this.addPaymentsIntoAmc(amc._id.toString(), payments);
-                            newPaymentsAdded++;
-                            return;
-                        }
+                        skippedCount++;
+                        return;
                     }
                     const amc_frequency_in_months = order.client_id?.amc_frequency_in_months || 12;
                     const lastPayment = amc.payments[amc.payments.length - 1];
