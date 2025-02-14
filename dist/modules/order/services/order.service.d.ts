@@ -243,8 +243,5 @@ export declare class OrderService {
         message: string;
     }>;
     migrateOrderData(): Promise<void>;
-    removeClientsData(): Promise<{
-        message: string;
-        status: string;
-    }>;
+    removeClientsData(): Promise<void>;
 }

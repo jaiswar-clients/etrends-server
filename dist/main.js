@@ -38,5 +38,10 @@ async function bootstrap() {
     }));
     await app.listen(port);
 }
-cluster_1.AppClusterService.clusterize(bootstrap);
+if (process.env.NODE_ENV === 'production') {
+    cluster_1.AppClusterService.clusterize(bootstrap);
+}
+else {
+    bootstrap();
+}
 //# sourceMappingURL=main.js.map

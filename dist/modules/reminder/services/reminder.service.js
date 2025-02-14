@@ -37,7 +37,21 @@ let ReminderService = class ReminderService {
         this.mailService = mailService;
         this.configService = configService;
         this.storageService = storageService;
-        this.INTERNAL_TEAM_EMAIL = 'jaiswar.newsletter@gmail.com';
+        this.INTERNAL_TEAM_EMAIL = this.configService.get('INTERNAL_TEAM_EMAIL');
+    }
+    async sendTestEmail() {
+        const emailStatus = await this.mailService.sendMail({
+            template: mail_service_1.MAIL_TEMPLATES.SEND_PENDING_AMC_REMINDER,
+            email: this.INTERNAL_TEAM_EMAIL,
+            subject: 'Test Email',
+            context: {
+                client: 'Test Client',
+                product: 'Test Product',
+                amc: 'Test AMC',
+                contacts: 'Test Contacts',
+            },
+        });
+        return emailStatus;
     }
     async checkAMCPendingPaymentsAndSendReminder() {
         try {

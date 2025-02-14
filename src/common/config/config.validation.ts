@@ -7,6 +7,7 @@ export const validationSchema = Joi.object({
   CLIENT_URL: Joi.string().required(),
   APP_URL: Joi.string().required(),
   JWT_SECRET: Joi.string().required(),
+  INTERNAL_TEAM_EMAIL: Joi.string().required(),
   ENCRYPTION_KEY: Joi.string().required(),
   IV: Joi.string().required(),
   FILES_PATH: Joi.string().required(),

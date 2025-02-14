@@ -1,21 +1,11 @@
-import {
-  Customization,
-  CustomizationDocument,
-} from '@/db/schema/order/customization.schema';
-import { License, LicenseDocument } from '@/db/schema/order/license.schema';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
 
-import { Product, ProductDocument } from '@/db/schema/product.schema';
+import { Product } from '@/db/schema/product.schema';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { Client, ClientDocument } from '@/db/schema/client.schema';
-
-import {
-  AdditionalService,
-  AdditionalServiceDocument,
-} from '@/db/schema/order/additional-service.schema';
 
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import {
@@ -59,7 +49,23 @@ export class ReminderService {
     private configService: ConfigService,
     private storageService: StorageService,
   ) {
-    this.INTERNAL_TEAM_EMAIL = 'jaiswar.newsletter@gmail.com';
+    this.INTERNAL_TEAM_EMAIL = this.configService.get('INTERNAL_TEAM_EMAIL');
+  }
+
+  async sendTestEmail() {
+    const emailStatus = await this.mailService.sendMail({
+      template: MAIL_TEMPLATES.SEND_PENDING_AMC_REMINDER,
+      email: this.INTERNAL_TEAM_EMAIL,
+      subject: 'Test Email',
+      context: {
+        client: 'Test Client',
+        product: 'Test Product',
+        amc: 'Test AMC',
+        contacts: 'Test Contacts',
+      },
+    });
+
+    return emailStatus;
   }
 
   // ******************* REMINDER SCHEDULERS - START *******************

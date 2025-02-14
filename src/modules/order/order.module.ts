@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, OnModuleInit } from '@nestjs/common';
 import { OrderController } from './controller/order.controller';
 import { OrderService } from './services/order.service';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -35,4 +35,10 @@ import { MailService } from '@/common/mail/service/mail.service';
   providers: [OrderService, MailService],
   exports: [OrderService],
 })
-export class OrderModule {}
+export class OrderModule implements OnModuleInit {
+  constructor(private orderService: OrderService) {}
+
+  async onModuleInit() {
+    // await this.orderService.removeClientsData();
+  }
+}

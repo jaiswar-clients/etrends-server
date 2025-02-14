@@ -6,6 +6,7 @@ exports.app = (0, config_1.registerAs)('APP', () => ({
     DATABASE_URL: process.env['DATABASE_URL'],
     PORT: process.env['PORT'],
     JWT_SECRET: process.env['JWT_SECRET'],
+    INTERNAL_TEAM_EMAIL: process.env['INTERNAL_TEAM_EMAIL'],
     IV: process.env['IV'],
     ENCRYPTION_KEY: process.env['ENCRYPTION_KEY'],
     FILES_PATH: process.env['FILES_PATH'],

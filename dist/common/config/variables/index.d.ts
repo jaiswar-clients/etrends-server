@@ -2,6 +2,7 @@ export declare const app: (() => {
     DATABASE_URL: string;
     PORT: string;
     JWT_SECRET: string;
+    INTERNAL_TEAM_EMAIL: string;
     IV: string;
     ENCRYPTION_KEY: string;
     FILES_PATH: string;
@@ -16,6 +17,7 @@ export declare const app: (() => {
     DATABASE_URL: string;
     PORT: string;
     JWT_SECRET: string;
+    INTERNAL_TEAM_EMAIL: string;
     IV: string;
     ENCRYPTION_KEY: string;
     FILES_PATH: string;

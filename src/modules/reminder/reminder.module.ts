@@ -37,5 +37,6 @@ export class ReminderModule implements OnModuleInit {
 
   async onModuleInit() {
     // await this.reminderService.checkAgreementExpiryAndSendReminder();
+    // await this.reminderService.sendTestEmail();
   }
 }

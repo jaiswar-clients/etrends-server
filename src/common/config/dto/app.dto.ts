@@ -19,6 +19,10 @@ export class AppConfigDTO {
 
   @IsString()
   @IsNotEmpty()
+  INTERNAL_TEAM_EMAIL: string;
+
+  @IsString()
+  @IsNotEmpty()
   ENCRYPTION_KEY: string;
 
   @IsString()

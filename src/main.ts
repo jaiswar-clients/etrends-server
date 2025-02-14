@@ -49,4 +49,8 @@ async function bootstrap() {
   await app.listen(port);
 }
 
-AppClusterService.clusterize(bootstrap);
+if (process.env.NODE_ENV === 'production') {
+  AppClusterService.clusterize(bootstrap);
+} else {
+  bootstrap();
+}

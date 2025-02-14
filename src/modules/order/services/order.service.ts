@@ -1735,7 +1735,8 @@ export class OrderService {
           if (!amc.payments || amc.payments.length === 0) {
             this.loggerService.log(
               JSON.stringify({
-                message: 'updateAMCPayments: Skipping AMC with empty payments array',
+                message:
+                  'updateAMCPayments: Skipping AMC with empty payments array',
                 amcId: amc._id,
               }),
             );
@@ -2288,143 +2289,137 @@ export class OrderService {
 
       const payments = [];
 
-      // Only process if AMC has started in a previous year
-      if (currentYear - amcStartDateYear > 0) {
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'getAmcReviewByOrderId: Starting Review Process',
-            orderId,
-            amcStartDateYear,
-            currentYear,
-          }),
-        );
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Starting Review Process',
+          orderId,
+          amcStartDateYear,
+          currentYear,
+        }),
+      );
 
-        // Get AMC frequency from client settings or default to yearly
-        const amc_frequency_in_months =
-          (order.client_id as any)?.amc_frequency_in_months || 12;
+      // Get AMC frequency from client settings or default to yearly
+      const amc_frequency_in_months =
+        (order.client_id as any)?.amc_frequency_in_months || 12;
 
-        // Initialize date tracking
-        let lastToDate = new Date(order.amc_start_date);
-        let index = 0;
+      // Initialize date tracking
+      let lastToDate = new Date(order.amc_start_date);
+      let index = 0;
 
-        // Generate payment schedule from start date to current year
-        while (lastToDate.getFullYear() < currentYear + 1) {
-          const from_date = new Date(lastToDate);
-          const to_date = this.getNextDate(from_date, amc_frequency_in_months);
+      // Generate payment schedule from start date to current year
+      while (lastToDate.getFullYear() < currentYear + 1) {
+        const from_date = new Date(lastToDate);
+        const to_date = this.getNextDate(from_date, amc_frequency_in_months);
 
-          payments.push({
-            from_date: from_date.toDateString(),
-            is_free_amc: index === 0, // First payment period is free
-            to_date: to_date.toDateString(),
-            status: PAYMENT_STATUS_ENUM.PAID,
-            amc_frequency: amc_frequency_in_months,
-          });
+        payments.push({
+          from_date: from_date.toDateString(),
+          is_free_amc: index === 0, // First payment period is free
+          to_date: to_date.toDateString(),
+          status: PAYMENT_STATUS_ENUM.PAID,
+          amc_frequency: amc_frequency_in_months,
+        });
 
-          lastToDate = to_date;
-          index++;
-        }
-
-        // Mark most recent payment as pending
-        payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
-
-        // Initialize AMC rate tracking
-        let currentAmcRate = order.amc_rate; // Start with current rate
-
-        // Check if historical rates exist
-        if (order.amc_rate_history && order.amc_rate_history.length > 0) {
-          let currentHistoryInCheckIndex = order.amc_rate_history.length - 1;
-          let currentHistoryInCheck =
-            order.amc_rate_history[currentHistoryInCheckIndex];
-
-          // Process payments in reverse order to apply historical rates
-          for (let i = payments.length - 1; i >= 0; i--) {
-            const payment = payments[i];
-            const fromYear = new Date(payment.from_date).getFullYear();
-            const historyDateChangeYear = new Date(
-              currentHistoryInCheck.date,
-            ).getFullYear();
-
-            // Check if payment year matches a rate change year
-            const difference = fromYear - historyDateChangeYear;
-
-            if (difference === 0) {
-              // Update current rate to historical rate
-              currentAmcRate = {
-                percentage: currentHistoryInCheck.percentage,
-                amount: currentHistoryInCheck.amount,
-              };
-
-              // Move to next historical rate if available
-              if (currentHistoryInCheckIndex > 0) {
-                currentHistoryInCheckIndex = currentHistoryInCheckIndex - 1;
-                currentHistoryInCheck =
-                  order.amc_rate_history[currentHistoryInCheckIndex];
-              }
-            }
-
-            // Apply current rate to payment
-            payment.amc_rate_applied = currentAmcRate.percentage;
-            payment.amc_rate_amount = currentAmcRate.amount;
-            payment.total_cost = order.base_cost;
-          }
-        } else {
-          // If no historical rates, apply current rate to all payments
-          for (const payment of payments) {
-            payment.amc_rate_applied = currentAmcRate.percentage;
-            payment.amc_rate_amount = currentAmcRate.amount;
-            payment.total_cost = order.base_cost;
-          }
-        }
-
-        // Now Calculating Additional Purchase on the Order
-        const customizations =
-          order.customizations as unknown as CustomizationDocument[];
-
-        for (const customization of customizations) {
-          const customizationYear = new Date(
-            customization.purchased_date,
-          ).getFullYear();
-          const paymentIndex = payments.findIndex((payment) => {
-            const paymentYear = new Date(payment.from_date).getFullYear();
-            return paymentYear === customizationYear;
-          });
-
-          for (let i = paymentIndex + 1; i < payments.length; i++) {
-            const payment = payments[i];
-            const newTotalCost = payment.total_cost + customization.cost;
-            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
-
-            payment.amc_rate_amount = newAmount;
-            payment.total_cost = newTotalCost;
-          }
-        }
-
-        const licenses = order.licenses as unknown as LicenseDocument[];
-
-        for (const license of licenses) {
-          const licenseYear = new Date(license.purchase_date).getFullYear();
-          const paymentIndex = payments.findIndex((payment) => {
-            const paymentYear = new Date(payment.from_date).getFullYear();
-            return paymentYear === licenseYear;
-          });
-
-          for (let i = paymentIndex + 1; i < payments.length; i++) {
-            const payment = payments[i];
-
-            const licenseCost = license.rate?.amount * license.total_license;
-
-            const newTotalCost = payment.total_cost + licenseCost;
-            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
-
-            payment.amc_rate_amount = newAmount;
-            payment.total_cost = newTotalCost;
-          }
-        }
-
-        return payments;
+        lastToDate = to_date;
+        index++;
       }
 
-      // Return basic info if AMC hasn't started yet
+      // Mark most recent payment as pending
+      payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
+
+      // Initialize AMC rate tracking
+      let currentAmcRate = order.amc_rate; // Start with current rate
+
+      // Check if historical rates exist
+      if (order.amc_rate_history && order.amc_rate_history.length > 0) {
+        let currentHistoryInCheckIndex = order.amc_rate_history.length - 1;
+        let currentHistoryInCheck =
+          order.amc_rate_history[currentHistoryInCheckIndex];
+
+        // Process payments in reverse order to apply historical rates
+        for (let i = payments.length - 1; i >= 0; i--) {
+          const payment = payments[i];
+          const fromYear = new Date(payment.from_date).getFullYear();
+          const historyDateChangeYear = new Date(
+            currentHistoryInCheck.date,
+          ).getFullYear();
+
+          // Check if payment year matches a rate change year
+          const difference = fromYear - historyDateChangeYear;
+
+          if (difference === 0) {
+            // Update current rate to historical rate
+            currentAmcRate = {
+              percentage: currentHistoryInCheck.percentage,
+              amount: currentHistoryInCheck.amount,
+            };
+
+            // Move to next historical rate if available
+            if (currentHistoryInCheckIndex > 0) {
+              currentHistoryInCheckIndex = currentHistoryInCheckIndex - 1;
+              currentHistoryInCheck =
+                order.amc_rate_history[currentHistoryInCheckIndex];
+            }
+          }
+
+          // Apply current rate to payment
+          payment.amc_rate_applied = currentAmcRate.percentage;
+          payment.amc_rate_amount = currentAmcRate.amount;
+          payment.total_cost = order.base_cost;
+        }
+      } else {
+        // If no historical rates, apply current rate to all payments
+        for (const payment of payments) {
+          payment.amc_rate_applied = currentAmcRate.percentage;
+          payment.amc_rate_amount = currentAmcRate.amount;
+          payment.total_cost = order.base_cost;
+        }
+      }
+
+      // Now Calculating Additional Purchase on the Order
+      const customizations =
+        order.customizations as unknown as CustomizationDocument[];
+
+      for (const customization of customizations) {
+        const customizationYear = new Date(
+          customization.purchased_date,
+        ).getFullYear();
+        const paymentIndex = payments.findIndex((payment) => {
+          const paymentYear = new Date(payment.from_date).getFullYear();
+          return paymentYear === customizationYear;
+        });
+
+        for (let i = paymentIndex + 1; i < payments.length; i++) {
+          const payment = payments[i];
+          const newTotalCost = payment.total_cost + customization.cost;
+          const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+
+          payment.amc_rate_amount = newAmount;
+          payment.total_cost = newTotalCost;
+        }
+      }
+
+      const licenses = order.licenses as unknown as LicenseDocument[];
+
+      for (const license of licenses) {
+        const licenseYear = new Date(license.purchase_date).getFullYear();
+        const paymentIndex = payments.findIndex((payment) => {
+          const paymentYear = new Date(payment.from_date).getFullYear();
+          return paymentYear === licenseYear;
+        });
+
+        for (let i = paymentIndex + 1; i < payments.length; i++) {
+          const payment = payments[i];
+
+          const licenseCost = license.rate?.amount * license.total_license;
+
+          const newTotalCost = payment.total_cost + licenseCost;
+          const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+
+          payment.amc_rate_amount = newAmount;
+          payment.total_cost = newTotalCost;
+        }
+      }
+
       return payments;
     } catch (error: any) {
       console.log(error);
@@ -2625,81 +2620,18 @@ export class OrderService {
 
   async removeClientsData() {
     try {
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Starting data cleanup process',
-        }),
-      );
-
-      // Delete all orders and related data
-      await this.orderModel.deleteMany({});
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Deleted all orders',
-        }),
-      );
-
-      // Delete all licenses
-      await this.licenseModel.deleteMany({});
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Deleted all licenses',
-        }),
-      );
-
-      // Delete all customizations
-      await this.customizationModel.deleteMany({});
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Deleted all customizations',
-        }),
-      );
-
-      // Delete all additional services
-      await this.additionalServiceModel.deleteMany({});
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Deleted all additional services',
-        }),
-      );
-
-      // Delete all AMCs
-      await this.amcModel.deleteMany({});
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Deleted all AMCs',
-        }),
-      );
-
-      // Update all clients to empty their orders and AMCs arrays
-      await this.clientModel.updateMany({}, { $set: { orders: [], amcs: [] } });
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Reset all client orders and AMCs arrays',
-        }),
-      );
-
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'removeClientsData: Successfully completed data cleanup',
-        }),
-      );
-
-      return {
-        message: 'Successfully removed all data except clients and users',
-        status: 'success',
-      };
+      // update amc.payments to empty array
+      await this.amcModel.updateMany({}, { $set: { payments: [] } });
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
-          message: 'removeClientsData: Error during data cleanup',
+          message: 'removeClientsData: Error removing clients data',
           error: error.message,
-          stack: error.stack,
         }),
       );
       throw new HttpException(
         error.message || 'Server error',
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }

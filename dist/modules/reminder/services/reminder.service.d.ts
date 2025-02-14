@@ -19,6 +19,7 @@ export declare class ReminderService {
     private storageService;
     private INTERNAL_TEAM_EMAIL;
     constructor(orderModel: SoftDeleteModel<OrderDocument>, amcModel: SoftDeleteModel<AMCDocument>, reminderModel: SoftDeleteModel<ReminderDocument>, emailTemplateModel: SoftDeleteModel<EmailTemplateDocument>, loggerService: LoggerService, mailService: MailService, configService: ConfigService, storageService: StorageService);
+    sendTestEmail(): Promise<string>;
     checkAMCPendingPaymentsAndSendReminder(): Promise<void>;
     sendReminderEmail1(email: string, subject: string, template: MAIL_TEMPLATES, context: any): Promise<string>;
     private updateReminder;

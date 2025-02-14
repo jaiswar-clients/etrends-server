@@ -3,6 +3,7 @@ export declare class AppConfigDTO {
     DATABASE_URL: string;
     PORT: number;
     JWT_SECRET: string;
+    INTERNAL_TEAM_EMAIL: string;
     ENCRYPTION_KEY: string;
     FILES_PATH: string;
     IV: number;
