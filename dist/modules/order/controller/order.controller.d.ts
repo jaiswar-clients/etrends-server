@@ -99,7 +99,6 @@ export declare class OrderController {
     }>;
     getAmcReviewByOrderId(orderId: string): Promise<{
         from_date: Date;
-        is_free_amc: boolean;
         to_date: Date;
         status: import("../../../db/schema/amc/amc.schema").PAYMENT_STATUS_ENUM;
         amc_rate_applied: number;

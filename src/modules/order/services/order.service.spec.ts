@@ -132,7 +132,6 @@ describe('OrderService', () => {
               from_date: new Date('2025-01-01'),
               to_date: new Date('2026-01-01'),
               status: PAYMENT_STATUS_ENUM.PENDING,
-              is_free_amc: false,
               amc_frequency: 12,
               total_cost: 17000, // base_cost + customization + license costs
               amc_rate_applied: 20,
@@ -273,7 +272,6 @@ describe('OrderService', () => {
               from_date: new Date('2025-01-01'),
               to_date: new Date('2026-01-01'),
               status: PAYMENT_STATUS_ENUM.PENDING,
-              is_free_amc: false,
               amc_frequency: 12,
               total_cost: 10000, // Only base cost
               amc_rate_applied: 20,

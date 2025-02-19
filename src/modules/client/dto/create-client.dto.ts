@@ -71,6 +71,10 @@ export class CreateNewClientDto {
 
   @IsOptional()
   @IsString()
+  remark?: string;
+
+  @IsOptional()
+  @IsString()
   client_id?: string;
 
   @IsOptional()

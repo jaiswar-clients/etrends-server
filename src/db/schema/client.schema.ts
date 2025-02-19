@@ -84,6 +84,9 @@ export class Client extends Document {
   })
   orders: Types.ObjectId[];
 
+  @Prop({ type: String, default: '' })
+  remark: string;
+
   // add array of amc ids
   @Prop({
     type: [

@@ -222,7 +222,6 @@ export declare class OrderService {
     }): Promise<any>;
     getAmcReviewByOrderId(orderId: string): Promise<{
         from_date: Date;
-        is_free_amc: boolean;
         to_date: Date;
         status: PAYMENT_STATUS_ENUM;
         amc_rate_applied: number;

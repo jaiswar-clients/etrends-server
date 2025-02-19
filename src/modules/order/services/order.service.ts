@@ -1022,10 +1022,6 @@ export class OrderService {
         }),
       );
 
-      if (amcObject.payments.length > 0) {
-        amcObject.payments[0]['is_free_amc'] = true;
-      }
-
       return amcObject;
     } catch (error: any) {
       this.loggerService.error(
@@ -1786,7 +1782,6 @@ export class OrderService {
                 amc_frequency_in_months,
               ),
               status: PAYMENT_STATUS_ENUM.PENDING,
-              is_free_amc: false,
               amc_frequency: amc_frequency_in_months,
               total_cost: totalCost,
               amc_rate_applied: order.amc_rate.percentage,
@@ -2246,7 +2241,6 @@ export class OrderService {
   async getAmcReviewByOrderId(orderId: string): Promise<
     {
       from_date: Date;
-      is_free_amc: boolean;
       to_date: Date;
       status: PAYMENT_STATUS_ENUM;
       amc_rate_applied: number;
@@ -2313,7 +2307,6 @@ export class OrderService {
 
         payments.push({
           from_date: from_date.toDateString(),
-          is_free_amc: index === 0, // First payment period is free
           to_date: to_date.toDateString(),
           status: PAYMENT_STATUS_ENUM.PAID,
           amc_frequency: amc_frequency_in_months,

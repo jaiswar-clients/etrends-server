@@ -32,7 +32,7 @@ let AuthGuard = class AuthGuard {
             request['user'] = payload;
             request['access_code'] = payload.access_code;
         }
-        catch {
+        catch (e) {
             throw new common_1.UnauthorizedException();
         }
         return true;

@@ -21,6 +21,7 @@ export declare class Client extends Document {
     child_companies: Types.ObjectId[];
     point_of_contacts: PointOfContact[];
     orders: Types.ObjectId[];
+    remark: string;
     amcs: Types.ObjectId[];
 }
 declare const ClientSchema: import("mongoose").Schema<Client, import("mongoose").Model<Client, any, any, any, Document<unknown, any, Client> & Client & Required<{

@@ -691,9 +691,6 @@ let OrderService = class OrderService {
                 message: 'getAmcByOrderId: AMC found successfully',
                 orderId,
             }));
-            if (amcObject.payments.length > 0) {
-                amcObject.payments[0]['is_free_amc'] = true;
-            }
             return amcObject;
         }
         catch (error) {
@@ -1206,7 +1203,6 @@ let OrderService = class OrderService {
                             from_date: new Date(lastPayment.to_date),
                             to_date: this.getNextDate(new Date(lastPayment.to_date), amc_frequency_in_months),
                             status: amc_schema_1.PAYMENT_STATUS_ENUM.PENDING,
-                            is_free_amc: false,
                             amc_frequency: amc_frequency_in_months,
                             total_cost: totalCost,
                             amc_rate_applied: order.amc_rate.percentage,
@@ -1590,7 +1586,6 @@ let OrderService = class OrderService {
                 const to_date = this.getNextDate(from_date, amc_frequency_in_months);
                 payments.push({
                     from_date: from_date.toDateString(),
-                    is_free_amc: index === 0,
                     to_date: to_date.toDateString(),
                     status: amc_schema_1.PAYMENT_STATUS_ENUM.PAID,
                     amc_frequency: amc_frequency_in_months,

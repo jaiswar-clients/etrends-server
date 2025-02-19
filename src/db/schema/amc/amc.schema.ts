@@ -61,7 +61,6 @@ export class AMC extends Document {
         purchase_order_date: { type: Date },
         invoice_document: String,
         invoice_number: String,
-
         invoice_date: { type: Date },
       },
     ],

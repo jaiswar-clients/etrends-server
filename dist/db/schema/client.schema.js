@@ -113,6 +113,10 @@ __decorate([
     __metadata("design:type", Array)
 ], Client.prototype, "orders", void 0);
 __decorate([
+    (0, mongoose_1.Prop)({ type: String, default: '' }),
+    __metadata("design:type", String)
+], Client.prototype, "remark", void 0);
+__decorate([
     (0, mongoose_1.Prop)({
         type: [
             {

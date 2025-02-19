@@ -18,6 +18,7 @@ export declare class CreateNewClientDto {
     gst_number?: string;
     address?: string;
     industry?: INDUSTRIES_ENUM;
+    remark?: string;
     client_id?: string;
     vendor_id?: string;
     point_of_contacts?: PointOfContactDto[];
