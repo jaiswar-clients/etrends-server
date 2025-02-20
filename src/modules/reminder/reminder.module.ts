@@ -1,4 +1,4 @@
-import { Module, OnModuleInit } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Order, OrderSchema } from '@/db/schema/order/product-order.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
@@ -32,11 +32,4 @@ import {
   providers: [ReminderService, MailService],
   exports: [ReminderService],
 })
-export class ReminderModule implements OnModuleInit {
-  constructor(private reminderService: ReminderService) {}
-
-  async onModuleInit() {
-    // await this.reminderService.checkAgreementExpiryAndSendReminder();
-    // await this.reminderService.sendTestEmail();
-  }
-}
+export class ReminderModule {}

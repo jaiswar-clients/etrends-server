@@ -110,19 +110,12 @@ let UserService = class UserService {
             this.loggerService.log(JSON.stringify({
                 message: 'getInternalTeamEmails: Fetching all users',
             }));
-            const users = await this.userModel.find();
-            this.loggerService.log(JSON.stringify({
-                message: 'getInternalTeamEmails: Successfully fetched users',
-                data: { count: users.length },
-            }));
-            const emails = users.map((user) => ({
-                name: user.name,
-                email: user.email,
-            }));
-            this.loggerService.log(JSON.stringify({
-                message: 'getInternalTeamEmails: Extracted emails from users',
-                data: { emailCount: emails.length },
-            }));
+            const emails = [
+                {
+                    email: this.configService.get('EMAIL_ID'),
+                    name: this.configService.get('EMAIL_ID'),
+                },
+            ];
             return (0, misc_1.responseGenerator)('Internal team emails fetched successfully', emails);
         }
         catch (error) {
