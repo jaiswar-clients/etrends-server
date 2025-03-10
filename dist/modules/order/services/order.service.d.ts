@@ -16,6 +16,7 @@ import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schem
 import { Types } from 'mongoose';
 import { AddAMCPaymentDto, UpdateAMCDto, UpdateAMCPaymentDto } from '../dto/update-amc.dto';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
+import { Cache } from 'cache-manager';
 export declare class OrderService {
     private orderModel;
     private licenseModel;
@@ -26,7 +27,8 @@ export declare class OrderService {
     private amcModel;
     private loggerService;
     private storageService;
-    constructor(orderModel: SoftDeleteModel<OrderDocument>, licenseModel: SoftDeleteModel<LicenseDocument>, customizationModel: SoftDeleteModel<CustomizationDocument>, productModel: SoftDeleteModel<ProductDocument>, clientModel: SoftDeleteModel<ClientDocument>, additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>, amcModel: SoftDeleteModel<AMCDocument>, loggerService: LoggerService, storageService: StorageService);
+    private cacheManager;
+    constructor(orderModel: SoftDeleteModel<OrderDocument>, licenseModel: SoftDeleteModel<LicenseDocument>, customizationModel: SoftDeleteModel<CustomizationDocument>, productModel: SoftDeleteModel<ProductDocument>, clientModel: SoftDeleteModel<ClientDocument>, additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>, amcModel: SoftDeleteModel<AMCDocument>, loggerService: LoggerService, storageService: StorageService, cacheManager: Cache);
     createOrder(clientId: string, body: CreateOrderDto): Promise<import("mongoose").Document<unknown, {}, import("mongoose").Document<unknown, {}, Order> & Order & Required<{
         _id: unknown;
     }> & {
@@ -175,19 +177,9 @@ export declare class OrderService {
     }>;
     loadAllAMC(page: number, limit: number, filter: AMC_FILTER, options?: {
         upcoming: number;
-        startDate?: Date;
-        endDate?: Date;
-    }): Promise<{
-        data: {
-            pagination: {
-                total: number;
-                page: number;
-                limit: number;
-                pages: number;
-            };
-            data: any[];
-        };
-    }>;
+        startDate?: Date | string;
+        endDate?: Date | string;
+    }): Promise<any>;
     private getNextDate;
     updateAMCPayments(): Promise<{
         processed: number;

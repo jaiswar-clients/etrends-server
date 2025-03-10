@@ -4,7 +4,7 @@ import {
 } from '@/db/schema/order/customization.schema';
 import { License, LicenseDocument } from '@/db/schema/order/license.schema';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
 import { CreateOrderDto } from '../dto/create-order.dto';
@@ -37,6 +37,8 @@ import {
 } from '../dto/update-amc.dto';
 import { extractFileKey } from '@/utils/misc';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
+import { Cache } from 'cache-manager';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 
 @Injectable()
 export class OrderService {
@@ -57,6 +59,7 @@ export class OrderService {
     private amcModel: SoftDeleteModel<AMCDocument>,
     private loggerService: LoggerService,
     private storageService: StorageService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
 
   async createOrder(clientId: string, body: CreateOrderDto) {
@@ -1424,8 +1427,8 @@ export class OrderService {
     filter: AMC_FILTER,
     options: {
       upcoming: number;
-      startDate?: Date;
-      endDate?: Date;
+      startDate?: Date | string;
+      endDate?: Date | string;
     } = { upcoming: 1 },
   ) {
     try {
@@ -1437,127 +1440,67 @@ export class OrderService {
         }),
       );
 
-      let findFilter: any = {
-        // Base filter to ensure we have payments array
-        payments: { $exists: true },
-      };
-
-      // Handle date range filtering
-      if (options.startDate || options.endDate) {
-        const dateFilter: any = {};
-
-        if (options.startDate) {
-          // Set time to start of day
-          const startDate = new Date(options.startDate);
-          startDate.setHours(0, 0, 0, 0);
-          dateFilter.$gte = startDate;
-        }
-
-        if (options.endDate) {
-          // Set time to end of day
-          const endDate = new Date(options.endDate);
-          endDate.setHours(23, 59, 59, 999);
-          dateFilter.$lte = endDate;
-        }
-
-        findFilter['payments.from_date'] = dateFilter;
-
-        // If filter is UPCOMING, add payment status condition
-        if (filter === AMC_FILTER.UPCOMING) {
-          findFilter['payments.status'] = PAYMENT_STATUS_ENUM.PENDING;
-        }
-      } else {
-        // Apply existing filter logic if no date range provided
-        switch (filter) {
-          case AMC_FILTER.ALL:
-            // Keep base filter only
-            break;
-
-          case AMC_FILTER.UPCOMING:
-            const nextMonth = new Date();
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
-            nextMonth.setHours(0, 0, 0, 0); // Start of day
-
-            const endDate = new Date(nextMonth);
-            endDate.setMonth(endDate.getMonth() + options.upcoming);
-            endDate.setHours(23, 59, 59, 999); // End of day
-
-            findFilter = {
-              ...findFilter,
-              'payments.from_date': {
-                $gte: nextMonth,
-                $lte: endDate,
-              },
-              'payments.status': PAYMENT_STATUS_ENUM.PENDING,
-            };
-            break;
-
-          case AMC_FILTER.PAID:
-            findFilter = {
-              ...findFilter,
-              $expr: {
-                $eq: [
-                  { $arrayElemAt: ['$payments.status', -1] },
-                  PAYMENT_STATUS_ENUM.PAID,
-                ],
-              },
-            };
-            break;
-
-          case AMC_FILTER.PENDING:
-            findFilter = {
-              ...findFilter,
-              $expr: {
-                $eq: [
-                  { $arrayElemAt: ['$payments.status', -1] },
-                  PAYMENT_STATUS_ENUM.PENDING,
-                ],
-              },
-            };
-            break;
-
-          case AMC_FILTER.OVERDUE:
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            findFilter = {
-              ...findFilter,
-              $expr: {
-                $and: [
-                  {
-                    $lt: [{ $arrayElemAt: ['$payments.to_date', -1] }, today],
-                  },
-                  {
-                    $eq: [
-                      { $arrayElemAt: ['$payments.status', -1] },
-                      PAYMENT_STATUS_ENUM.PENDING,
-                    ],
-                  },
-                ],
-              },
-            };
-            break;
-        }
-      }
-
+      // Clean up startDate and endDate values for consistent caching
+      const startDateParam = options.startDate && options.startDate !== 'undefined' 
+        ? options.startDate.toString() 
+        : 'null';
+      
+      const endDateParam = options.endDate && options.endDate !== 'undefined' 
+        ? options.endDate.toString() 
+        : 'null';
+      
+      // Generate cache key based on parameters
+      const cacheKey = `amc_data_${filter}_${page}_${limit}_${options.upcoming}_${startDateParam}_${endDateParam}`;
+      
       this.loggerService.log(
         JSON.stringify({
-          message: 'loadAllAMC: Applying filter',
-          findFilter,
+          message: 'loadAllAMC: Checking cache',
+          cacheKey,
+        }),
+      );
+      
+      // Try to get data from cache first
+      let cachedData;
+      try {
+        cachedData = await this.cacheManager.get(cacheKey);
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllAMC: Cache check result',
+            hasCachedData: !!cachedData,
+            cachedData: typeof cachedData,
+          }),
+        );
+      } catch (cacheError: any) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'loadAllAMC: Cache retrieval error',
+            error: cacheError?.message || 'Unknown cache error',
+          }),
+        );
+        cachedData = null;
+      }
+      
+      if (cachedData) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllAMC: Returning cached data',
+            cacheKey,
+          }),
+        );
+        return cachedData;
+      }
+
+      // Continue with the data fetching since cache miss
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllAMC: Cache miss, fetching fresh data',
         }),
       );
 
-      // Apply pagination with proper skip calculation
-      const skip = (page - 1) * limit;
-
-      // Get total count for pagination
-      const totalCount = await this.amcModel.countDocuments(findFilter);
-
-      const amcs = await this.amcModel
-        .find(findFilter)
+      // Fetch all AMCs without filtering
+      const allAmcs = await this.amcModel
+        .find({ payments: { $exists: true } })
         .sort({ _id: -1 })
-        .skip(skip)
-        .limit(limit)
         .populate([
           {
             path: 'client_id',
@@ -1575,33 +1518,153 @@ export class OrderService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'loadAllAMC: AMC fetched successfully',
-          totalCount,
-          returnedCount: amcs.length,
+          message: 'loadAllAMC: Total AMCs fetched before filtering',
+          count: allAmcs.length,
         }),
       );
 
-      const amcsList = [];
-      for (const amc of amcs) {
-        const amcObj = amc.toObject();
+      // Process and filter AMCs in memory
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Start of today
 
+      // Convert date strings to Date objects if provided
+      let startDate: Date | null = null;
+      let endDate: Date | null = null;
+
+      if (options.startDate && options.startDate !== 'undefined') {
+        startDate = new Date(options.startDate);
+        startDate.setHours(0, 0, 0, 0);
+      }
+
+      if (options.endDate && options.endDate !== 'undefined') {
+        endDate = new Date(options.endDate);
+        endDate.setHours(23, 59, 59, 999);
+      }
+
+      // For upcoming filter, calculate date range if not explicitly provided
+      if (filter === AMC_FILTER.UPCOMING && !startDate && !endDate) {
+        startDate = new Date(today);
+        endDate = new Date(today);
+        endDate.setMonth(today.getMonth() + options.upcoming);
+        endDate.setHours(23, 59, 59, 999);
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllAMC: Upcoming date range calculated',
+            startDate,
+            endDate,
+            upcomingMonths: options.upcoming,
+          }),
+        );
+      }
+
+      // Filter AMCs based on filter type and date range
+      const filteredAmcs = allAmcs.filter((amc) => {
         // Skip AMCs with invalid payment data
-        if (!Array.isArray(amcObj.payments)) {
-          this.loggerService.error(
-            JSON.stringify({
-              message: 'loadAllAMC: Invalid payments array found',
-              amcId: amc._id,
-            }),
-          );
-          continue;
+        if (!Array.isArray(amc.payments) || amc.payments.length === 0) {
+          return false;
         }
 
-        if (amc.payments.length <= 1 && filter !== AMC_FILTER.FIRST)
-          continue; // this means that the AMC is still free
-        else if (amc.payments.length > 1 && filter === AMC_FILTER.FIRST)
-          continue;
+        // Handle payment count filtering
+        if (filter === AMC_FILTER.FIRST) {
+          return amc.payments.length === 1;
+        } else if (amc.payments.length <= 1) {
+          // Skip free AMCs (with only 1 payment) for non-FIRST filters
+          return false;
+        }
 
+        // Apply different filters based on filter type
+        switch (filter) {
+          case AMC_FILTER.ALL:
+            // For ALL filter with date range
+            if (startDate && endDate) {
+              return amc.payments.some((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                return paymentDate >= startDate && paymentDate <= endDate;
+              });
+            }
+            // Return all AMCs for ALL filter without date range
+            return true;
+
+          case AMC_FILTER.PAID:
+            // Filter for PAID payments - only include AMCs where ALL payments are PAID
+            return amc.payments.every((payment) => {
+              const paymentDate = new Date(payment.from_date);
+              const dateInRange =
+                (!startDate || paymentDate >= startDate) &&
+                (!endDate || paymentDate <= endDate);
+              
+              // If we have date range, check both status and date
+              if (startDate || endDate) {
+                return payment.status === PAYMENT_STATUS_ENUM.PAID && dateInRange;
+              }
+              
+              // If no date range, just check status
+              return payment.status === PAYMENT_STATUS_ENUM.PAID;
+            });
+
+          case AMC_FILTER.PENDING:
+            // Filter for PENDING payments
+            return amc.payments.some((payment) => {
+              const paymentDate = new Date(payment.from_date);
+              const dateInRange =
+                (!startDate || paymentDate >= startDate) &&
+                (!endDate || paymentDate <= endDate);
+
+              return (
+                payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                ((!startDate && !endDate) || dateInRange)
+              );
+            });
+
+          case AMC_FILTER.UPCOMING:
+            // Filter for UPCOMING payments (PENDING within date range)
+            return amc.payments.some((payment) => {
+              if (payment.status !== PAYMENT_STATUS_ENUM.PENDING) {
+                return false;
+              }
+
+              const paymentDate = new Date(payment.from_date);
+              return (
+                (!startDate || paymentDate >= startDate) &&
+                (!endDate || paymentDate <= endDate)
+              );
+            });
+
+          case AMC_FILTER.OVERDUE:
+            // Filter for OVERDUE payments (PENDING with to_date < today)
+            return amc.payments.some((payment) => {
+              const toDate = new Date(payment.to_date);
+              return (
+                payment.status === PAYMENT_STATUS_ENUM.PENDING && toDate < today
+              );
+            });
+
+          default:
+            return false;
+        }
+      });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllAMC: AMCs after filtering',
+          count: filteredAmcs.length,
+          filter,
+          dateRange: { startDate, endDate },
+        }),
+      );
+
+      // Apply pagination in memory
+      const totalCount = filteredAmcs.length;
+      const skip = (page - 1) * limit;
+      const paginatedAmcs = filteredAmcs.slice(skip, skip + limit);
+
+      // Process the AMC objects for response
+      const amcsList = [];
+      for (const amc of paginatedAmcs) {
         try {
+          const amcObj = amc.toObject();
+
           amcObj.payments.forEach((payment) => {
             if (payment.purchase_order_document) {
               payment.purchase_order_document = this.storageService.get(
@@ -1637,7 +1700,8 @@ export class OrderService {
         }
       }
 
-      return {
+      // Prepare response data
+      const responseData = {
         data: {
           pagination: {
             total: totalCount,
@@ -1648,11 +1712,36 @@ export class OrderService {
           data: amcsList,
         },
       };
+
+      // Cache the results for future requests
+      try {
+        // TTL set to 15 minutes (900 seconds)
+        await this.cacheManager.set(cacheKey, responseData, 900);
+        
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllAMC: Data cached successfully',
+            cacheKey,
+            responseDataType: typeof responseData,
+          }),
+        );
+      } catch (cacheError: any) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'loadAllAMC: Cache storage error',
+            error: cacheError?.message || 'Unknown cache error',
+            stack: cacheError?.stack || 'No stack trace available',
+          }),
+        );
+      }
+
+      return responseData;
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
           message: 'loadAllAMC: Error fetching AMC',
           error: error.message,
+          stack: error.stack,
         }),
       );
       throw new HttpException(

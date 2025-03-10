@@ -23,6 +23,7 @@ const product_schema_1 = require("../../db/schema/product.schema");
 const client_schema_1 = require("../../db/schema/client.schema");
 const amc_schema_1 = require("../../db/schema/amc/amc.schema");
 const mail_service_1 = require("../../common/mail/service/mail.service");
+const cache_manager_1 = require("@nestjs/cache-manager");
 let OrderModule = class OrderModule {
     constructor(orderService) {
         this.orderService = orderService;
@@ -44,6 +45,11 @@ exports.OrderModule = OrderModule = __decorate([
                 { name: amc_schema_1.AMC.name, schema: amc_schema_1.AMCSchema },
             ]),
             storage_module_1.StorageModule,
+            cache_manager_1.CacheModule.register({
+                ttl: 900,
+                max: 100,
+                isGlobal: false,
+            })
         ],
         controllers: [order_controller_1.OrderController],
         providers: [order_service_1.OrderService, mail_service_1.MailService],

@@ -36,17 +36,7 @@ export declare class OrderController {
             id: any;
         })[];
     }>;
-    loadAllAMC(page: number, limit: number, filter: AMC_FILTER, upcoming: string, startDate: string, endDate: string): Promise<{
-        data: {
-            pagination: {
-                total: number;
-                page: number;
-                limit: number;
-                pages: number;
-            };
-            data: any[];
-        };
-    }>;
+    loadAllAMC(page: number, limit: number, filter: AMC_FILTER, upcoming: string, startDate: string, endDate: string): Promise<any>;
     getAllPendingPayments(page: number, limit: number): Promise<{
         pending_payments: {
             [key: string]: any;

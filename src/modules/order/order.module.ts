@@ -17,6 +17,7 @@ import { Product, ProductSchema } from '@/db/schema/product.schema';
 import { Client, ClientSchema } from '@/db/schema/client.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
 import { MailService } from '@/common/mail/service/mail.service';
+import { CacheModule } from '@nestjs/cache-manager';
 
 @Module({
   imports: [
@@ -30,6 +31,11 @@ import { MailService } from '@/common/mail/service/mail.service';
       { name: AMC.name, schema: AMCSchema },
     ]),
     StorageModule,
+    CacheModule.register({
+      ttl: 900, // 15 minutes
+      max: 100, // Maximum number of items in cache
+      isGlobal: false,
+    })
   ],
   controllers: [OrderController],
   providers: [OrderService, MailService],
