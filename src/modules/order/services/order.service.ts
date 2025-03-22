@@ -1441,24 +1441,26 @@ export class OrderService {
       );
 
       // Clean up startDate and endDate values for consistent caching
-      const startDateParam = options.startDate && options.startDate !== 'undefined' 
-        ? options.startDate.toString() 
-        : 'null';
-      
-      const endDateParam = options.endDate && options.endDate !== 'undefined' 
-        ? options.endDate.toString() 
-        : 'null';
-      
+      const startDateParam =
+        options.startDate && options.startDate !== 'undefined'
+          ? options.startDate.toString()
+          : 'null';
+
+      const endDateParam =
+        options.endDate && options.endDate !== 'undefined'
+          ? options.endDate.toString()
+          : 'null';
+
       // Generate cache key based on parameters
       const cacheKey = `amc_data_${filter}_${page}_${limit}_${options.upcoming}_${startDateParam}_${endDateParam}`;
-      
+
       this.loggerService.log(
         JSON.stringify({
           message: 'loadAllAMC: Checking cache',
           cacheKey,
         }),
       );
-      
+
       // Try to get data from cache first
       let cachedData;
       try {
@@ -1479,7 +1481,7 @@ export class OrderService {
         );
         cachedData = null;
       }
-      
+
       if (cachedData) {
         this.loggerService.log(
           JSON.stringify({
@@ -1593,12 +1595,14 @@ export class OrderService {
               const dateInRange =
                 (!startDate || paymentDate >= startDate) &&
                 (!endDate || paymentDate <= endDate);
-              
+
               // If we have date range, check both status and date
               if (startDate || endDate) {
-                return payment.status === PAYMENT_STATUS_ENUM.PAID && dateInRange;
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.PAID && dateInRange
+                );
               }
-              
+
               // If no date range, just check status
               return payment.status === PAYMENT_STATUS_ENUM.PAID;
             });
@@ -1717,7 +1721,7 @@ export class OrderService {
       try {
         // TTL set to 15 minutes (900 seconds)
         await this.cacheManager.set(cacheKey, responseData, 900);
-        
+
         this.loggerService.log(
           JSON.stringify({
             message: 'loadAllAMC: Data cached successfully',

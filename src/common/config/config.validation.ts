@@ -17,4 +17,6 @@ export const validationSchema = Joi.object({
   EMAIL_SECURE: Joi.boolean().required(),
   EMAIL_ID: Joi.string().required(),
   EMAIL_PASSWORD: Joi.string().required(),
+  
+  TURN_OFF_EMAIL_REMINDER: Joi.boolean().default(false),
 });

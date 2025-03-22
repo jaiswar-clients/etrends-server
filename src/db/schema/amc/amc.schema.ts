@@ -6,9 +6,10 @@ import * as mongooseDelete from 'mongoose-delete';
 export type AMCDocument = HydratedDocument<AMC>;
 
 export enum PAYMENT_STATUS_ENUM {
-  PAID = 'paid',
   PENDING = 'pending',
-  PARTIAL = 'partial',
+  PERFORMA = 'performa',
+  INVOICE = 'invoice',
+  PAID = 'paid',
 }
 
 export interface IAMCPayment {
@@ -23,6 +24,7 @@ export interface IAMCPayment {
   purchase_order_number?: string;
   purchase_order_document?: string;
   purchase_order_date?: Date;
+  performa_date?: Date;
   invoice_document?: string;
   invoice_number?: string;
   invoice_date?: Date;
@@ -59,6 +61,7 @@ export class AMC extends Document {
         purchase_order_number: String,
         purchase_order_document: String,
         purchase_order_date: { type: Date },
+        performa_date: { type: Date },
         invoice_document: String,
         invoice_number: String,
         invoice_date: { type: Date },

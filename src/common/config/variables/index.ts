@@ -15,5 +15,6 @@ export const app = registerAs('APP', () => ({
   EMAIL_SECURE: process.env['EMAIL_SECURE'],
   EMAIL_ID: process.env['EMAIL_ID'],
   EMAIL_PASSWORD: process.env['EMAIL_PASSWORD'],
+  TURN_OFF_EMAIL_REMINDER: process.env['TURN_OFF_EMAIL_REMINDER'] === 'true',
 }));
 

@@ -59,4 +59,6 @@ export class AppConfigDTO {
   @IsString()
   @IsNotEmpty()
   EMAIL_PASSWORD: string;
+
+  TURN_OFF_EMAIL_REMINDER: boolean;
 }

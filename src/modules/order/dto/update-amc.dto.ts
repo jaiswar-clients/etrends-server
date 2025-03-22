@@ -21,6 +21,10 @@ export class UpdateAMCPaymentDto {
 
   @IsString()
   @IsOptional()
+  performa_date: Date;
+
+  @IsString()
+  @IsOptional()
   received_date: Date;
 
   @IsString()

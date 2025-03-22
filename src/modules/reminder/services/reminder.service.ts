@@ -2,7 +2,6 @@ import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
-
 import { Product } from '@/db/schema/product.schema';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { Client, ClientDocument } from '@/db/schema/client.schema';
@@ -35,6 +34,7 @@ import { formatCurrency } from '@/utils/misc';
 @Injectable()
 export class ReminderService {
   private INTERNAL_TEAM_EMAIL: string;
+  private TURN_OFF_EMAIL_REMINDER: boolean;
   constructor(
     @InjectModel(Order.name)
     private orderModel: SoftDeleteModel<OrderDocument>,
@@ -50,6 +50,9 @@ export class ReminderService {
     private storageService: StorageService,
   ) {
     this.INTERNAL_TEAM_EMAIL = this.configService.get('INTERNAL_TEAM_EMAIL');
+    this.TURN_OFF_EMAIL_REMINDER = this.configService.get(
+      'TURN_OFF_EMAIL_REMINDER',
+    );
   }
 
   async sendTestEmail() {
@@ -220,6 +223,19 @@ export class ReminderService {
     context: any,
   ) {
     try {
+      // Check if email reminders are turned off
+      if (this.TURN_OFF_EMAIL_REMINDER) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'Email reminder skipped - TURN_OFF_EMAIL_REMINDER is enabled',
+            template,
+            subject,
+            emailTo: email,
+          }),
+        );
+        return 'SKIPPED - Email reminders turned off';
+      }
+
       const emailStatus = await this.mailService.sendMail({
         template,
         email,
@@ -230,8 +246,11 @@ export class ReminderService {
       return emailStatus;
     } catch (error) {
       this.loggerService.error(
-        'Critical error in sendReminderEmail',
-        JSON.stringify(error),
+        JSON.stringify({
+          message: 'Critical error in sendReminderEmail',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }),
       );
       throw error;
     }
