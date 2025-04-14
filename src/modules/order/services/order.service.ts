@@ -23,11 +23,13 @@ import {
   AMC_FILTER,
   DEFAULT_AMC_CYCLE_IN_MONTHS,
   PURCHASE_TYPE,
+  ORDER_STATUS_ENUM,
 } from '@/common/types/enums/order.enum';
 import {
   AMC,
   AMCDocument,
   PAYMENT_STATUS_ENUM,
+  IAMCPayment,
 } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
 import {
@@ -1499,9 +1501,24 @@ export class OrderService {
         }),
       );
 
-      // Fetch all AMCs without filtering
+      // Fetch active orders first
+      const activeOrders = await this.orderModel
+        .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+        .distinct('_id');
+      
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllAMC: Active orders found',
+          count: activeOrders.length,
+        }),
+      );
+
+      // Fetch all AMCs without filtering but only for active orders
       const allAmcs = await this.amcModel
-        .find({ payments: { $exists: true } })
+        .find({ 
+          payments: { $exists: true },
+          order_id: { $in: activeOrders } 
+        })
         .sort({ _id: -1 })
         .populate([
           {
@@ -1520,7 +1537,7 @@ export class OrderService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'loadAllAMC: Total AMCs fetched before filtering',
+          message: 'loadAllAMC: Total AMCs fetched before filtering (only active orders)',
           count: allAmcs.length,
         }),
       );
@@ -1564,14 +1581,6 @@ export class OrderService {
       const filteredAmcs = allAmcs.filter((amc) => {
         // Skip AMCs with invalid payment data
         if (!Array.isArray(amc.payments) || amc.payments.length === 0) {
-          return false;
-        }
-
-        // Handle payment count filtering
-        if (filter === AMC_FILTER.FIRST) {
-          return amc.payments.length === 1;
-        } else if (amc.payments.length <= 1) {
-          // Skip free AMCs (with only 1 payment) for non-FIRST filters
           return false;
         }
 
@@ -1963,10 +1972,22 @@ export class OrderService {
         }),
       );
 
+      // Get active orders first
+      const activeOrders = await this.orderModel
+        .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+        .distinct('_id');
+      
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAllPendingPayments: Active orders found',
+          count: activeOrders.length,
+        }),
+      );
+
       const TOTAL_PURCHASES_SCENARIOS = 5;
       const pendingLimitForEachSchema = limit / TOTAL_PURCHASES_SCENARIOS;
 
-      // Get total counts first
+      // Get total counts first - only consider active orders
       const [
         totalAMCs,
         totalLicenses,
@@ -1975,19 +1996,24 @@ export class OrderService {
         totalOrders,
       ] = await Promise.all([
         this.amcModel.countDocuments({
+          order_id: { $in: activeOrders },
           'payments.1': { $exists: true },
           'payments.status': PAYMENT_STATUS_ENUM.PENDING,
         }),
         this.licenseModel.countDocuments({
+          order_id: { $in: activeOrders },
           payment_status: PAYMENT_STATUS_ENUM.PENDING,
         }),
         this.customizationModel.countDocuments({
+          order_id: { $in: activeOrders },
           payment_status: PAYMENT_STATUS_ENUM.PENDING,
         }),
         this.additionalServiceModel.countDocuments({
+          order_id: { $in: activeOrders },
           payment_status: PAYMENT_STATUS_ENUM.PENDING,
         }),
         this.orderModel.countDocuments({
+          _id: { $in: activeOrders },
           'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
         }),
       ]);
@@ -2001,6 +2027,7 @@ export class OrderService {
       ] = await Promise.all([
         this.amcModel
           .find({
+            order_id: { $in: activeOrders },
             'payments.1': { $exists: true },
             'payments.status': PAYMENT_STATUS_ENUM.PENDING,
           })
@@ -2009,7 +2036,10 @@ export class OrderService {
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.licenseModel
-          .find({ payment_status: PAYMENT_STATUS_ENUM.PENDING })
+          .find({ 
+            order_id: { $in: activeOrders },
+            payment_status: PAYMENT_STATUS_ENUM.PENDING 
+          })
           .populate({
             path: 'order_id',
             populate: {
@@ -2025,6 +2055,7 @@ export class OrderService {
           .limit(pendingLimitForEachSchema),
         this.customizationModel
           .find({
+            order_id: { $in: activeOrders },
             payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
           .populate({
@@ -2039,6 +2070,7 @@ export class OrderService {
           .limit(pendingLimitForEachSchema),
         this.additionalServiceModel
           .find({
+            order_id: { $in: activeOrders },
             payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
           .populate({
@@ -2052,6 +2084,7 @@ export class OrderService {
           .limit(pendingLimitForEachSchema),
         this.orderModel
           .find({
+            _id: { $in: activeOrders },
             'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
           })
           .populate([
@@ -2203,7 +2236,7 @@ export class OrderService {
       this.loggerService.log(
         JSON.stringify({
           message:
-            'getAllPendingPayments: Successfully fetched all pending payments',
+            'getAllPendingPayments: Successfully fetched all pending payments (active orders only)',
           total: pendingPayments.length,
         }),
       );
