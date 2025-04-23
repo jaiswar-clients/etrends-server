@@ -1653,6 +1653,34 @@ export class OrderService {
               );
             });
 
+          case AMC_FILTER.PROFORMA:
+            // Filter for PROFORMA payments
+            return amc.payments.some((payment) => {
+              const paymentDate = new Date(payment.from_date);
+              const dateInRange =
+                (!startDate || paymentDate >= startDate) &&
+                (!endDate || paymentDate <= endDate);
+
+              return (
+                payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                ((!startDate && !endDate) || dateInRange)
+              );
+            });
+
+          case AMC_FILTER.INVOICE:
+            // Filter for INVOICE payments
+            return amc.payments.some((payment) => {
+              const paymentDate = new Date(payment.from_date);
+              const dateInRange =
+                (!startDate || paymentDate >= startDate) &&
+                (!endDate || paymentDate <= endDate);
+
+              return (
+                payment.status === PAYMENT_STATUS_ENUM.INVOICE &&
+                ((!startDate && !endDate) || dateInRange)
+              );
+            });
+
           default:
             return false;
         }

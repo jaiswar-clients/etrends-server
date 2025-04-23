@@ -7,7 +7,7 @@ export type AMCDocument = HydratedDocument<AMC>;
 
 export enum PAYMENT_STATUS_ENUM {
   PENDING = 'pending',
-  PERFORMA = 'performa',
+  proforma = 'proforma',
   INVOICE = 'invoice',
   PAID = 'paid',
 }
@@ -24,7 +24,7 @@ export interface IAMCPayment {
   purchase_order_number?: string;
   purchase_order_document?: string;
   purchase_order_date?: Date;
-  performa_date?: Date;
+  proforma_date?: Date;
   invoice_document?: string;
   invoice_number?: string;
   invoice_date?: Date;
@@ -61,7 +61,7 @@ export class AMC extends Document {
         purchase_order_number: String,
         purchase_order_document: String,
         purchase_order_date: { type: Date },
-        performa_date: { type: Date },
+        proforma_date: { type: Date },
         invoice_document: String,
         invoice_number: String,
         invoice_date: { type: Date },

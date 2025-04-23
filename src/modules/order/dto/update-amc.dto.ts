@@ -21,7 +21,7 @@ export class UpdateAMCPaymentDto {
 
   @IsString()
   @IsOptional()
-  performa_date: Date;
+  proforma_date: Date;
 
   @IsString()
   @IsOptional()

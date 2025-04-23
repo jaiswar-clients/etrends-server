@@ -66,11 +66,9 @@ export class ClientService {
       // extract products from the orders and add it in client object
       const transformedClients = [];
       for (const client of clients) {
-        console.log(client.parent_company_id);
         let products = [];
         for (const order of client.orders) {
           products = order.products.map((product) => product.name);
-
         }
 
         let first_order_date = null;

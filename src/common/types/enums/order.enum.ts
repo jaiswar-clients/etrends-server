@@ -11,11 +11,13 @@ export enum PURCHASE_TYPE {
 }
 
 export enum AMC_FILTER {
-  UPCOMING = 'upcoming',
   ALL = 'all',
   PAID = 'paid',
   PENDING = 'pending',
+  UPCOMING = 'upcoming',
   OVERDUE = 'overdue',
+  PROFORMA = 'proforma',
+  INVOICE = 'invoice',
 }
 
 export const DEFAULT_AMC_CYCLE_IN_MONTHS = 12;
