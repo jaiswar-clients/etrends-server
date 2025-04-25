@@ -422,9 +422,10 @@ export class ReportService {
           break;
 
         case 'yearly':
-          const year = options?.year || new Date().getFullYear();
-          start = new Date(year, 0, 1);
-          end = new Date(year, 11, 31, 23, 59, 59);
+          // Indian Financial Year: April 1 to March 31
+          const fiscalYear = options?.year || new Date().getFullYear();
+          start = new Date(fiscalYear, 3, 1); // April 1
+          end = new Date(fiscalYear + 1, 2, 31, 23, 59, 59); // March 31 of next year
           break;
 
         case 'quarterly':
@@ -432,22 +433,53 @@ export class ReportService {
             const [qStr, qYearStr] = options.quarter.split(' ');
             const quarterNumber = parseInt(qStr.replace('Q', ''));
             const qYear = parseInt(qYearStr);
-            const quarterStartMonth = (quarterNumber - 1) * 3;
-            start = new Date(qYear, quarterStartMonth, 1);
-            end = new Date(qYear, quarterStartMonth + 3, 0);
+            
+            // Indian Financial Year quarters (Q1: Apr-Jun, Q2: Jul-Sep, Q3: Oct-Dec, Q4: Jan-Mar)
+            const quarterMonths = [
+              [3, 4, 5], // Q1: Apr, May, Jun
+              [6, 7, 8], // Q2: Jul, Aug, Sep
+              [9, 10, 11], // Q3: Oct, Nov, Dec
+              [0, 1, 2], // Q4: Jan, Feb, Mar
+            ];
+            
+            const startMonth = quarterMonths[quarterNumber - 1][0];
+            const endMonth = quarterMonths[quarterNumber - 1][2];
+            
+            // For Q4 (Jan-Mar), we need to use the next calendar year
+            const startYear = quarterNumber === 4 ? qYear + 1 : qYear;
+            const endYear = quarterNumber === 4 ? qYear + 1 : qYear;
+            
+            start = new Date(startYear, startMonth, 1);
+            end = new Date(endYear, endMonth + 1, 0, 23, 59, 59);
           } else {
             const currentDate = new Date();
-            const currentQuarter = Math.floor(currentDate.getMonth() / 3);
-            const quarterStartMonth = currentQuarter * 3;
-            start = new Date(currentDate.getFullYear(), quarterStartMonth, 1);
-            end = new Date(
-              currentDate.getFullYear(),
-              quarterStartMonth + 3,
-              0,
-              23,
-              59,
-              59,
-            );
+            const month = currentDate.getMonth();
+            const year = currentDate.getFullYear();
+            
+            // Determine current Indian FY quarter
+            let currentQuarter;
+            
+            if (month >= 3 && month <= 5) {
+              // Q1: Apr-Jun
+              currentQuarter = 1;
+              start = new Date(year, 3, 1);
+              end = new Date(year, 5, 30, 23, 59, 59);
+            } else if (month >= 6 && month <= 8) {
+              // Q2: Jul-Sep
+              currentQuarter = 2;
+              start = new Date(year, 6, 1);
+              end = new Date(year, 8, 30, 23, 59, 59);
+            } else if (month >= 9 && month <= 11) {
+              // Q3: Oct-Dec
+              currentQuarter = 3;
+              start = new Date(year, 9, 1);
+              end = new Date(year, 11, 31, 23, 59, 59);
+            } else {
+              // Q4: Jan-Mar (calendar year is one more than fiscal year)
+              currentQuarter = 4;
+              start = new Date(year, 0, 1);
+              end = new Date(year, 2, 31, 23, 59, 59);
+            }
           }
           break;
 
@@ -457,9 +489,30 @@ export class ReportService {
           break;
 
         default:
-          start = new Date(new Date().getFullYear(), 0, 1);
-          end = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
+          // Default to current Indian Financial Year
+          const currentDate = new Date();
+          const currentYear = currentDate.getFullYear();
+          const currentMonth = currentDate.getMonth();
+          
+          // If we're before April, we're in the previous FY (e.g., 2023-24)
+          // If we're April or later, we're in the current FY (e.g., 2024-25)
+          const fiscalYearStart = currentMonth < 3 ? currentYear - 1 : currentYear;
+          
+          start = new Date(fiscalYearStart, 3, 1); // April 1
+          end = new Date(fiscalYearStart + 1, 2, 31, 23, 59, 59); // March 31 of next year
       }
+      
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getIndustryWiseRevenueDistribution: Using Indian Financial Year',
+          data: { 
+            filter, 
+            start: start.toISOString(), 
+            end: end.toISOString(),
+            options 
+          },
+        })
+      );
 
       const dateQuery =
         filter === 'all'
@@ -952,8 +1005,16 @@ export class ReportService {
       } else if (filter === 'quarterly') {
         const [qA, fyA] = a.split(' ');
         const [qB, fyB] = b.split(' ');
-        const diffYear = parseInt(fyA) - parseInt(fyB);
-        if (diffYear !== 0) return diffYear;
+        
+        // Extract fiscal years (e.g., "23-24" from "FY23-24")
+        const fyAYears = fyA.substring(2).split('-');
+        const fyBYears = fyB.substring(2).split('-');
+        
+        // Compare first year
+        const yearDiff = parseInt(fyAYears[0]) - parseInt(fyBYears[0]);
+        if (yearDiff !== 0) return yearDiff;
+        
+        // If same fiscal year, compare quarter
         return parseInt(qA.replace('Q', '')) - parseInt(qB.replace('Q', ''));
       } else if (filter === 'yearly') {
         // New format: "FY23-24"
@@ -989,9 +1050,10 @@ export class ReportService {
           break;
 
         case 'yearly':
-          const year = options?.year || new Date().getFullYear();
-          start = new Date(year, 0, 1);
-          end = new Date(year, 11, 31, 23, 59, 59);
+          // Indian Financial Year: April 1 to March 31
+          const fiscalYear = options?.year || new Date().getFullYear();
+          start = new Date(fiscalYear, 3, 1); // April 1
+          end = new Date(fiscalYear + 1, 2, 31, 23, 59, 59); // March 31 of next year
           break;
 
         case 'quarterly':
@@ -999,22 +1061,53 @@ export class ReportService {
             const [qStr, qYearStr] = options.quarter.split(' ');
             const qNum = parseInt(qStr.replace('Q', ''));
             const qYear = parseInt(qYearStr);
-            const quarterStartMonth = (qNum - 1) * 3;
-            start = new Date(qYear, quarterStartMonth, 1);
-            end = new Date(qYear, quarterStartMonth + 3, 0, 23, 59, 59);
+            
+            // Indian Financial Year quarters (Q1: Apr-Jun, Q2: Jul-Sep, Q3: Oct-Dec, Q4: Jan-Mar)
+            const quarterMonths = [
+              [3, 4, 5], // Q1: Apr, May, Jun
+              [6, 7, 8], // Q2: Jul, Aug, Sep
+              [9, 10, 11], // Q3: Oct, Nov, Dec
+              [0, 1, 2], // Q4: Jan, Feb, Mar
+            ];
+            
+            const startMonth = quarterMonths[qNum - 1][0];
+            const endMonth = quarterMonths[qNum - 1][2];
+            
+            // For Q4 (Jan-Mar), we need to use the next calendar year
+            const startYear = qNum === 4 ? qYear + 1 : qYear;
+            const endYear = qNum === 4 ? qYear + 1 : qYear;
+            
+            start = new Date(startYear, startMonth, 1);
+            end = new Date(endYear, endMonth + 1, 0, 23, 59, 59);
           } else {
             const currentDate = new Date();
-            const currentQuarter = Math.floor(currentDate.getMonth() / 3) + 1;
-            const quarterStartMonth = (currentQuarter - 1) * 3;
-            start = new Date(currentDate.getFullYear(), quarterStartMonth, 1);
-            end = new Date(
-              currentDate.getFullYear(),
-              quarterStartMonth + 3,
-              0,
-              23,
-              59,
-              59,
-            );
+            const month = currentDate.getMonth();
+            const year = currentDate.getFullYear();
+            
+            // Determine current Indian FY quarter
+            let currentQuarter;
+            
+            if (month >= 3 && month <= 5) {
+              // Q1: Apr-Jun
+              currentQuarter = 1;
+              start = new Date(year, 3, 1);
+              end = new Date(year, 5, 30, 23, 59, 59);
+            } else if (month >= 6 && month <= 8) {
+              // Q2: Jul-Sep
+              currentQuarter = 2;
+              start = new Date(year, 6, 1);
+              end = new Date(year, 8, 30, 23, 59, 59);
+            } else if (month >= 9 && month <= 11) {
+              // Q3: Oct-Dec
+              currentQuarter = 3;
+              start = new Date(year, 9, 1);
+              end = new Date(year, 11, 31, 23, 59, 59);
+            } else {
+              // Q4: Jan-Mar (calendar year is one more than fiscal year)
+              currentQuarter = 4;
+              start = new Date(year, 0, 1);
+              end = new Date(year, 2, 31, 23, 59, 59);
+            }
           }
           break;
 
@@ -1024,9 +1117,30 @@ export class ReportService {
           break;
 
         default:
-          start = new Date(new Date().getFullYear(), 0, 1);
-          end = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
+          // Default to current Indian Financial Year
+          const currentDate = new Date();
+          const currentYear = currentDate.getFullYear();
+          const currentMonth = currentDate.getMonth();
+          
+          // If we're before April, we're in the previous FY (e.g., 2023-24)
+          // If we're April or later, we're in the current FY (e.g., 2024-25)
+          const fiscalYearStart = currentMonth < 3 ? currentYear - 1 : currentYear;
+          
+          start = new Date(fiscalYearStart, 3, 1); // April 1
+          end = new Date(fiscalYearStart + 1, 2, 31, 23, 59, 59); // March 31 of next year
       }
+      
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAMCAnnualBreakdown: Using Indian Financial Year',
+          data: { 
+            filter, 
+            start: start.toISOString(), 
+            end: end.toISOString(),
+            options 
+          },
+        })
+      );
 
       const groupByPeriod = (date: Date) => {
         switch (filter) {
@@ -1358,46 +1472,20 @@ export class ReportService {
     const [start, end] = this.calculateDateRange(filter, options);
 
     const groupByPeriod = (date: Date) => {
-      const d = new Date(date);
       switch (filter) {
         case 'monthly':
-          return d.toLocaleString('default', {
-            month: 'long',
+          return date.toLocaleString('default', {
             year: 'numeric',
+            month: 'long',
           });
         case 'quarterly':
-          // Indian Financial Year quarter format: Q1 FY23-24 (Apr-Jun 2023)
-          const month = d.getMonth();
-          const year = d.getFullYear();
-          let fiscalYear;
-          let quarterNum;
-          
-          if (month >= 3 && month <= 5) {
-            // Q1: Apr-Jun
-            quarterNum = 1;
-            fiscalYear = `${year.toString().slice(-2)}-${(year + 1).toString().slice(-2)}`;
-          } else if (month >= 6 && month <= 8) {
-            // Q2: Jul-Sep
-            quarterNum = 2;
-            fiscalYear = `${year.toString().slice(-2)}-${(year + 1).toString().slice(-2)}`;
-          } else if (month >= 9 && month <= 11) {
-            // Q3: Oct-Dec
-            quarterNum = 3;
-            fiscalYear = `${year.toString().slice(-2)}-${(year + 1).toString().slice(-2)}`;
-          } else {
-            // Q4: Jan-Mar (belongs to previous fiscal year)
-            quarterNum = 4;
-            fiscalYear = `${(year - 1).toString().slice(-2)}-${year.toString().slice(-2)}`;
-          }
-          
-          return `Q${quarterNum} FY${fiscalYear}`;
+          // Use our helper method to get the Indian Financial Year quarter format
+          const { quarterName } = this.getFinancialYearInfo(date);
+          return quarterName;
         case 'yearly':
-          // Indian Financial Year format: FY23-24 (2023-24)
-          const dateYear = d.getFullYear();
-          const dateMonth = d.getMonth();
-          // If month is January to March, it's part of previous fiscal year
-          const fiscalYearStart = dateMonth < 3 ? dateYear - 1 : dateYear;
-          return `FY${fiscalYearStart.toString().slice(-2)}-${(fiscalYearStart + 1).toString().slice(-2)}`;
+          // Use our helper method to get the Indian Financial Year format
+          const { fiscalYear } = this.getFinancialYearInfo(date);
+          return `FY${fiscalYear}`;
         default:
           return 'All Time';
       }
@@ -1662,8 +1750,7 @@ export class ReportService {
     const sortEntries = (a: string, b: string): number => {
       if (filter === 'monthly') {
         return new Date(a).getTime() - new Date(b).getTime();
-      }
-      if (filter === 'quarterly') {
+      } else if (filter === 'quarterly') {
         const [qA, fyA] = a.split(' ');
         const [qB, fyB] = b.split(' ');
         
@@ -1677,8 +1764,7 @@ export class ReportService {
         
         // If same fiscal year, compare quarter
         return parseInt(qA.replace('Q', '')) - parseInt(qB.replace('Q', ''));
-      }
-      if (filter === 'yearly') {
+      } else if (filter === 'yearly') {
         // New format: "FY23-24"
         const fyAYears = a.substring(2).split('-');
         const fyBYears = b.substring(2).split('-');
@@ -1700,4 +1786,70 @@ export class ReportService {
   //     quarter?: string;
   //   },
   // ) {}
+
+  /**
+   * Helper method to determine the Indian financial year and quarter information from a date
+   * @param date Date to analyze
+   * @returns Object with financial year and quarter information
+   */
+  private getFinancialYearInfo(date: Date): {
+    fiscalYear: string;
+    fiscalYearStart: number;
+    fiscalYearEnd: number;
+    quarter: number;
+    quarterName: string;
+  } {
+    const month = date.getMonth();
+    const year = date.getFullYear();
+    
+    // Determine fiscal year (Apr-Mar)
+    // If month is January to March, it's part of previous fiscal year
+    const fiscalYearStart = month < 3 ? year - 1 : year;
+    const fiscalYearEnd = fiscalYearStart + 1;
+    const fiscalYear = `${fiscalYearStart.toString().slice(-2)}-${fiscalYearEnd.toString().slice(-2)}`;
+    
+    // Determine quarter
+    let quarter;
+    let quarterName;
+    
+    if (month >= 3 && month <= 5) {
+      // Q1: Apr-Jun
+      quarter = 1;
+      quarterName = `Q1 FY${fiscalYear}`;
+    } else if (month >= 6 && month <= 8) {
+      // Q2: Jul-Sep
+      quarter = 2;
+      quarterName = `Q2 FY${fiscalYear}`;
+    } else if (month >= 9 && month <= 11) {
+      // Q3: Oct-Dec
+      quarter = 3;
+      quarterName = `Q3 FY${fiscalYear}`;
+    } else {
+      // Q4: Jan-Mar
+      quarter = 4;
+      quarterName = `Q4 FY${fiscalYear}`;
+    }
+    
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'getFinancialYearInfo: Calculated Indian Financial Year details',
+        data: { 
+          date: date.toISOString(),
+          fiscalYear,
+          fiscalYearStart,
+          fiscalYearEnd,
+          quarter,
+          quarterName
+        },
+      })
+    );
+    
+    return {
+      fiscalYear,
+      fiscalYearStart,
+      fiscalYearEnd,
+      quarter,
+      quarterName
+    };
+  }
 }

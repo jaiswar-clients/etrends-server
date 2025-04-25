@@ -1,0 +1,31 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: This is just a temporary rule for Report service to refactor the reports calculation based on the FInancial Year instead of calendar Year
+globs: 
+alwaysApply: false
+---
+
+[report.service.ts](mdc:src/modules/report/services/report.service.ts)
+[report.controller.ts](mdc:src/modules/report/controllers/report.controller.ts)
+[report.module.ts](mdc:src/modules/report/report.module.ts)
+
+
+The reports here is currently getting calculated based on the Calendar Year i.e from Jan to Dec. 
+Your Major Task is replace the Calendar Year Calculation of all the reports with the Fiscal(Financial) year of the India(starts on April 1 and ends on March 31). Currently its FY25-26
+
+For the Code implementation don't modify the Input and Output format on anything.
+Input: Like Queries, Payload and all
+Output: The data which is being sent in the response
+
+Models that are being used in the Reports:
+- [client.schema.ts](mdc:src/db/schema/client.schema.ts)
+- [product-order.schema.ts](mdc:src/db/schema/order/product-order.schema.ts)
+- [license.schema.ts](mdc:src/db/schema/order/license.schema.ts)
+- [customization.schema.ts](mdc:src/db/schema/order/customization.schema.ts)
+- [product.schema.ts](mdc:src/db/schema/product.schema.ts)
+- [additional-service.schema.ts](mdc:src/db/schema/order/additional-service.schema.ts)
+- [amc.schema.ts](mdc:src/db/schema/amc/amc.schema.ts)
