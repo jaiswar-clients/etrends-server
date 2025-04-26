@@ -18,6 +18,7 @@ import { Client, ClientSchema } from '@/db/schema/client.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
 import { MailService } from '@/common/mail/service/mail.service';
 import { CacheModule } from '@nestjs/cache-manager';
+import { Reminder, ReminderSchema } from '@/db/schema/reminders/reminder.schema';
 
 @Module({
   imports: [
@@ -29,6 +30,10 @@ import { CacheModule } from '@nestjs/cache-manager';
       { name: Client.name, schema: ClientSchema },
       { name: AdditionalService.name, schema: AdditionalServiceSchema },
       { name: AMC.name, schema: AMCSchema },
+      {
+        name: Reminder.name,
+        schema: ReminderSchema,
+      },
     ]),
     StorageModule,
     CacheModule.register({
@@ -46,5 +51,6 @@ export class OrderModule implements OnModuleInit {
 
   async onModuleInit() {
     // await this.orderService.removeClientsData();
+    // await this.orderService.updateAMCPayments();
   }
 }

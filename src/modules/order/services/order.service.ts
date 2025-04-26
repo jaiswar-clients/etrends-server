@@ -29,7 +29,6 @@ import {
   AMC,
   AMCDocument,
   PAYMENT_STATUS_ENUM,
-  IAMCPayment,
 } from '@/db/schema/amc/amc.schema';
 import { Types } from 'mongoose';
 import {
@@ -41,6 +40,11 @@ import { extractFileKey } from '@/utils/misc';
 import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import {
+  Reminder,
+  ReminderDocument,
+} from '@/db/schema/reminders/reminder.schema';
+import { isSameDay } from 'date-fns';
 
 @Injectable()
 export class OrderService {
@@ -59,6 +63,8 @@ export class OrderService {
     private additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>,
     @InjectModel(AMC.name)
     private amcModel: SoftDeleteModel<AMCDocument>,
+    @InjectModel(Reminder.name)
+    private reminderModel: SoftDeleteModel<ReminderDocument>,
     private loggerService: LoggerService,
     private storageService: StorageService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
@@ -1107,6 +1113,75 @@ export class OrderService {
     }
   }
 
+  async deleteAmcPaymentById(amcId: string, paymentId: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteAmcPaymentById: Deleting AMC payment',
+          data: { amcId, paymentId },
+        }),
+      );
+
+      const amc = await this.amcModel.findById(amcId);
+
+      if (!amc) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'deleteAmcPaymentById: AMC not found',
+            data: { amcId },
+          }),
+        );
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Check if payment exists
+      const paymentExists = amc.payments.some(
+        (payment) => payment._id.toString() === paymentId,
+      );
+
+      if (!paymentExists) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'deleteAmcPaymentById: Payment not found in AMC',
+            data: { amcId, paymentId },
+          }),
+        );
+        throw new HttpException('Payment not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Use the $pull operator to remove the payment with the matching _id
+      const updatedAmc = await this.amcModel.findByIdAndUpdate(
+        amcId,
+        {
+          $pull: {
+            payments: { _id: paymentId },
+          },
+        },
+        { new: true }, // Return the updated document
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteAmcPaymentById: Payment deleted successfully',
+          data: { amcId, paymentId },
+        }),
+      );
+
+      return updatedAmc;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'deleteAmcPaymentById: Error deleting AMC payment',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   async getLicenseById(id: string) {
     try {
       this.loggerService.log(
@@ -1505,7 +1580,7 @@ export class OrderService {
       const activeOrders = await this.orderModel
         .find({ status: ORDER_STATUS_ENUM.ACTIVE })
         .distinct('_id');
-      
+
       this.loggerService.log(
         JSON.stringify({
           message: 'loadAllAMC: Active orders found',
@@ -1515,9 +1590,9 @@ export class OrderService {
 
       // Fetch all AMCs without filtering but only for active orders
       const allAmcs = await this.amcModel
-        .find({ 
+        .find({
           payments: { $exists: true },
-          order_id: { $in: activeOrders } 
+          order_id: { $in: activeOrders },
         })
         .sort({ _id: -1 })
         .populate([
@@ -1537,7 +1612,8 @@ export class OrderService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'loadAllAMC: Total AMCs fetched before filtering (only active orders)',
+          message:
+            'loadAllAMC: Total AMCs fetched before filtering (only active orders)',
           count: allAmcs.length,
         }),
       );
@@ -1854,6 +1930,12 @@ export class OrderService {
           const order = amc.order_id as any;
           if (!order || !order.amc_start_date) {
             skippedCount++;
+            this.loggerService.log(
+              JSON.stringify({
+                message: 'updateAMCPayments: Skipping AMC without start date',
+                amcId: amc._id,
+              }),
+            );
             return;
           }
 
@@ -1883,65 +1965,140 @@ export class OrderService {
             }),
           );
 
-          // Check if we need to add a new payment
-          if (today > new Date(lastPayment.to_date)) {
-            // Calculate total cost including customizations and licenses
-            let totalCost = order.base_cost;
+          // Check for last agreement in the order
+          const agreements = order.agreements || [];
+          const lastAgreement =
+            agreements.length > 0 ? agreements[agreements.length - 1] : null;
 
-            // Add customization costs
-            const customizations = order.customizations || [];
-            for (const customization of customizations) {
-              totalCost += customization.cost || 0;
-            }
-
-            // Add license costs
-            const licenses = order.licenses || [];
-            for (const license of licenses) {
-              const licenseCost =
-                (license.rate?.amount || 0) * (license.total_license || 0);
-              totalCost += licenseCost;
-            }
-
-            // Calculate AMC amount based on total cost
-            const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
-
-            const newPayment = {
-              from_date: new Date(lastPayment.to_date),
-              to_date: this.getNextDate(
-                new Date(lastPayment.to_date),
-                amc_frequency_in_months,
-              ),
-              status: PAYMENT_STATUS_ENUM.PENDING,
-              amc_frequency: amc_frequency_in_months,
-              total_cost: totalCost,
-              amc_rate_applied: order.amc_rate.percentage,
-              amc_rate_amount: amcAmount,
-            };
-
-            // Update AMC with new payment and latest amounts
-            await this.amcModel.findByIdAndUpdate(amc._id, {
-              $push: { payments: newPayment },
-              amount: amcAmount,
-              total_cost: totalCost,
-            });
-
+          // Check if we need to add a new payment based on agreement
+          if (lastAgreement) {
             this.loggerService.log(
               JSON.stringify({
-                message: 'updateAMCPayments: Added new payment',
+                message: 'updateAMCPayments: Found last agreement',
                 amcId: amc._id,
-                newPayment,
+                agreementStartDate: lastAgreement.start,
+                agreementEndDate: lastAgreement.end,
               }),
             );
 
-            updatedPaymentsCount++;
+            // Get the last year from the agreement end date
+            const agreementEndYear = new Date(lastAgreement.end).getFullYear();
+            const lastPaymentYear = new Date(lastPayment.to_date).getFullYear();
+
+            // Check if the last payment year covers the agreement end year
+            if (lastPaymentYear < agreementEndYear) {
+              // We need to add payments up to the agreement end date
+              let fromDate = new Date(lastPayment.to_date);
+              const agreementEndDate = new Date(lastAgreement.end);
+
+              this.loggerService.log(
+                JSON.stringify({
+                  message:
+                    'updateAMCPayments: Adding payments to cover agreement period',
+                  amcId: amc._id,
+                  lastPaymentToDate: fromDate,
+                  agreementEndDate: agreementEndDate,
+                }),
+              );
+
+              // Calculate total cost including customizations and licenses
+              let totalCost = order.base_cost;
+
+              // Add customization costs
+              const customizations = order.customizations || [];
+              for (const customization of customizations) {
+                totalCost += customization.cost || 0;
+              }
+
+              // Add license costs
+              const licenses = order.licenses || [];
+              for (const license of licenses) {
+                const licenseCost =
+                  (license.rate?.amount || 0) * (license.total_license || 0);
+                totalCost += licenseCost;
+              }
+
+              // Calculate AMC amount based on total cost
+              const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
+
+              // Create new payment to cover the agreement period
+              while (fromDate < agreementEndDate) {
+                const toDate = this.getNextDate(
+                  new Date(fromDate),
+                  amc_frequency_in_months,
+                );
+
+                const newPayment = {
+                  from_date: fromDate,
+                  to_date: toDate,
+                  status: PAYMENT_STATUS_ENUM.PENDING,
+                  amc_frequency: amc_frequency_in_months,
+                  total_cost: totalCost,
+                  amc_rate_applied: order.amc_rate.percentage,
+                  amc_rate_amount: amcAmount,
+                };
+
+                // Update AMC with new payment and latest amounts
+                await this.amcModel.findByIdAndUpdate(amc._id, {
+                  $push: { payments: newPayment },
+                  amount: amcAmount,
+                  total_cost: totalCost,
+                });
+
+                this.loggerService.log(
+                  JSON.stringify({
+                    message:
+                      'updateAMCPayments: Added new payment based on agreement',
+                    amcId: amc._id,
+                    newPayment,
+                  }),
+                );
+
+                fromDate = toDate;
+                newPaymentsAdded++;
+                updatedPaymentsCount++;
+              }
+            } else {
+              // Check if we need to add a new payment based on current date
+              if (today > new Date(lastPayment.to_date)) {
+                this.createNewPayment(
+                  order,
+                  amc,
+                  lastPayment,
+                  amc_frequency_in_months,
+                );
+                updatedPaymentsCount++;
+                newPaymentsAdded++;
+              } else {
+                skippedCount++;
+                this.loggerService.log(
+                  JSON.stringify({
+                    message: 'updateAMCPayments: Skipped AMC - payment not due',
+                    amcId: amc._id,
+                  }),
+                );
+              }
+            }
           } else {
-            skippedCount++;
-            this.loggerService.log(
-              JSON.stringify({
-                message: 'updateAMCPayments: Skipped AMC - payment not due',
-                amcId: amc._id,
-              }),
-            );
+            // No agreement exists, use original logic
+            if (today > new Date(lastPayment.to_date)) {
+              this.createNewPayment(
+                order,
+                amc,
+                lastPayment,
+                amc_frequency_in_months,
+              );
+              updatedPaymentsCount++;
+              newPaymentsAdded++;
+            } else {
+              skippedCount++;
+              this.loggerService.log(
+                JSON.stringify({
+                  message: 'updateAMCPayments: Skipped AMC - payment not due',
+                  amcId: amc._id,
+                }),
+              );
+            }
           }
         } catch (error: any) {
           errorCount++;
@@ -1950,6 +2107,7 @@ export class OrderService {
               message: 'updateAMCPayments: Error processing individual AMC',
               amcId: amc._id,
               error: error.message,
+              stack: error.stack,
             }),
           );
         }
@@ -1992,6 +2150,62 @@ export class OrderService {
     }
   }
 
+  // Helper method to create a new payment
+  private async createNewPayment(
+    order: any,
+    amc: any,
+    lastPayment: any,
+    amc_frequency_in_months: number,
+  ) {
+    // Calculate total cost including customizations and licenses
+    let totalCost = order.base_cost;
+
+    // Add customization costs
+    const customizations = order.customizations || [];
+    for (const customization of customizations) {
+      totalCost += customization.cost || 0;
+    }
+
+    // Add license costs
+    const licenses = order.licenses || [];
+    for (const license of licenses) {
+      const licenseCost =
+        (license.rate?.amount || 0) * (license.total_license || 0);
+      totalCost += licenseCost;
+    }
+
+    // Calculate AMC amount based on total cost
+    const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
+
+    const newPayment = {
+      from_date: new Date(lastPayment.to_date),
+      to_date: this.getNextDate(
+        new Date(lastPayment.to_date),
+        amc_frequency_in_months,
+      ),
+      status: PAYMENT_STATUS_ENUM.PENDING,
+      amc_frequency: amc_frequency_in_months,
+      total_cost: totalCost,
+      amc_rate_applied: order.amc_rate.percentage,
+      amc_rate_amount: amcAmount,
+    };
+
+    // Update AMC with new payment and latest amounts
+    await this.amcModel.findByIdAndUpdate(amc._id, {
+      $push: { payments: newPayment },
+      amount: amcAmount,
+      total_cost: totalCost,
+    });
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'updateAMCPayments: Added new payment',
+        amcId: amc._id,
+        newPayment,
+      }),
+    );
+  }
+
   async getAllPendingPayments(page: number = 1, limit: number = 20) {
     try {
       this.loggerService.log(
@@ -2004,7 +2218,7 @@ export class OrderService {
       const activeOrders = await this.orderModel
         .find({ status: ORDER_STATUS_ENUM.ACTIVE })
         .distinct('_id');
-      
+
       this.loggerService.log(
         JSON.stringify({
           message: 'getAllPendingPayments: Active orders found',
@@ -2064,9 +2278,9 @@ export class OrderService {
           .skip((page - 1) * pendingLimitForEachSchema)
           .limit(pendingLimitForEachSchema),
         this.licenseModel
-          .find({ 
+          .find({
             order_id: { $in: activeOrders },
-            payment_status: PAYMENT_STATUS_ENUM.PENDING 
+            payment_status: PAYMENT_STATUS_ENUM.PENDING,
           })
           .populate({
             path: 'order_id',
@@ -2401,9 +2615,17 @@ export class OrderService {
       amc_rate_amount: number;
       amc_frequency: number;
       total_cost: number;
+      is_inactive?: boolean;
     }[]
   > {
     try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Starting function execution',
+          data: { orderId },
+        }),
+      );
+
       // Fetch order with populated relationships
       const order = await this.orderModel.findById(orderId).populate([
         {
@@ -2422,62 +2644,333 @@ export class OrderService {
       ]);
 
       if (!order) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: Order not found',
+            data: { orderId },
+          }),
+        );
         throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
       }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Order found successfully',
+          data: { orderId, orderNumber: order._id },
+        }),
+      );
 
       // Verify AMC exists
       const amc = await this.amcModel.findById(order.amc_id);
       if (!amc) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: AMC not found',
+            data: { orderId, amcId: order.amc_id },
+          }),
+        );
         throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
       }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: AMC found successfully',
+          data: { orderId, amcId: amc._id },
+        }),
+      );
 
       // Get years for comparison
       const currentYear = new Date().getFullYear();
       const amcStartDateYear = new Date(order.amc_start_date).getFullYear();
 
-      const payments = [];
+      // Get AMC frequency from client settings or default to yearly
+      const amc_frequency_in_months =
+        (order.client_id as any)?.amc_frequency_in_months || 12;
 
       this.loggerService.log(
         JSON.stringify({
           message: 'getAmcReviewByOrderId: Starting Review Process',
-          orderId,
-          amcStartDateYear,
-          currentYear,
+          data: {
+            orderId,
+            amcStartDateYear,
+            currentYear,
+            amcFrequencyInMonths: amc_frequency_in_months,
+          },
         }),
       );
 
-      // Get AMC frequency from client settings or default to yearly
-      const amc_frequency_in_months =
-        (order.client_id as any)?.amc_frequency_in_months || 12;
+      // Check for last agreement in the order to determine end year
+      const agreements = order.agreements || [];
+      const lastAgreement =
+        agreements.length > 0 ? agreements[agreements.length - 1] : null;
+
+      // Determine end year based on either agreement or current year
+      let endYear = currentYear + 1;
+      if (lastAgreement) {
+        const agreementEndYear = new Date(lastAgreement.end).getFullYear();
+        endYear = Math.max(agreementEndYear, endYear);
+
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAmcReviewByOrderId: Agreement found, adjusting end year',
+            data: {
+              orderId,
+              agreementEndDate: lastAgreement.end,
+              agreementEndYear,
+              calculatedEndYear: endYear,
+              totalAgreements: agreements.length,
+            },
+          }),
+        );
+      } else {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAmcReviewByOrderId: No agreements found, using default end year',
+            data: {
+              orderId,
+              endYear,
+            },
+          }),
+        );
+      }
+
+      // Process status logs to identify inactive periods
+      const inactivePeriods = [];
+      if (order.status_logs && order.status_logs.length > 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAmcReviewByOrderId: Processing status logs to identify inactive periods',
+            data: {
+              orderId,
+              statusLogsCount: order.status_logs.length,
+            },
+          }),
+        );
+
+        let inactiveStartDate = null;
+
+        // Extract inactive periods from status logs
+        for (const log of order.status_logs) {
+          // If status changed to inactive, mark the start of inactive period
+          if (log.to === ORDER_STATUS_ENUM.INACTIVE) {
+            inactiveStartDate = new Date(log.date);
+
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'getAmcReviewByOrderId: Detected transition to inactive status',
+                data: {
+                  orderId,
+                  inactiveStartDate,
+                  statusChange: `${log.from} → ${log.to}`,
+                  logDate: log.date,
+                },
+              }),
+            );
+          }
+
+          // If status changed from inactive to active, calculate the inactive period
+          if (log.from === ORDER_STATUS_ENUM.INACTIVE && inactiveStartDate) {
+            const inactivePeriod = {
+              start: new Date(inactiveStartDate),
+              end: new Date(log.date),
+            };
+
+            inactivePeriods.push(inactivePeriod);
+            inactiveStartDate = null;
+
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'getAmcReviewByOrderId: Detected reactivation, added inactive period',
+                data: {
+                  orderId,
+                  inactivePeriod,
+                  statusChange: `${log.from} → ${log.to}`,
+                  logDate: log.date,
+                },
+              }),
+            );
+          }
+        }
+
+        // If there's an open inactive period (no reactivation), consider it until current date
+        if (inactiveStartDate) {
+          const currentDate = new Date();
+          inactivePeriods.push({
+            start: new Date(inactiveStartDate),
+            end: currentDate,
+          });
+
+          this.loggerService.log(
+            JSON.stringify({
+              message:
+                'getAmcReviewByOrderId: Added open-ended inactive period until current date',
+              data: {
+                orderId,
+                inactivePeriod: {
+                  start: inactiveStartDate,
+                  end: currentDate,
+                },
+              },
+            }),
+          );
+        }
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: Identified inactive periods',
+            data: {
+              orderId,
+              inactivePeriods,
+              inactivePeriodsCount: inactivePeriods.length,
+              statusLogsCount: order.status_logs.length,
+            },
+          }),
+        );
+      } else {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: No status logs found',
+            data: { orderId },
+          }),
+        );
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'getAmcReviewByOrderId: Starting payment schedule generation',
+          data: {
+            orderId,
+            amcStartDate: order.amc_start_date,
+            endYear,
+          },
+        }),
+      );
+
+      const payments = [];
 
       // Initialize date tracking
       let lastToDate = new Date(order.amc_start_date);
       let index = 0;
 
-      // Generate payment schedule from start date to current year
-      while (lastToDate.getFullYear() < currentYear + 1) {
+      // Generate payment schedule from start date to end year
+      while (lastToDate.getFullYear() < endYear) {
         const from_date = new Date(lastToDate);
         const to_date = this.getNextDate(from_date, amc_frequency_in_months);
 
+        // Check if this payment period overlaps with any inactive period
+        let is_inactive = false;
+        for (const period of inactivePeriods) {
+          // Check for significant overlap between payment period and inactive period
+          // A payment is only considered inactive if it falls completely within an inactive period
+          // or if most of it falls within the inactive period (>50% overlap)
+          const isMostlyWithinInactivePeriod =
+            // Either payment period is fully contained within inactive period
+            (from_date >= period.start && to_date <= period.end) ||
+            // Or payment period starts before inactive period but mostly falls within it
+            (from_date < period.start &&
+              to_date > period.start &&
+              // More than half of payment falls in inactive period
+              to_date.getTime() - period.start.getTime() >
+                period.start.getTime() - from_date.getTime()) ||
+            // Or payment period ends after inactive period but mostly falls within it
+            (from_date < period.end &&
+              to_date > period.end &&
+              // More than half of payment falls in inactive period
+              period.end.getTime() - from_date.getTime() >
+                to_date.getTime() - period.end.getTime());
+
+          if (isMostlyWithinInactivePeriod) {
+            is_inactive = true;
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'getAmcReviewByOrderId: Payment period overlaps significantly with inactive period',
+                data: {
+                  orderId,
+                  paymentPeriod: { from: from_date, to: to_date },
+                  inactivePeriod: period,
+                  paymentIndex: index,
+                },
+              }),
+            );
+            break;
+          }
+        }
+
+        // Add the payment with inactive flag if applicable
         payments.push({
           from_date: from_date.toDateString(),
           to_date: to_date.toDateString(),
           status: PAYMENT_STATUS_ENUM.PAID,
           amc_frequency: amc_frequency_in_months,
+          is_inactive: is_inactive,
         });
 
         lastToDate = to_date;
         index++;
       }
 
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Generated payment schedule',
+          data: {
+            orderId,
+            paymentsCount: payments.length,
+            inactivePaymentsCount: payments.filter((p) => p.is_inactive).length,
+          },
+        }),
+      );
+
       // Mark most recent payment as pending
       payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'getAmcReviewByOrderId: Marked most recent payment as pending',
+          data: {
+            orderId,
+            pendingPaymentPeriod: {
+              from: payments[payments.length - 1].from_date,
+              to: payments[payments.length - 1].to_date,
+            },
+          },
+        }),
+      );
 
       // Initialize AMC rate tracking
       let currentAmcRate = order.amc_rate; // Start with current rate
 
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Starting AMC rate calculation',
+          data: {
+            orderId,
+            currentAmcRate,
+            hasRateHistory:
+              order.amc_rate_history && order.amc_rate_history.length > 0,
+          },
+        }),
+      );
+
       // Check if historical rates exist
       if (order.amc_rate_history && order.amc_rate_history.length > 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: Processing historical AMC rates',
+            data: {
+              orderId,
+              rateHistoryCount: order.amc_rate_history.length,
+            },
+          }),
+        );
+
         let currentHistoryInCheckIndex = order.amc_rate_history.length - 1;
         let currentHistoryInCheck =
           order.amc_rate_history[currentHistoryInCheckIndex];
@@ -2500,6 +2993,19 @@ export class OrderService {
               amount: currentHistoryInCheck.amount,
             };
 
+            this.loggerService.log(
+              JSON.stringify({
+                message: 'getAmcReviewByOrderId: Applied historical AMC rate',
+                data: {
+                  orderId,
+                  paymentYear: fromYear,
+                  rateChangeYear: historyDateChangeYear,
+                  updatedRate: currentAmcRate,
+                  paymentIndex: i,
+                },
+              }),
+            );
+
             // Move to next historical rate if available
             if (currentHistoryInCheckIndex > 0) {
               currentHistoryInCheckIndex = currentHistoryInCheckIndex - 1;
@@ -2515,12 +3021,35 @@ export class OrderService {
         }
       } else {
         // If no historical rates, apply current rate to all payments
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAmcReviewByOrderId: No historical rates found, applying current rate to all payments',
+            data: {
+              orderId,
+              currentRate: currentAmcRate,
+            },
+          }),
+        );
+
         for (const payment of payments) {
           payment.amc_rate_applied = currentAmcRate.percentage;
           payment.amc_rate_amount = currentAmcRate.amount;
           payment.total_cost = order.base_cost;
         }
       }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'getAmcReviewByOrderId: Processing customizations and licenses for additional costs',
+          data: {
+            orderId,
+            customizationsCount: order.customizations?.length || 0,
+            licensesCount: order.licenses?.length || 0,
+          },
+        }),
+      );
 
       // Now Calculating Additional Purchase on the Order
       const customizations =
@@ -2534,6 +3063,19 @@ export class OrderService {
           const paymentYear = new Date(payment.from_date).getFullYear();
           return paymentYear === customizationYear;
         });
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: Processing customization cost',
+            data: {
+              orderId,
+              customizationId: customization._id,
+              customizationYear,
+              customizationCost: customization.cost,
+              affectedPaymentsCount: payments.length - (paymentIndex + 1),
+            },
+          }),
+        );
 
         for (let i = paymentIndex + 1; i < payments.length; i++) {
           const payment = payments[i];
@@ -2554,10 +3096,25 @@ export class OrderService {
           return paymentYear === licenseYear;
         });
 
+        const licenseCost = license.rate?.amount * license.total_license;
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAmcReviewByOrderId: Processing license cost',
+            data: {
+              orderId,
+              licenseId: license._id,
+              licenseYear,
+              licenseCost,
+              totalLicenses: license.total_license,
+              licenseRate: license.rate?.amount,
+              affectedPaymentsCount: payments.length - (paymentIndex + 1),
+            },
+          }),
+        );
+
         for (let i = paymentIndex + 1; i < payments.length; i++) {
           const payment = payments[i];
-
-          const licenseCost = license.rate?.amount * license.total_license;
 
           const newTotalCost = payment.total_cost + licenseCost;
           const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
@@ -2567,14 +3124,80 @@ export class OrderService {
         }
       }
 
-      return payments;
+      // Filter out payments during inactive periods if needed
+      // Note: We keep them in the response but marked with is_inactive flag
+      // so the client can display them appropriately
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Completed payment calculation',
+          data: {
+            orderId,
+            totalPayments: payments.length,
+            inactivePayments: payments.filter((p) => p.is_inactive).length,
+            totalPaymentAmount: payments.reduce(
+              (sum, p) => sum + p.amc_rate_amount,
+              0,
+            ),
+          },
+        }),
+      );
+
+      // Filter out payments that are fully within inactive periods
+      // but keep the payments that are at the edges (right before inactive period starts or right after it ends)
+      const activePayments = payments.filter((payment) => {
+        // Keep non-inactive payments
+        if (!payment.is_inactive) return true;
+
+        // For inactive payments, check if they are at the edges of inactive periods
+        for (const period of inactivePeriods) {
+          // Is this payment right before an inactive period? (prepaid period)
+          const isRightBeforeInactivePeriod = isSameDay(
+            payment.to_date,
+            period.start,
+          );
+
+          // Is this payment right after an inactive period? (reactivation period)
+          const isRightAfterInactivePeriod = isSameDay(
+            payment.from_date,
+            period.end,
+          );
+
+          // Keep the payment if it's at the edge of an inactive period
+          if (isRightBeforeInactivePeriod || isRightAfterInactivePeriod) {
+            return true;
+          }
+        }
+
+        // Otherwise filter out the inactive payment
+        return false;
+      });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'getAmcReviewByOrderId: Filtered out fully inactive payments',
+          data: {
+            orderId,
+            originalPaymentsCount: payments.length,
+            activePaymentsCount: activePayments.length,
+            removedInactivePaymentsCount:
+              payments.length - activePayments.length,
+          },
+        }),
+      );
+
+      return activePayments;
     } catch (error: any) {
-      console.log(error);
       this.loggerService.error(
         JSON.stringify({
           message:
             'getAmcReviewByOrderId: Error getting amc review by order id',
-          error: error.message,
+          data: {
+            orderId,
+            error: error.message,
+            stack: error.stack,
+          },
         }),
       );
       throw new HttpException(
@@ -2779,6 +3402,165 @@ export class OrderService {
       throw new HttpException(
         error.message || 'Server error',
         HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async deleteOrderById(orderId: string) {
+    if (!orderId) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'deleteOrderById: Order id is required',
+        }),
+      );
+      throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteOrderById: Starting deletion process',
+          orderId,
+        }),
+      );
+
+      // Find the order
+      const order = await this.orderModel.findById(orderId);
+      if (!order) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'deleteOrderById: Order not found',
+            orderId,
+          }),
+        );
+        throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Get client ID for later updating the client
+      const clientId = order.client_id;
+
+      // Delete related licenses
+      if (order.licenses?.length) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteOrderById: Deleting licenses',
+            orderId,
+            licenseIds: order.licenses,
+          }),
+        );
+        await this.licenseModel.deleteMany({
+          _id: { $in: order.licenses },
+        });
+      }
+
+      // Delete related customizations
+      if (order.customizations?.length) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteOrderById: Deleting customizations',
+            orderId,
+            customizationIds: order.customizations,
+          }),
+        );
+        await this.customizationModel.deleteMany({
+          _id: { $in: order.customizations },
+        });
+      }
+
+      // Delete related additional services
+      if (order.additional_services?.length) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteOrderById: Deleting additional services',
+            orderId,
+            additionalServiceIds: order.additional_services,
+          }),
+        );
+        await this.additionalServiceModel.deleteMany({
+          _id: { $in: order.additional_services },
+        });
+      }
+
+      // Delete related AMC
+      if (order.amc_id) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteOrderById: Deleting AMC',
+            orderId,
+            amcId: order.amc_id,
+          }),
+        );
+        await this.amcModel.findByIdAndDelete(order.amc_id);
+      }
+
+      // Delete any reminders related to this order
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteOrderById: Deleting related reminders',
+          orderId,
+        }),
+      );
+
+      // Since Reminder model isn't directly injected in this service
+      // Get the Reminder model using connection from one of our other models
+
+      await this.reminderModel.deleteMany({
+        $or: [
+          { order_id: orderId },
+          { license_id: { $in: order.licenses || [] } },
+          { customization_id: { $in: order.customizations || [] } },
+          { amc_id: order.amc_id },
+        ],
+      });
+
+      // Update client to remove this order and AMC
+      if (clientId) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteOrderById: Updating client',
+            orderId,
+            clientId,
+          }),
+        );
+        await this.clientModel.findByIdAndUpdate(clientId, {
+          $pull: {
+            orders: orderId,
+            amcs: order.amc_id,
+          },
+        });
+      }
+
+      // Delete the order itself
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteOrderById: Deleting order',
+          orderId,
+        }),
+      );
+      await this.orderModel.findByIdAndDelete(orderId);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteOrderById: Order deleted successfully',
+          orderId,
+        }),
+      );
+
+      return {
+        message: 'Order and related documents deleted successfully',
+        orderId,
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'deleteOrderById: Error during deletion process',
+          orderId,
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }

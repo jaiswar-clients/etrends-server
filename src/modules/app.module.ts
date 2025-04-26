@@ -17,6 +17,7 @@ import { TasksService } from '@/modules/cron/cron.service';
 import { MailModule } from '@/common/mail/mail.module';
 import { ReminderModule } from './reminder/reminder.module';
 import { ReportModule } from './report/report.module';
+import { BackupModule } from './backup/backup.module';
 
 type NestModuleImport =
   | Type<any>
@@ -52,6 +53,7 @@ const appModules: NestModuleImport[] = [LoggerModule, HttpModule, ConfigModule];
     MailModule,
     ReminderModule,
     ReportModule,
+    BackupModule,
   ],
   controllers: [AppController],
   providers: [AppService, TasksService],

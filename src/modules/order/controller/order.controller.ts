@@ -9,6 +9,7 @@ import {
   UseGuards,
   HttpException,
   HttpStatus,
+  Delete,
 } from '@nestjs/common';
 import { OrderService } from '../services/order.service';
 import { CreateOrderDto } from '../dto/create-order.dto';
@@ -238,6 +239,14 @@ export class OrderController {
     return this.orderService.updateAmcPaymentById(id, paymentId, body);
   }
 
+  @Delete('/amc/:id/payment/:paymentId')
+  async deleteAMCPaymentById(
+    @Param('id') amcId: string,
+    @Param('paymentId') paymentId: string,
+  ) {
+    return this.orderService.deleteAmcPaymentById(amcId, paymentId);
+  }
+
   @Patch('/pending-payments/:id')
   async updatePendingPaymentStatus(
     @Param('id') id: string,
@@ -252,5 +261,10 @@ export class OrderController {
         status: body.status,
       },
     );
+  }
+
+  @Delete('/:id')
+  async deleteOrderById(@Param('id') id: string) {
+    return this.orderService.deleteOrderById(id);
   }
 }
