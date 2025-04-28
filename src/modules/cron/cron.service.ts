@@ -14,7 +14,7 @@ export class TasksService {
     private backupService: BackupService,
   ) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_DAY_AT_2PM)
   async updateAMCPayments() {
     try {
       this.loggerService.log(
@@ -111,7 +111,7 @@ export class TasksService {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_DAY_AT_1PM)
   async createDatabaseBackup() {
     try {
       this.loggerService.log(
