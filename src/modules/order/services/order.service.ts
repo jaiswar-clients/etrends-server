@@ -46,6 +46,15 @@ import {
 } from '@/db/schema/reminders/reminder.schema';
 import { isSameDay } from 'date-fns';
 
+// Define filter options structure
+interface OrderFilterOptions {
+  parentCompanyId?: string;
+  clientId?: string;
+  clientName?: string;
+  productId?: string;
+  status?: ORDER_STATUS_ENUM;
+}
+
 @Injectable()
 export class OrderService {
   constructor(
@@ -821,152 +830,414 @@ export class OrderService {
     }
   }
 
-  async loadAllOrdersWithAttributes(page: number, limit: number) {
+  async loadAllOrdersWithAttributes(
+    page: number,
+    limit: number,
+    filters: OrderFilterOptions = {},
+  ): Promise<{
+    purchases: any[]; // Use any[] for simplicity here
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      pages: number;
+      hasNextPage: boolean;
+      hasPreviousPage: boolean;
+    };
+    // Removed clientCompanies and parentCompanies from return type
+  }> {
     try {
       this.loggerService.log(
         JSON.stringify({
-          message: 'getAllOrdersWithFilters: Fetching all orders',
+          message:
+            'loadAllOrdersWithAttributes: Fetching orders with pagination and filters',
+          data: { page, limit, filters },
         }),
       );
 
+      const skip = (page - 1) * limit;
+      const filterQuery: any = {};
+      let clientIdsForFilter: Types.ObjectId[] | null = null; // Explicitly type
+
+      // --- Build Filter Query ---
+      // 1. Filter by Client Name (find client IDs first)
+      if (filters.clientName && filters.clientName.trim() !== '') {
+        const clientsByName = await this.clientModel
+          .find({
+            name: { $regex: filters.clientName, $options: 'i' },
+          })
+          .select('_id')
+          .lean<{ _id: Types.ObjectId }[]>(); // Add lean type hint
+        clientIdsForFilter = clientsByName.map((c) => c._id); // Now correctly typed
+        // If no clients match the name, no orders will be found
+        if (clientIdsForFilter.length === 0) {
+          return {
+            purchases: [],
+            pagination: {
+              total: 0,
+              page,
+              limit,
+              pages: 0,
+              hasNextPage: false,
+              hasPreviousPage: false,
+            },
+          }; // Removed company arrays
+        }
+        filterQuery.client_id = { $in: clientIdsForFilter };
+      }
+
+      // 2. Filter by Parent Company (find client IDs first)
+      if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
+        try {
+          const parentCompanyObjectId = new Types.ObjectId(
+            filters.parentCompanyId,
+          );
+          const childClients = await this.clientModel
+            .find({
+              parent_company_id: parentCompanyObjectId,
+            })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>(); // Add lean type hint
+
+          const childClientIds: Types.ObjectId[] = childClients.map(
+            (c) => c._id,
+          ); // Explicitly type
+
+          // Combine with existing client ID filter if necessary
+          if (
+            filterQuery.client_id &&
+            filterQuery.client_id.$in &&
+            Array.isArray(filterQuery.client_id.$in)
+          ) {
+            // Ensure the items in $in are ObjectIds before filtering
+            const existingClientIds = filterQuery.client_id.$in
+              .map((id) =>
+                id instanceof Types.ObjectId
+                  ? id
+                  : Types.ObjectId.isValid(id)
+                    ? new Types.ObjectId(id)
+                    : null,
+              )
+              .filter((id) => id !== null);
+
+            // Intersect IDs from clientName filter and parentCompany filter
+            clientIdsForFilter = existingClientIds.filter(
+              (id: Types.ObjectId) =>
+                childClientIds.some((childId) => childId.equals(id)), // Now compares ObjectId correctly
+            );
+          } else {
+            clientIdsForFilter = childClientIds;
+          }
+
+          // If no clients match the combined filter, assign an impossible condition to ensure no results
+          if (clientIdsForFilter.length === 0) {
+            filterQuery.client_id = { $in: [] }; // No clients match combination
+          } else {
+            filterQuery.client_id = { $in: clientIdsForFilter };
+          }
+        } catch (error: any) {
+          this.loggerService.error(
+            JSON.stringify({
+              message:
+                'loadAllOrdersWithAttributes: Invalid parent company ID, skipping filter',
+              error: error.message,
+              parentCompanyId: filters.parentCompanyId,
+            }),
+          );
+          // Don't return early, just skip this filter
+          // return { purchases: [], pagination: { total: 0, page, limit, pages: 0, hasNextPage: false, hasPreviousPage: false } };
+        }
+      }
+
+      // 3. Filter by specific Client ID
+      if (filters.clientId && filters.clientId.trim() !== '') {
+        try {
+          const specificClientId = new Types.ObjectId(filters.clientId);
+          // Combine with or overwrite existing client filters
+          if (
+            filterQuery.client_id &&
+            filterQuery.client_id.$in &&
+            Array.isArray(filterQuery.client_id.$in)
+          ) {
+            // Check if the specific client is already within the filtered list
+            const currentFilteredIds: Types.ObjectId[] =
+              filterQuery.client_id.$in
+                .map((id) =>
+                  id instanceof Types.ObjectId
+                    ? id
+                    : Types.ObjectId.isValid(id)
+                      ? new Types.ObjectId(id)
+                      : null,
+                )
+                .filter((id) => id !== null);
+
+            if (currentFilteredIds.some((id) => id.equals(specificClientId))) {
+              // If included, narrow down to only this client
+              filterQuery.client_id = specificClientId;
+            } else {
+              // The specific client is not part of the previous filter results, impossible condition
+              filterQuery.client_id = { $in: [] };
+            }
+          } else {
+            // No other client filters, just use this one
+            filterQuery.client_id = specificClientId;
+          }
+        } catch (error: any) {
+          this.loggerService.error(
+            JSON.stringify({
+              message:
+                'loadAllOrdersWithAttributes: Invalid client ID, skipping filter',
+              error: error.message,
+              clientId: filters.clientId,
+            }),
+          );
+          // Don't return early, just skip this filter
+          // return { purchases: [], pagination: { total: 0, page, limit, pages: 0, hasNextPage: false, hasPreviousPage: false } };
+        }
+      }
+
+      // 4. Filter by Product ID
+      if (filters.productId && filters.productId.trim() !== '') {
+        try {
+          filterQuery.products = new Types.ObjectId(filters.productId); // Assumes products is array of ObjectIds
+        } catch (error: any) {
+          this.loggerService.error(
+            JSON.stringify({
+              message:
+                'loadAllOrdersWithAttributes: Invalid product ID, skipping filter',
+              error: error.message,
+              productId: filters.productId,
+            }),
+          );
+          // Don't return early, just skip this filter
+          // return { purchases: [], pagination: { total: 0, page, limit, pages: 0, hasNextPage: false, hasPreviousPage: false } };
+        }
+      }
+
+      // 5. Filter by Status
+      if (filters.status) {
+        filterQuery.status = filters.status;
+      }
+      // --- End Build Filter Query ---
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'Constructed Filter Query',
+          data: filterQuery,
+        }),
+      );
+
+      // Fetch Total Count with Filters
+      const totalOrders = await this.orderModel.countDocuments(filterQuery);
+
+      // If no orders match, return early
+      if (totalOrders === 0) {
+        return {
+          purchases: [],
+          pagination: {
+            total: 0,
+            page,
+            limit,
+            pages: 0,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        }; // Removed company arrays
+      }
+
+      this.loggerService.log(
+        JSON.stringify({ message: 'Total Orders', data: totalOrders }),
+      );
+      // Fetch Paginated Orders with Filters and Population
+
       const orders = await this.orderModel
-        .find()
-        .sort({ _id: -1 })
-        .populate<{
-          client_id: ClientDocument;
-        }>([
+        .find(filterQuery)
+        .skip(skip)
+        .limit(limit)
+        .sort({ createdAt: -1 })
+        .populate([
           { path: 'licenses', model: License.name },
           { path: 'customizations', model: Customization.name },
           { path: 'additional_services', model: AdditionalService.name },
+          { path: 'client_id', select: 'name parent_company_id' }, // Only select needed fields, no population
           { path: 'products', model: Product.name },
-          { path: 'client_id', model: Client.name },
         ]);
 
-      const productsList = await this.productModel.find();
-
-      let customizations = [],
-        licenses = [],
-        additional_services = [];
-
-      const ordersList = [];
-      for (const order of orders) {
-        const orderObj = order.toObject() as any;
-
-        if (orderObj?.client_id?.parent_company_id) {
-          const parentCompany = await this.clientModel
-            .findById(orderObj?.client_id?.parent_company_id)
-            .select('name');
-          orderObj['client_id']['parent_company'] = parentCompany;
-        }
-
-        // Process all licenses
-        if (orderObj.licenses?.length) {
-          // If it was purchased with order, mark the first one as primary
-          if (orderObj.is_purchased_with_order?.license) {
-            orderObj.license = orderObj.licenses[0];
-          }
-          orderObj.licenses.forEach(
-            (license) => (license.status = order.status),
-          );
-          licenses.push(...orderObj.licenses);
-          delete orderObj.licenses;
-        }
-
-        // Process all customizations
-        if (orderObj.customizations?.length) {
-          // If it was purchased with order, mark the first one as primary
-          if (orderObj.is_purchased_with_order?.customization) {
-            orderObj.customization = orderObj.customizations[0];
-          }
-          orderObj.customizations.forEach(
-            (customization) => (customization.status = order.status),
-          );
-          customizations.push(...orderObj.customizations);
-          delete orderObj.customizations;
-        }
-
-        if (orderObj.purchase_order_document) {
-          orderObj.purchase_order_document = this.storageService.get(
-            orderObj.purchase_order_document,
-          );
-        }
-        if (orderObj.agreements.length) {
-          for (let i = 0; i < orderObj.agreements.length; i++) {
-            orderObj.agreements[i].document = this.storageService.get(
-              orderObj.agreements[i].document,
-            );
-          }
-        }
-
-        if (orderObj.additional_services?.length) {
-          orderObj.additional_services.forEach(
-            (service) => (service.status = order.status),
-          );
-          additional_services.push(...orderObj.additional_services);
-          delete orderObj.additional_services;
-        }
-
-        ordersList.push(orderObj);
-      }
-
-      const purchases = [
-        ...ordersList.map((order: OrderDocument) => ({
-          client: order.client_id || { name: 'Unknown' },
-          purchase_type: PURCHASE_TYPE.ORDER,
-          products: order.products,
-          status: order.status,
-          amc_start_date: order?.amc_start_date || null,
-          id: order._id,
-        })),
-        ...licenses.map((license) => ({
-          client: orders.find(
-            (o) => o._id.toString() === license.order_id?.toString(),
-          )?.client_id || { name: 'Unknown' },
-          purchase_type: PURCHASE_TYPE.LICENSE,
-          products: [
-            productsList.find(
-              (p) => p._id.toString() === license.product_id?.toString(),
-            ) || null,
-          ],
-          status: license.status,
-          id: license._id,
-        })),
-        ...customizations.map((customization) => ({
-          client: orders.find(
-            (o) => o._id.toString() === customization.order_id?.toString(),
-          )?.client_id || { name: 'Unknown' },
-          purchase_type: PURCHASE_TYPE.CUSTOMIZATION,
-          products: [
-            productsList.find(
-              (p) => p._id.toString() === customization.product_id?.toString(),
-            ) || null,
-          ],
-          status: customization.status,
-          id: customization._id,
-        })),
-        ...additional_services.map((service) => ({
-          client: orders.find(
-            (o) => o._id.toString() === service.order_id?.toString(),
-          )?.client_id || { name: 'Unknown' },
-          purchase_type: PURCHASE_TYPE.ADDITIONAL_SERVICE,
-          products: [{ name: service.name || '' }],
-          status: service.status,
-          id: service._id,
-        })),
-      ];
-
-      return { purchases };
-    } catch (error: any) {
-      this.loggerService.error(
+      this.loggerService.log(
         JSON.stringify({
-          message: 'getAllOrdersWithFilters: Error fetching orders',
-          error: error.message,
+          message: 'loadAllOrdersWithAttributes: Orders fetched successfully',
+          count: orders.length,
+          page,
+          limit,
         }),
       );
-      throw new HttpException(
-        error.message || 'Server error',
-        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+
+      // --- Process Orders (Removed Company Aggregation) ---
+      const processedOrders = await Promise.all(
+        orders.map(async (order: any) => {
+          const orderObj: any = order.toObject(); // Start with plain object as any
+          orderObj.purchase_type = PURCHASE_TYPE.ORDER;
+
+          // Process Client and Parent Company Info (only for adding parent to client in response)
+          if (order.client_id && orderObj.client_id) {
+            // Check both original and object
+            // Safely handle parent company information
+            try {
+              const parentCompanyId = order.client_id
+                ?.parent_company_id as unknown as ClientDocument & {
+                _id: Types.ObjectId;
+              };
+
+              if (parentCompanyId) {
+                const parentCompany = await this.clientModel
+                  .findById(parentCompanyId)
+                  .select('name')
+                  .lean();
+                if (parentCompany) {
+                  orderObj.client_id.parent_company = parentCompany;
+                }
+              }
+            } catch (error) {
+              // If there's an error processing parent company, just continue without it
+              this.loggerService.warn(
+                JSON.stringify({
+                  message:
+                    'loadAllOrdersWithAttributes: Error processing parent company',
+                  orderId: order._id?.toString(),
+                  clientId: order.client_id._id?.toString(),
+                  error:
+                    error instanceof Error ? error.message : 'Unknown error',
+                }),
+              );
+            }
+          }
+
+          // Process purchase order document URL
+          orderObj.purchase_order_document = order.purchase_order_document
+            ? this.storageService.get(order.purchase_order_document)
+            : null;
+
+          // Process agreement document URLs
+          if (order.agreements && order.agreements.length) {
+            orderObj.agreements = order.agreements.map((agreement) => {
+              const agreementObj: any = { ...agreement };
+              agreementObj.document = agreement?.document // Optional chaining
+                ? this.storageService.get(agreement.document)
+                : null;
+              return agreementObj;
+            });
+          } else {
+            orderObj.agreements = [];
+          }
+
+          // Process licenses
+          if (order.licenses && order.licenses.length) {
+            orderObj.licenses = order.licenses
+              .map((license: any) => {
+                if (!license) return null; // Skip if license is null/undefined
+                const licenseObj: any = license;
+                licenseObj.status = order.status;
+                licenseObj.purchase_order_document =
+                  license.purchase_order_document
+                    ? this.storageService.get(license.purchase_order_document)
+                    : null;
+                licenseObj.invoice_document = license.invoice_document
+                  ? this.storageService.get(license.invoice_document)
+                  : null;
+                return licenseObj;
+              })
+              .filter((l) => l !== null); // Filter out any null results
+          } else {
+            orderObj.licenses = [];
+          }
+
+          // Process customizations
+          if (order.customizations && order.customizations.length) {
+            orderObj.customizations = order.customizations
+              .map((customization) => {
+                if (!customization) return null; // Skip if customization is null/undefined
+                const customizationObj: any = customization.toObject();
+                customizationObj.status = order.status;
+                customizationObj.purchase_order_document =
+                  customization.purchase_order_document
+                    ? this.storageService.get(
+                        customization.purchase_order_document,
+                      )
+                    : null;
+                return customizationObj;
+              })
+              .filter((c) => c !== null); // Filter out any null results
+          } else {
+            orderObj.customizations = [];
+          }
+
+          // Process additional services
+          if (order.additional_services && order.additional_services.length) {
+            orderObj.additional_services = order.additional_services
+              .map((service) => {
+                if (!service) return null; // Skip if service is null/undefined
+                const serviceObj: any = service.toObject();
+                serviceObj.status = order.status;
+                serviceObj.purchase_order_document =
+                  service.purchase_order_document
+                    ? this.storageService.get(service.purchase_order_document)
+                    : null;
+                serviceObj.service_document = service.service_document
+                  ? this.storageService.get(service.service_document)
+                  : null;
+                return serviceObj;
+              })
+              .filter((s) => s !== null); // Filter out any null results
+          } else {
+            orderObj.additional_services = [];
+          }
+
+          return orderObj;
+        }),
       );
+      // --- End Process Orders ---
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllOrdersWithAttributes: Completed processing orders',
+          data: { processedCount: processedOrders.length }, // Removed company counts
+        }),
+      );
+
+      return {
+        purchases: processedOrders,
+        pagination: {
+          total: totalOrders,
+          page,
+          limit,
+          pages: Math.ceil(totalOrders / limit),
+          hasNextPage: page < Math.ceil(totalOrders / limit),
+          hasPreviousPage: page > 1,
+        },
+        // Removed clientCompanies and parentCompanies from return object
+      };
+    } catch (error: any) {
+      console.log(error);
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'loadAllOrdersWithAttributes: Error fetching orders',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+
+      // Return empty result set on error
+      return {
+        purchases: [],
+        pagination: {
+          total: 0,
+          page,
+          limit,
+          pages: 0,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+      };
     }
   }
 
@@ -3562,6 +3833,133 @@ export class OrderService {
         error.message || 'Server error',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
+    }
+  }
+
+  async getCompanyFilterData(): Promise<{
+    clients: { _id: string; name: string }[];
+    parents: { _id: string; name: string }[];
+  }> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'getCompanyFilterData: Fetching client and parent company data for filters',
+        }),
+      );
+
+      // Fetch all clients, selecting only necessary fields and populating parent name
+      const clients = await this.clientModel
+        .find()
+        .select('_id name parent_company_id')
+        .lean(); // Use lean for performance
+
+      const clientCompanyMap = new Map<string, { _id: string; name: string }>();
+      const parentCompanyMap = new Map<string, { _id: string; name: string }>();
+
+      for (const client of clients) {
+        // Ensure client has a valid _id before adding to map
+        if (client._id) {
+          const clientIdStr = client._id.toString();
+          // Add client to client list
+          if (!clientCompanyMap.has(clientIdStr)) {
+            clientCompanyMap.set(clientIdStr, {
+              _id: clientIdStr,
+              name: client.name || 'Unnamed Client',
+            });
+          }
+        }
+
+        // Add parent company to parent list if it exists and has valid _id
+        if (client.parent_company_id && client.parent_company_id._id) {
+          const parentCompany = await this.clientModel
+            .findById(client.parent_company_id._id)
+            .select('name')
+            .lean();
+          if (parentCompany) {
+            const parentIdStr = client.parent_company_id._id.toString();
+            if (!parentCompanyMap.has(parentIdStr)) {
+              parentCompanyMap.set(parentIdStr, {
+                _id: parentIdStr,
+                name: parentCompany.name || 'Unnamed Parent Company',
+              });
+            }
+          }
+        }
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getCompanyFilterData: Successfully aggregated company data',
+          data: {
+            clientCount: clientCompanyMap.size,
+            parentCount: parentCompanyMap.size,
+          },
+        }),
+      );
+
+      return {
+        clients: Array.from(clientCompanyMap.values()).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ), // Sort alphabetically
+        parents: Array.from(parentCompanyMap.values()).sort((a, b) =>
+          a.name.localeCompare(b.name),
+        ), // Sort alphabetically
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getCompanyFilterData: Error fetching company filter data',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+
+      // Despite the error, try to return some data if possible
+      try {
+        // Fetch all clients without populating parent_company_id to avoid ObjectId cast errors
+        const fallbackClients = await this.clientModel
+          .find()
+          .select('_id name')
+          .lean();
+
+        const clientCompanyMap = new Map<
+          string,
+          { _id: string; name: string }
+        >();
+
+        for (const client of fallbackClients) {
+          if (client._id) {
+            const clientIdStr = client._id.toString();
+            if (!clientCompanyMap.has(clientIdStr)) {
+              clientCompanyMap.set(clientIdStr, {
+                _id: clientIdStr,
+                name: client.name || 'Unnamed Client',
+              });
+            }
+          }
+        }
+
+        return {
+          clients: Array.from(clientCompanyMap.values()).sort((a, b) =>
+            a.name.localeCompare(b.name),
+          ),
+          parents: [], // Return empty array for parent companies in fallback mode
+        };
+      } catch (fallbackError: any) {
+        // If even the fallback fails, return empty arrays
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'getCompanyFilterData: Fallback retrieval also failed',
+            error: fallbackError.message,
+          }),
+        );
+
+        throw new HttpException(
+          'Error fetching company data for filters',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
     }
   }
 }

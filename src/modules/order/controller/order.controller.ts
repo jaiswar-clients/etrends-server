@@ -24,25 +24,77 @@ import {
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
+import { LoggerService } from '@/common/logger/services/logger.service';
+import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 
 export type UpdateOrderType = CreateOrderDto;
 
 @Controller('orders')
 @UseGuards(AuthGuard)
 export class OrderController {
-  constructor(private orderService: OrderService) {}
+  constructor(
+    private orderService: OrderService,
+    private loggerService: LoggerService,
+  ) {}
 
   @Get('/all-orders')
   async loadAllOrdersWithAttributes(
-    @Query('page') page: number,
-    @Query('limit') limit: number,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('parent_company_id') parentCompanyId?: string,
+    @Query('client_id') clientId?: string,
+    @Query('client_name') clientName?: string,
+    @Query('product_id') productId?: string,
+    @Query('status') status?: ORDER_STATUS_ENUM,
   ) {
-    const parsedPage = parseInt(page.toString());
-    const parsedLimit = parseInt(limit.toString());
+    // Ensure valid pagination parameters
+    const parsedPage = Math.max(1, parseInt(String(page)) || 1);
+    const parsedLimit = Math.min(
+      50,
+      Math.max(1, parseInt(String(limit)) || 10),
+    );
+
+    // Validate status if provided
+    if (status && !Object.values(ORDER_STATUS_ENUM).includes(status)) {
+      throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
+    }
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'loadAllOrdersWithAttributes: Controller called',
+        data: {
+          parsedPage,
+          parsedLimit,
+          parentCompanyId,
+          clientId,
+          clientName,
+          productId,
+          status,
+        },
+      }),
+    );
+
     return this.orderService.loadAllOrdersWithAttributes(
       parsedPage,
       parsedLimit,
+      {
+        parentCompanyId,
+        clientId,
+        clientName,
+        productId,
+        status,
+      },
     );
+  }
+
+  @Get('/filters/company-data')
+  async getCompanyFilterData() {
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'getCompanyFilterData: Controller called',
+      }),
+    );
+    return this.orderService.getCompanyFilterData();
   }
 
   @Get('/all-amc')

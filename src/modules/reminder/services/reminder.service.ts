@@ -233,7 +233,7 @@ export class ReminderService {
             emailTo: email,
           }),
         );
-        return 'SKIPPED - Email reminders turned off';
+        return 'skipped';
       }
 
       const emailStatus = await this.mailService.sendMail({

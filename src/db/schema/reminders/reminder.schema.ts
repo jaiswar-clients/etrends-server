@@ -45,9 +45,9 @@ export class Reminder extends Document {
   @Prop({
     type: String,
     default: 'sent',
-    enum: ['sent', 'failed'],
+    enum: ['sent', 'failed', 'skipped'],
   })
-  status: 'sent' | 'failed';
+  status: 'sent' | 'failed' | 'skipped';
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Client' })
   client_id: string;
