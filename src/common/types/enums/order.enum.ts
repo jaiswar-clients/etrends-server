@@ -11,11 +11,8 @@ export enum PURCHASE_TYPE {
 }
 
 export enum AMC_FILTER {
-  ALL = 'all',
   PAID = 'paid',
   PENDING = 'pending',
-  UPCOMING = 'upcoming',
-  OVERDUE = 'overdue',
   PROFORMA = 'proforma',
   INVOICE = 'invoice',
 }

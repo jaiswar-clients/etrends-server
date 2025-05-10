@@ -10,6 +10,7 @@ import {
   HttpException,
   HttpStatus,
   Delete,
+  Res,
 } from '@nestjs/common';
 import { OrderService } from '../services/order.service';
 import { CreateOrderDto } from '../dto/create-order.dto';
@@ -26,6 +27,7 @@ import { AuthGuard } from '@/common/guards/auth.guard';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
+import { Response } from 'express';
 
 export type UpdateOrderType = CreateOrderDto;
 
@@ -46,6 +48,8 @@ export class OrderController {
     @Query('client_name') clientName?: string,
     @Query('product_id') productId?: string,
     @Query('status') status?: ORDER_STATUS_ENUM,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
     // Ensure valid pagination parameters
     const parsedPage = Math.max(1, parseInt(String(page)) || 1);
@@ -57,6 +61,17 @@ export class OrderController {
     // Validate status if provided
     if (status && !Object.values(ORDER_STATUS_ENUM).includes(status)) {
       throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
+    }
+    
+    // Basic date validation (more thorough validation in service)
+    if (startDate && isNaN(new Date(startDate).getTime())) {
+      throw new HttpException('Invalid start date format', HttpStatus.BAD_REQUEST);
+    }
+    if (endDate && isNaN(new Date(endDate).getTime())) {
+      throw new HttpException('Invalid end date format', HttpStatus.BAD_REQUEST);
+    }
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      throw new HttpException('Start date cannot be after end date', HttpStatus.BAD_REQUEST);
     }
 
     this.loggerService.log(
@@ -70,6 +85,8 @@ export class OrderController {
           clientName,
           productId,
           status,
+          startDate,
+          endDate,
         },
       }),
     );
@@ -83,6 +100,8 @@ export class OrderController {
         clientName,
         productId,
         status,
+        startDate,
+        endDate,
       },
     );
   }
@@ -101,10 +120,11 @@ export class OrderController {
   async loadAllAMC(
     @Query('page') page: number,
     @Query('limit') limit: number,
-    @Query('filter') filter: AMC_FILTER,
-    @Query('upcoming') upcoming: string,
+    @Query('filter') filter: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('client_id') clientId: string,
+    @Query('product_id') productId: string,
   ) {
     // Validate and parse pagination
     const parsedPage = Math.max(1, parseInt(page?.toString() || '1'));
@@ -112,13 +132,12 @@ export class OrderController {
       100,
       Math.max(1, parseInt(limit?.toString() || '10')),
     );
-    const parsedUpcoming = Math.max(1, parseInt(upcoming?.toString() || '1'));
 
     // Validate dates
     let parsedStartDate: Date | undefined = undefined;
     let parsedEndDate: Date | undefined = undefined;
 
-    if (startDate !== 'undefined') {
+    if (startDate && startDate !== 'undefined') {
       parsedStartDate = new Date(startDate);
       if (isNaN(parsedStartDate.getTime())) {
         throw new HttpException(
@@ -128,7 +147,7 @@ export class OrderController {
       }
     }
 
-    if (endDate !== 'undefined') {
+    if (endDate && endDate !== 'undefined') {
       parsedEndDate = new Date(endDate);
       if (isNaN(parsedEndDate.getTime())) {
         throw new HttpException(
@@ -146,31 +165,168 @@ export class OrderController {
       );
     }
 
-    // Validate filter
-    if (filter && !Object.values(AMC_FILTER).includes(filter)) {
-      throw new HttpException('Invalid filter value', HttpStatus.BAD_REQUEST);
+    // Parse filter values (support for multiple comma-separated values)
+    let filterValues: AMC_FILTER[] = [];
+    if (filter) {
+      filterValues = filter
+        .split(',')
+        .map((f) => f.trim().toLowerCase() as AMC_FILTER);
+
+      // Validate that all filter values are valid
+      const validFilters = Object.values(AMC_FILTER);
+      const invalidFilters = filterValues.filter(
+        (f) => !validFilters.includes(f as AMC_FILTER),
+      );
+
+      if (invalidFilters.length > 0) {
+        throw new HttpException(
+          `Invalid filter value(s): ${invalidFilters.join(', ')}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
     }
 
-    return this.orderService.loadAllAMC(
-      parsedPage,
-      parsedLimit,
-      filter || AMC_FILTER.UPCOMING,
-      {
-        upcoming: parsedUpcoming,
-        startDate: parsedStartDate,
-        endDate: parsedEndDate,
-      },
+    // Default to pending if no filter provided
+    if (filterValues.length === 0) {
+      filterValues = [AMC_FILTER.PENDING];
+    }
+
+    return this.orderService.loadAllAMC(parsedPage, parsedLimit, filterValues, {
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
+      clientId,
+      productId,
+    });
+  }
+
+  @Get('/export-amc')
+  async exportAmcToExcel(
+    @Query('filter') filter: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('client_id') clientId: string,
+    @Query('product_id') productId: string,
+    @Res() res: Response,
+  ) {
+    // Validate dates
+    let parsedStartDate: Date | undefined = undefined;
+    let parsedEndDate: Date | undefined = undefined;
+
+    if (startDate && startDate !== 'undefined') {
+      parsedStartDate = new Date(startDate);
+      if (isNaN(parsedStartDate.getTime())) {
+        throw new HttpException(
+          'Invalid start date format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    if (endDate && endDate !== 'undefined') {
+      parsedEndDate = new Date(endDate);
+      if (isNaN(parsedEndDate.getTime())) {
+        throw new HttpException(
+          'Invalid end date format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    // Validate date range
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      throw new HttpException(
+        'Start date cannot be after end date',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Parse filter values (support for multiple comma-separated values)
+    let filterValues: AMC_FILTER[] = [];
+    if (filter) {
+      filterValues = filter
+        .split(',')
+        .map((f) => f.trim().toLowerCase() as AMC_FILTER);
+
+      // Validate that all filter values are valid
+      const validFilters = Object.values(AMC_FILTER);
+      const invalidFilters = filterValues.filter(
+        (f) => !validFilters.includes(f as AMC_FILTER),
+      );
+
+      if (invalidFilters.length > 0) {
+        throw new HttpException(
+          `Invalid filter value(s): ${invalidFilters.join(', ')}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    // Default to pending if no filter provided
+    if (filterValues.length === 0) {
+      filterValues = [AMC_FILTER.PENDING];
+    }
+
+    // Log the export request
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'exportAmcToExcel: Requested AMC export',
+        filters: filterValues,
+        dateRange: { startDate: parsedStartDate, endDate: parsedEndDate },
+        clientId,
+        productId,
+      }),
     );
+
+    // Generate Excel buffer
+    const excelBuffer = await this.orderService.exportAmcToExcel(filterValues, {
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
+      clientId,
+      productId,
+    });
+
+    // Set headers for file download
+    const date = new Date().toISOString().split('T')[0];
+    const filtersString = filterValues.length > 0 ? filterValues.join('_') : 'all';
+    const fileName = `AMC_Export_${filtersString}_${date}.xlsx`;
+    
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': excelBuffer.length,
+    });
+
+    // Send the file
+    return res.send(excelBuffer);
   }
 
   @Get('/pending-payments')
   async getAllPendingPayments(
-    @Query('page') page: number,
-    @Query('limit') limit: number,
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('clientId') clientId?: string,
+    @Query('clientName') clientName?: string,
+    @Query('type') type?: 'order' | 'amc' | 'all',
   ) {
-    const parsedPage = parseInt(page.toString());
-    const parsedLimit = parseInt(limit.toString());
-    return this.orderService.getAllPendingPayments(parsedPage, parsedLimit);
+    // Ensure page and limit are positive integers, defaulting if necessary
+    const finalPage = Math.max(1, page || 1);
+    const finalLimit = Math.max(1, limit || 20);
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'getAllPendingPayments: Controller called',
+        data: { page: finalPage, limit: finalLimit, startDate, endDate, clientId, clientName, type },
+      }),
+    );
+    return this.orderService.getAllPendingPayments(finalPage, finalLimit, {
+      startDate,
+      endDate,
+      clientId,
+      clientName,
+      type,
+    });
   }
 
   @Get('/:id')

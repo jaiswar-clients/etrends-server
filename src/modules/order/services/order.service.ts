@@ -45,6 +45,7 @@ import {
   ReminderDocument,
 } from '@/db/schema/reminders/reminder.schema';
 import { isSameDay } from 'date-fns';
+import * as ExcelJS from 'exceljs';
 
 // Define filter options structure
 interface OrderFilterOptions {
@@ -53,6 +54,8 @@ interface OrderFilterOptions {
   clientName?: string;
   productId?: string;
   status?: ORDER_STATUS_ENUM;
+  startDate?: string | Date;
+  endDate?: string | Date;
 }
 
 @Injectable()
@@ -847,11 +850,73 @@ export class OrderService {
     // Removed clientCompanies and parentCompanies from return type
   }> {
     try {
+      // Validate status if provided
+      if (
+        filters.status &&
+        !Object.values(ORDER_STATUS_ENUM).includes(filters.status)
+      ) {
+        throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
+      }
+
+      // Validate dates
+      let parsedStartDate: Date | undefined = undefined;
+      let parsedEndDate: Date | undefined = undefined;
+
+      if (filters.startDate && filters.startDate !== 'undefined') {
+        parsedStartDate = new Date(filters.startDate);
+        if (isNaN(parsedStartDate.getTime())) {
+          this.loggerService.error(
+            JSON.stringify({
+              message:
+                'loadAllOrdersWithAttributes: Invalid start date format, ignoring',
+              startDate: filters.startDate,
+            }),
+          );
+          parsedStartDate = undefined; // Ignore invalid date
+        }
+      }
+
+      if (filters.endDate && filters.endDate !== 'undefined') {
+        parsedEndDate = new Date(filters.endDate);
+        if (isNaN(parsedEndDate.getTime())) {
+          this.loggerService.error(
+            JSON.stringify({
+              message:
+                'loadAllOrdersWithAttributes: Invalid end date format, ignoring',
+              endDate: filters.endDate,
+            }),
+          );
+          parsedEndDate = undefined; // Ignore invalid date
+        }
+      }
+
+      // Validate date range
+      if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+        // If range is invalid, perhaps log and ignore, or throw error
+        // For now, let's log and proceed without date filtering to avoid breaking existing functionality
+        this.loggerService.warn(
+          JSON.stringify({
+            message:
+              'loadAllOrdersWithAttributes: Start date is after end date, date filter will be ignored',
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
+          }),
+        );
+        parsedStartDate = undefined;
+        parsedEndDate = undefined;
+      }
+
       this.loggerService.log(
         JSON.stringify({
           message:
             'loadAllOrdersWithAttributes: Fetching orders with pagination and filters',
-          data: { page, limit, filters },
+          data: {
+            page,
+            limit,
+            filters,
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
+          },
         }),
       );
 
@@ -859,8 +924,20 @@ export class OrderService {
       const filterQuery: any = {};
       let clientIdsForFilter: Types.ObjectId[] | null = null; // Explicitly type
 
+      // Apply date range filter to purchase_date
+      if (parsedStartDate && parsedEndDate) {
+        filterQuery.purchased_date = {
+          $gte: parsedStartDate,
+          $lte: parsedEndDate,
+        };
+      } else if (parsedStartDate) {
+        filterQuery.purchased_date = { $gte: parsedStartDate };
+      } else if (parsedEndDate) {
+        filterQuery.purchased_date = { $lte: parsedEndDate };
+      }
+
       // --- Build Filter Query ---
-      // 1. Filter by Client Name (find client IDs first)
+      // // 1. Filter by Client Name (find client IDs first)
       if (filters.clientName && filters.clientName.trim() !== '') {
         const clientsByName = await this.clientModel
           .find({
@@ -1027,11 +1104,25 @@ export class OrderService {
         }),
       );
 
+      if (filterQuery.client_id?.$in) {
+        filterQuery.client_id.$in = filterQuery.client_id?.$in.map((id) =>
+          String(id),
+        );
+      } else if (filterQuery.client_id) {
+        filterQuery.client_id = String(filterQuery.client_id);
+      }
       // Fetch Total Count with Filters
       const totalOrders = await this.orderModel.countDocuments(filterQuery);
 
       // If no orders match, return early
       if (totalOrders === 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'No orders found',
+            data: filterQuery,
+            totalOrders,
+          }),
+        );
         return {
           purchases: [],
           pagination: {
@@ -1772,18 +1863,19 @@ export class OrderService {
   async loadAllAMC(
     page: number,
     limit: number,
-    filter: AMC_FILTER,
+    filters: AMC_FILTER[],
     options: {
-      upcoming: number;
       startDate?: Date | string;
       endDate?: Date | string;
-    } = { upcoming: 1 },
+      clientId?: string;
+      productId?: string;
+    } = {},
   ) {
     try {
       this.loggerService.log(
         JSON.stringify({
           message: 'loadAllAMC: Fetching all AMC',
-          filter,
+          filters,
           options,
         }),
       );
@@ -1800,7 +1892,10 @@ export class OrderService {
           : 'null';
 
       // Generate cache key based on parameters
-      const cacheKey = `amc_data_${filter}_${page}_${limit}_${options.upcoming}_${startDateParam}_${endDateParam}`;
+      const filtersKey = filters.sort().join(',');
+      const clientIdKey = options.clientId || 'null';
+      const productIdKey = options.productId || 'null';
+      const cacheKey = `amc_data_${filtersKey}_${page}_${limit}_${clientIdKey}_${productIdKey}_${startDateParam}_${endDateParam}`;
 
       this.loggerService.log(
         JSON.stringify({
@@ -1859,12 +1954,55 @@ export class OrderService {
         }),
       );
 
-      // Fetch all AMCs without filtering but only for active orders
+      // Build the query for AMC filtering
+      const amcQuery: any = {
+        payments: { $exists: true },
+        order_id: { $in: activeOrders },
+      };
+
+      // Add client_id filter if provided
+      if (options.clientId) {
+        try {
+          amcQuery.client_id = new Types.ObjectId(options.clientId);
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'loadAllAMC: Applied client filter',
+              clientId: options.clientId,
+            }),
+          );
+        } catch (error) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'loadAllAMC: Invalid client ID format',
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      }
+
+      // Add product_id filter if provided
+      if (options.productId) {
+        try {
+          amcQuery.products = new Types.ObjectId(options.productId);
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'loadAllAMC: Applied product filter',
+              productId: options.productId,
+            }),
+          );
+        } catch (error) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'loadAllAMC: Invalid product ID format',
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      }
+
+      // Fetch all AMCs with basic filtering
       const allAmcs = await this.amcModel
-        .find({
-          payments: { $exists: true },
-          order_id: { $in: activeOrders },
-        })
+        .find(amcQuery)
         .sort({ _id: -1 })
         .populate([
           {
@@ -1894,151 +2032,242 @@ export class OrderService {
       today.setHours(0, 0, 0, 0); // Start of today
 
       // Convert date strings to Date objects if provided
-      let startDate: Date | null = null;
-      let endDate: Date | null = null;
+      const startDate =
+        options.startDate && options.startDate !== 'undefined'
+          ? new Date(options.startDate)
+          : null;
 
-      if (options.startDate && options.startDate !== 'undefined') {
-        startDate = new Date(options.startDate);
-        startDate.setHours(0, 0, 0, 0);
-      }
+      const endDate =
+        options.endDate && options.endDate !== 'undefined'
+          ? new Date(options.endDate)
+          : null;
 
-      if (options.endDate && options.endDate !== 'undefined') {
-        endDate = new Date(options.endDate);
-        endDate.setHours(23, 59, 59, 999);
-      }
+      if (startDate) startDate.setHours(0, 0, 0, 0);
+      if (endDate) endDate.setHours(23, 59, 59, 999);
 
-      // For upcoming filter, calculate date range if not explicitly provided
-      if (filter === AMC_FILTER.UPCOMING && !startDate && !endDate) {
-        startDate = new Date(today);
-        endDate = new Date(today);
-        endDate.setMonth(today.getMonth() + options.upcoming);
-        endDate.setHours(23, 59, 59, 999);
+      // Create a map to track which AMCs match each filter type
+      const matchingAmcIds = new Map<string, Set<AMC_FILTER>>();
 
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'loadAllAMC: Upcoming date range calculated',
-            startDate,
-            endDate,
-            upcomingMonths: options.upcoming,
-          }),
-        );
-      }
-
-      // Filter AMCs based on filter type and date range
-      const filteredAmcs = allAmcs.filter((amc) => {
+      // Process each AMC
+      for (const amc of allAmcs) {
         // Skip AMCs with invalid payment data
         if (!Array.isArray(amc.payments) || amc.payments.length === 0) {
-          return false;
+          continue;
         }
 
-        // Apply different filters based on filter type
-        switch (filter) {
-          case AMC_FILTER.ALL:
-            // For ALL filter with date range
-            if (startDate && endDate) {
-              return amc.payments.some((payment) => {
+        const amcId = amc._id.toString();
+
+        // For each filter type, check if this AMC has matching payments
+        for (const filterType of filters) {
+          let matches = false;
+
+          switch (filterType) {
+            case AMC_FILTER.PAID:
+              // Check if ANY payment is PAID and matches date range
+              matches = amc.payments.some((payment) => {
                 const paymentDate = new Date(payment.from_date);
-                return paymentDate >= startDate && paymentDate <= endDate;
-              });
-            }
-            // Return all AMCs for ALL filter without date range
-            return true;
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
 
-          case AMC_FILTER.PAID:
-            // Filter for PAID payments - only include AMCs where ALL payments are PAID
-            return amc.payments.every((payment) => {
-              const paymentDate = new Date(payment.from_date);
-              const dateInRange =
-                (!startDate || paymentDate >= startDate) &&
-                (!endDate || paymentDate <= endDate);
-
-              // If we have date range, check both status and date
-              if (startDate || endDate) {
                 return (
-                  payment.status === PAYMENT_STATUS_ENUM.PAID && dateInRange
+                  payment.status === PAYMENT_STATUS_ENUM.PAID &&
+                  ((!startDate && !endDate) || dateInRange)
                 );
-              }
+              });
+              break;
 
-              // If no date range, just check status
-              return payment.status === PAYMENT_STATUS_ENUM.PAID;
-            });
+            case AMC_FILTER.PENDING:
+              // Check if ANY payment is PENDING and matches date range
+              matches = amc.payments.some((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
 
-          case AMC_FILTER.PENDING:
-            // Filter for PENDING payments
-            return amc.payments.some((payment) => {
-              const paymentDate = new Date(payment.from_date);
-              const dateInRange =
-                (!startDate || paymentDate >= startDate) &&
-                (!endDate || paymentDate <= endDate);
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+              break;
 
-              return (
-                payment.status === PAYMENT_STATUS_ENUM.PENDING &&
-                ((!startDate && !endDate) || dateInRange)
-              );
-            });
+            case AMC_FILTER.PROFORMA:
+              // Check if ANY payment is PROFORMA and matches date range
+              matches = amc.payments.some((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
 
-          case AMC_FILTER.UPCOMING:
-            // Filter for UPCOMING payments (PENDING within date range)
-            return amc.payments.some((payment) => {
-              if (payment.status !== PAYMENT_STATUS_ENUM.PENDING) {
-                return false;
-              }
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+              break;
 
-              const paymentDate = new Date(payment.from_date);
-              return (
-                (!startDate || paymentDate >= startDate) &&
-                (!endDate || paymentDate <= endDate)
-              );
-            });
+            case AMC_FILTER.INVOICE:
+              // Check if ANY payment is INVOICE and matches date range
+              matches = amc.payments.some((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
 
-          case AMC_FILTER.OVERDUE:
-            // Filter for OVERDUE payments (PENDING with to_date < today)
-            return amc.payments.some((payment) => {
-              const toDate = new Date(payment.to_date);
-              return (
-                payment.status === PAYMENT_STATUS_ENUM.PENDING && toDate < today
-              );
-            });
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.INVOICE &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+              break;
+          }
 
-          case AMC_FILTER.PROFORMA:
-            // Filter for PROFORMA payments
-            return amc.payments.some((payment) => {
-              const paymentDate = new Date(payment.from_date);
-              const dateInRange =
-                (!startDate || paymentDate >= startDate) &&
-                (!endDate || paymentDate <= endDate);
-
-              return (
-                payment.status === PAYMENT_STATUS_ENUM.proforma &&
-                ((!startDate && !endDate) || dateInRange)
-              );
-            });
-
-          case AMC_FILTER.INVOICE:
-            // Filter for INVOICE payments
-            return amc.payments.some((payment) => {
-              const paymentDate = new Date(payment.from_date);
-              const dateInRange =
-                (!startDate || paymentDate >= startDate) &&
-                (!endDate || paymentDate <= endDate);
-
-              return (
-                payment.status === PAYMENT_STATUS_ENUM.INVOICE &&
-                ((!startDate && !endDate) || dateInRange)
-              );
-            });
-
-          default:
-            return false;
+          // If this AMC matches the current filter, add it to the tracking map
+          if (matches) {
+            if (!matchingAmcIds.has(amcId)) {
+              matchingAmcIds.set(amcId, new Set<AMC_FILTER>());
+            }
+            matchingAmcIds.get(amcId).add(filterType);
+          }
         }
-      });
+      }
+
+      // Log filter counts
+      const filterCounts = {} as Record<string, number>;
+      const matchedAmcs = new Set<string>();
+      const totalAmountByFilter = {} as Record<string, number>;
+
+      for (const [amcId, matchedFilters] of matchingAmcIds.entries()) {
+        matchedAmcs.add(amcId);
+        // Find the corresponding AMC object
+        const amc = allAmcs.find((a) => a._id.toString() === amcId);
+        if (!amc) continue;
+
+        for (const filter of matchedFilters) {
+          // Update filter counts
+          filterCounts[filter] = (filterCounts[filter] || 0) + 1;
+
+          // Calculate total amount for this filter type
+          // For each filter, we only consider payments that match the filter type
+          let amcAmount = 0;
+
+          switch (filter) {
+            case AMC_FILTER.PAID:
+              // Sum up amounts of PAID payments within date range
+              amcAmount = amc.payments
+                .filter((payment) => {
+                  const paymentDate = new Date(payment.from_date);
+                  const dateInRange =
+                    (!startDate || paymentDate >= startDate) &&
+                    (!endDate || paymentDate <= endDate);
+                  return (
+                    payment.status === PAYMENT_STATUS_ENUM.PAID &&
+                    ((!startDate && !endDate) || dateInRange)
+                  );
+                })
+                .reduce(
+                  (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                  0,
+                );
+              break;
+
+            case AMC_FILTER.PENDING:
+              // Sum up amounts of PENDING payments within date range
+              amcAmount = amc.payments
+                .filter((payment) => {
+                  const paymentDate = new Date(payment.from_date);
+                  const dateInRange =
+                    (!startDate || paymentDate >= startDate) &&
+                    (!endDate || paymentDate <= endDate);
+                  return (
+                    payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                    ((!startDate && !endDate) || dateInRange)
+                  );
+                })
+                .reduce(
+                  (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                  0,
+                );
+              break;
+
+            case AMC_FILTER.PROFORMA:
+              // Sum up amounts of PROFORMA payments within date range
+              amcAmount = amc.payments
+                .filter((payment) => {
+                  const paymentDate = new Date(payment.from_date);
+                  const dateInRange =
+                    (!startDate || paymentDate >= startDate) &&
+                    (!endDate || paymentDate <= endDate);
+                  return (
+                    payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                    ((!startDate && !endDate) || dateInRange)
+                  );
+                })
+                .reduce(
+                  (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                  0,
+                );
+              break;
+
+            case AMC_FILTER.INVOICE:
+              // Sum up amounts of INVOICE payments within date range
+              amcAmount = amc.payments
+                .filter((payment) => {
+                  const paymentDate = new Date(payment.from_date);
+                  const dateInRange =
+                    (!startDate || paymentDate >= startDate) &&
+                    (!endDate || paymentDate <= endDate);
+                  return (
+                    payment.status === PAYMENT_STATUS_ENUM.INVOICE &&
+                    ((!startDate && !endDate) || dateInRange)
+                  );
+                })
+                .reduce(
+                  (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                  0,
+                );
+              break;
+          }
+
+          // Add to total for this filter type
+          totalAmountByFilter[filter] =
+            (totalAmountByFilter[filter] || 0) + amcAmount;
+        }
+      }
+
+      // Calculate overall total amount across all filters
+      const totalAmount = Object.values(totalAmountByFilter).reduce(
+        (sum, amount) => sum + amount,
+        0,
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllAMC: Filter results breakdown',
+          data: {
+            filterCounts,
+            totalUniqueMatches: matchedAmcs.size,
+            totalAmountByFilter,
+            totalAmount,
+          },
+        }),
+      );
+
+      // Filter AMCs to include only those that matched at least one filter
+      const filteredAmcs = allAmcs.filter((amc) =>
+        matchingAmcIds.has(amc._id.toString()),
+      );
 
       this.loggerService.log(
         JSON.stringify({
           message: 'loadAllAMC: AMCs after filtering',
           count: filteredAmcs.length,
-          filter,
-          dateRange: { startDate, endDate },
+          filters,
+          dateRange: {
+            startDate: startDate ? startDate.toISOString() : null,
+            endDate: endDate ? endDate.toISOString() : null,
+          },
         }),
       );
 
@@ -2096,6 +2325,10 @@ export class OrderService {
             page,
             limit,
             pages: Math.ceil(totalCount / limit),
+          },
+          total_amount: {
+            ...totalAmountByFilter,
+            total: totalAmount,
           },
           data: amcsList,
         },
@@ -2477,59 +2710,436 @@ export class OrderService {
     );
   }
 
-  async getAllPendingPayments(page: number = 1, limit: number = 20) {
+  async getAllPendingPayments(
+    page: number = 1,
+    limit: number = 20,
+    filters: {
+      startDate?: string;
+      endDate?: string;
+      clientId?: string;
+      clientName?: string;
+      type?: 'order' | 'amc' | 'all';
+    } = {},
+  ) {
     try {
+      const { startDate, endDate, clientId, clientName, type } = filters;
+
       this.loggerService.log(
         JSON.stringify({
           message: 'getAllPendingPayments: Starting to fetch pending payments',
+          data: { page, limit, ...filters },
         }),
       );
 
-      // Get active orders first
-      const activeOrders = await this.orderModel
-        .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+      // Helper for empty pagination result
+      const emptyPaginationResult = (p: number, l: number) => ({
+        pending_payments: [],
+        pagination: {
+          total: 0,
+          currentPage: p,
+          totalPages: 0,
+          limit: l,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+      });
+
+      // 1. Date parsing and validation
+      let parsedStartDate: Date | undefined = undefined;
+      let parsedEndDate: Date | undefined = undefined;
+
+      if (startDate && startDate !== 'undefined') {
+        parsedStartDate = new Date(startDate);
+        if (isNaN(parsedStartDate.getTime())) {
+          this.loggerService.warn(
+            JSON.stringify({
+              message:
+                'getAllPendingPayments: Invalid start date format, ignoring.',
+              startDate,
+            }),
+          );
+          parsedStartDate = undefined;
+        }
+      }
+      if (endDate && endDate !== 'undefined') {
+        parsedEndDate = new Date(endDate);
+        if (isNaN(parsedEndDate.getTime())) {
+          this.loggerService.warn(
+            JSON.stringify({
+              message:
+                'getAllPendingPayments: Invalid end date format, ignoring.',
+              endDate,
+            }),
+          );
+          parsedEndDate = undefined;
+        }
+      }
+      if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+        this.loggerService.warn(
+          JSON.stringify({
+            message:
+              'getAllPendingPayments: Start date is after end date, date filter will be ignored.',
+            parsedStartDate,
+            parsedEndDate,
+          }),
+        );
+        parsedStartDate = undefined;
+        parsedEndDate = undefined;
+      }
+
+      // 2. Client filter resolution
+      let resolvedClientObjectIds: Types.ObjectId[] | null = null;
+      if (clientName && clientName.trim() !== '') {
+        const clientsByName = await this.clientModel
+          .find({ name: { $regex: clientName, $options: 'i' } })
+          .select('_id')
+          .lean<{ _id: Types.ObjectId }[]>();
+        resolvedClientObjectIds = clientsByName.map((c) => c._id);
+        if (resolvedClientObjectIds.length === 0) {
+          this.loggerService.log(
+            JSON.stringify({
+              message:
+                'getAllPendingPayments: No client found by name, returning empty.',
+              clientName,
+            }),
+          );
+          return emptyPaginationResult(page, limit);
+        }
+      }
+
+      let finalClientFilterCriteria: any = {}; // For direct use in model queries (AMC)
+      let clientFilterForActiveOrders: any = {}; // For filtering orders to get activeOrderIds
+
+      if (clientId && Types.ObjectId.isValid(clientId)) {
+        const specificClientId = new Types.ObjectId(clientId);
+        if (resolvedClientObjectIds) {
+          // clientName was also provided
+          if (
+            resolvedClientObjectIds.some((id) => id.equals(specificClientId))
+          ) {
+            finalClientFilterCriteria = { client_id: specificClientId };
+            clientFilterForActiveOrders = { client_id: specificClientId };
+          } else {
+            this.loggerService.log(
+              JSON.stringify({
+                message:
+                  'getAllPendingPayments: Specified clientId not found in clientName search results, returning empty.',
+                clientId,
+                clientName,
+              }),
+            );
+            return emptyPaginationResult(page, limit);
+          }
+        } else {
+          // Only clientId provided
+          finalClientFilterCriteria = { client_id: specificClientId };
+          clientFilterForActiveOrders = { client_id: specificClientId };
+        }
+      } else if (resolvedClientObjectIds) {
+        // Only clientName provided and matched
+        finalClientFilterCriteria = {
+          client_id: { $in: resolvedClientObjectIds },
+        };
+        clientFilterForActiveOrders = {
+          client_id: { $in: resolvedClientObjectIds },
+        };
+      }
+
+      if (clientFilterForActiveOrders.client_id?.$in) {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAllPendingPayments: Converting client_id.$in to string',
+            clientId,
+          }),
+        );
+        clientFilterForActiveOrders.client_id.$in =
+          clientFilterForActiveOrders.client_id.$in.map((id) => String(id));
+      } else if(clientFilterForActiveOrders.client_id) {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAllPendingPayments: Converting client_id to string',
+            clientId,
+          }),
+        );
+        clientFilterForActiveOrders.client_id = String(
+          clientFilterForActiveOrders.client_id,
+        );
+      }
+
+      // 3. Get active orders, potentially filtered by client
+      const activeOrderQuery: any = {
+        status: ORDER_STATUS_ENUM.ACTIVE,
+        ...clientFilterForActiveOrders,
+      };
+      const activeOrderIds = await this.orderModel
+        .find(activeOrderQuery)
         .distinct('_id');
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'getAllPendingPayments: Active orders found',
-          count: activeOrders.length,
+          message:
+            'getAllPendingPayments: Active order IDs for filtering pending items',
+          count: activeOrderIds.length,
+          activeOrderQueryApplied: activeOrderQuery,
         }),
       );
 
-      const TOTAL_PURCHASES_SCENARIOS = 5;
-      const pendingLimitForEachSchema = limit / TOTAL_PURCHASES_SCENARIOS;
+      if (activeOrderIds.length === 0 && (clientId || clientName)) {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAllPendingPayments: No active orders found for the given client filters. Returning empty.',
+            filters,
+          }),
+        );
+        return emptyPaginationResult(page, limit);
+      }
 
-      // Get total counts first - only consider active orders
-      const [
+      // 4. Helper to build date filter part for queries
+      const buildDateFilter = (
+        dateField: string,
+        pStartDate?: Date,
+        pEndDate?: Date,
+      ): any => {
+        const filter: any = {};
+        if (pStartDate && pEndDate) {
+          filter[dateField] = { $gte: pStartDate, $lte: pEndDate };
+        } else if (pStartDate) {
+          filter[dateField] = { $gte: pStartDate };
+        } else if (pEndDate) {
+          filter[dateField] = { $lte: pEndDate };
+        }
+        return Object.keys(filter).length > 0 ? filter : {}; // Return empty object if no dates
+      };
+
+      // Number of payment types to consider based on filter
+      let TOTAL_PURCHASES_SCENARIOS = 5; // Default for 'all'
+      
+      // Determine which types to fetch based on the type filter
+      const shouldFetchAMC = type === 'amc' || type === 'all' || !type;
+      const shouldFetchOrder = type === 'order' || type === 'all' || !type;
+      const shouldFetchOtherTypes = type === 'all' || !type; // licenses, customizations, additional services
+      
+      // Update the count of active scenarios based on type filter
+      if (type === 'amc') {
+        TOTAL_PURCHASES_SCENARIOS = 1; // Only AMC
+      } else if (type === 'order') {
+        TOTAL_PURCHASES_SCENARIOS = 1; // Only Order
+      } else {
+        // For 'all' or undefined, keep the original 5 scenarios
+        TOTAL_PURCHASES_SCENARIOS = shouldFetchOtherTypes ? 5 : (shouldFetchAMC && shouldFetchOrder) ? 2 : 1;
+      }
+      
+      // Calculate adjusted limit for each schema based on active scenarios
+      const pendingLimitForEachSchema = Math.max(
+        1,
+        Math.floor(limit / TOTAL_PURCHASES_SCENARIOS),
+      ); // Ensure at least 1
+
+      // 5. Define queries with filters for each model
+      const amcDateFilter = buildDateFilter(
+        'createdAt',
+        parsedStartDate,
+        parsedEndDate,
+      );
+      const amcBaseQuery = {
+        order_id: { $in: activeOrderIds },
+        'payments.1': { $exists: true },
+        'payments.status': PAYMENT_STATUS_ENUM.PENDING,
+        ...amcDateFilter,
+        ...finalClientFilterCriteria, // Direct client filter for AMCs
+      };
+
+      const licenseDateFilter = buildDateFilter(
+        'purchase_date',
+        parsedStartDate,
+        parsedEndDate,
+      );
+      const licenseBaseQuery = {
+        order_id: { $in: activeOrderIds },
+        payment_status: PAYMENT_STATUS_ENUM.PENDING,
+        ...licenseDateFilter,
+      };
+
+      const customizationDateFilter = buildDateFilter(
+        'purchased_date',
+        parsedStartDate,
+        parsedEndDate,
+      );
+      const customizationBaseQuery = {
+        order_id: { $in: activeOrderIds },
+        payment_status: PAYMENT_STATUS_ENUM.PENDING,
+        ...customizationDateFilter,
+      };
+
+      const serviceDateFilter = buildDateFilter(
+        'purchased_date',
+        parsedStartDate,
+        parsedEndDate,
+      );
+      const serviceBaseQuery = {
+        order_id: { $in: activeOrderIds },
+        payment_status: PAYMENT_STATUS_ENUM.PENDING,
+        ...serviceDateFilter,
+      };
+
+      const orderPaymentTermsDateFilter = buildDateFilter(
+        'createdAt',
+        parsedStartDate,
+        parsedEndDate,
+      ); // Order's createdAt
+      const orderPaymentTermsBaseQuery = {
+        _id: { $in: activeOrderIds }, // Already client filtered via activeOrderIds
+        'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
+        ...orderPaymentTermsDateFilter,
+      };
+
+      // Short-circuit if activeOrderIds is empty and filters weren't client-specific (already handled above if client specific)
+      // This check is to prevent unnecessary DB calls if there are no active orders at all for other reasons.
+      if (activeOrderIds.length === 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'getAllPendingPayments: No active orders found (globally or after non-client filters led to empty set for sub-items). Returning empty.',
+          }),
+        );
+        return emptyPaginationResult(page, limit);
+      }
+
+      // Get total counts with filters - only count what we need based on type filter
+      let [
         totalAMCs,
         totalLicenses,
         totalCustomizations,
         totalServices,
         totalOrders,
-      ] = await Promise.all([
-        this.amcModel.countDocuments({
-          order_id: { $in: activeOrders },
-          'payments.1': { $exists: true },
-          'payments.status': PAYMENT_STATUS_ENUM.PENDING,
+      ] = [0, 0, 0, 0, 0]; // Initialize with zeros
+      
+      // Prepare query promises based on type filter
+      const countPromises: Promise<number>[] = [];
+      
+      if (shouldFetchAMC) {
+        countPromises.push(this.amcModel.countDocuments(amcBaseQuery));
+      } else {
+        countPromises.push(Promise.resolve(0));
+      }
+      
+      if (shouldFetchOtherTypes) {
+        countPromises.push(this.licenseModel.countDocuments(licenseBaseQuery));
+        countPromises.push(this.customizationModel.countDocuments(customizationBaseQuery));
+        countPromises.push(this.additionalServiceModel.countDocuments(serviceBaseQuery));
+      } else {
+        countPromises.push(Promise.resolve(0));
+        countPromises.push(Promise.resolve(0));
+        countPromises.push(Promise.resolve(0));
+      }
+      
+      if (shouldFetchOrder) {
+        countPromises.push(this.orderModel.countDocuments(orderPaymentTermsBaseQuery));
+      } else {
+        countPromises.push(Promise.resolve(0));
+      }
+      
+      [
+        totalAMCs,
+        totalLicenses,
+        totalCustomizations,
+        totalServices,
+        totalOrders,
+      ] = await Promise.all(countPromises);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'Counts after filters',
+          type,
+          totalAMCs,
+          totalLicenses,
+          totalCustomizations,
+          totalServices,
+          totalOrders,
         }),
-        this.licenseModel.countDocuments({
-          order_id: { $in: activeOrders },
-          payment_status: PAYMENT_STATUS_ENUM.PENDING,
-        }),
-        this.customizationModel.countDocuments({
-          order_id: { $in: activeOrders },
-          payment_status: PAYMENT_STATUS_ENUM.PENDING,
-        }),
-        this.additionalServiceModel.countDocuments({
-          order_id: { $in: activeOrders },
-          payment_status: PAYMENT_STATUS_ENUM.PENDING,
-        }),
-        this.orderModel.countDocuments({
-          _id: { $in: activeOrders },
-          'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
-        }),
-      ]);
+      );
+
+      // Fetch items with filters, pagination per schema
+      const skipAmount = (page - 1) * pendingLimitForEachSchema;
+
+      // Prepare fetch promises based on type filter
+      const fetchPromises: Promise<any>[] = [];
+      
+      if (shouldFetchAMC) {
+        fetchPromises.push(
+          this.amcModel
+            .find(amcBaseQuery)
+            .populate('client_id', 'name')
+            .populate('products', 'short_name')
+            .skip(skipAmount)
+            .limit(pendingLimitForEachSchema)
+        );
+      } else {
+        fetchPromises.push(Promise.resolve([]));
+      }
+      
+      if (shouldFetchOtherTypes) {
+        fetchPromises.push(
+          this.licenseModel
+            .find(licenseBaseQuery)
+            .populate({
+              path: 'order_id',
+              populate: { path: 'client_id', select: 'name' },
+            })
+            .populate({ path: 'product_id', select: 'short_name' })
+            .skip(skipAmount)
+            .limit(pendingLimitForEachSchema)
+        );
+        
+        fetchPromises.push(
+          this.customizationModel
+            .find(customizationBaseQuery)
+            .populate({
+              path: 'order_id',
+              populate: { path: 'client_id', select: 'name' },
+            })
+            .populate('product_id', 'short_name')
+            .skip(skipAmount)
+            .limit(pendingLimitForEachSchema)
+        );
+        
+        fetchPromises.push(
+          this.additionalServiceModel
+            .find(serviceBaseQuery)
+            .populate({
+              path: 'order_id',
+              populate: { path: 'client_id', select: 'name' },
+            })
+            .skip(skipAmount)
+            .limit(pendingLimitForEachSchema)
+        );
+      } else {
+        fetchPromises.push(Promise.resolve([]));
+        fetchPromises.push(Promise.resolve([]));
+        fetchPromises.push(Promise.resolve([]));
+      }
+      
+      if (shouldFetchOrder) {
+        fetchPromises.push(
+          this.orderModel
+            .find(orderPaymentTermsBaseQuery)
+            .populate([
+              { path: 'client_id', select: 'name' },
+              {
+                path: 'products',
+                select: 'name short_name',
+                model: Product.name,
+              },
+            ])
+            .skip(skipAmount)
+            .limit(pendingLimitForEachSchema)
+        );
+      } else {
+        fetchPromises.push(Promise.resolve([]));
+      }
 
       const [
         pendingAMCs,
@@ -2537,83 +3147,7 @@ export class OrderService {
         pendingCustomizations,
         pendingServices,
         pendingOrders,
-      ] = await Promise.all([
-        this.amcModel
-          .find({
-            order_id: { $in: activeOrders },
-            'payments.1': { $exists: true },
-            'payments.status': PAYMENT_STATUS_ENUM.PENDING,
-          })
-          .populate('client_id', 'name')
-          .populate('products', 'short_name')
-          .skip((page - 1) * pendingLimitForEachSchema)
-          .limit(pendingLimitForEachSchema),
-        this.licenseModel
-          .find({
-            order_id: { $in: activeOrders },
-            payment_status: PAYMENT_STATUS_ENUM.PENDING,
-          })
-          .populate({
-            path: 'order_id',
-            populate: {
-              path: 'client_id',
-              select: 'name',
-            },
-          })
-          .populate({
-            path: 'product_id',
-            select: 'short_name',
-          })
-          .skip((page - 1) * pendingLimitForEachSchema)
-          .limit(pendingLimitForEachSchema),
-        this.customizationModel
-          .find({
-            order_id: { $in: activeOrders },
-            payment_status: PAYMENT_STATUS_ENUM.PENDING,
-          })
-          .populate({
-            path: 'order_id',
-            populate: {
-              path: 'client_id',
-              select: 'name',
-            },
-          })
-          .populate('product_id', 'short_name')
-          .skip((page - 1) * pendingLimitForEachSchema)
-          .limit(pendingLimitForEachSchema),
-        this.additionalServiceModel
-          .find({
-            order_id: { $in: activeOrders },
-            payment_status: PAYMENT_STATUS_ENUM.PENDING,
-          })
-          .populate({
-            path: 'order_id',
-            populate: {
-              path: 'client_id',
-              select: 'name',
-            },
-          })
-          .skip((page - 1) * pendingLimitForEachSchema)
-          .limit(pendingLimitForEachSchema),
-        this.orderModel
-          .find({
-            _id: { $in: activeOrders },
-            'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
-          })
-          .populate([
-            {
-              path: 'client_id',
-              select: 'name',
-            },
-            {
-              path: 'products',
-              select: 'name short_name',
-              model: Product.name,
-            },
-          ])
-          .skip((page - 1) * pendingLimitForEachSchema)
-          .limit(pendingLimitForEachSchema),
-      ]);
+      ] = await Promise.all(fetchPromises);
 
       const pendingPayments: Array<{
         _id: string;
@@ -2631,136 +3165,152 @@ export class OrderService {
         [key: string]: any;
       }> = [];
 
-      // AMCs
-      for (const amc of pendingAMCs) {
-        if (Array.isArray(amc.payments)) {
-          amc.payments.forEach((payment, index) => {
-            if (payment.status === PAYMENT_STATUS_ENUM.PENDING) {
-              pendingPayments.push({
-                _id: amc._id.toString(),
-                type: 'amc',
-                status: PAYMENT_STATUS_ENUM.PENDING,
-                pending_amount: amc.amount || 0,
-                payment_identifier: index,
-                payment_date: payment.from_date,
-                name: `AMC no ${index + 1}`,
-                client_name: (amc.client_id as any)?.name || 'N/A',
-                product_name:
-                  (amc.products as unknown as ProductDocument[])
-                    ?.map((p) => p.short_name)
-                    .join(', ') || 'N/A',
-              });
-            }
+      // AMCs - only process if we should fetch AMC
+      if (shouldFetchAMC) {
+        for (const amc of pendingAMCs) {
+          if (Array.isArray(amc.payments)) {
+            amc.payments.forEach((payment, index) => {
+              if (payment.status === PAYMENT_STATUS_ENUM.PENDING) {
+                pendingPayments.push({
+                  _id: amc._id.toString(),
+                  type: 'amc',
+                  status: PAYMENT_STATUS_ENUM.PENDING,
+                  pending_amount: amc.amount || 0, // AMC total amount
+                  payment_identifier: index, // Index of the pending payment installment
+                  payment_date: payment.from_date, // Due date of this installment
+                  name: `AMC no ${index + 1}`, // Name of the installment
+                  client_name: (amc.client_id as any)?.name || 'N/A',
+                  product_name:
+                    (amc.products as unknown as ProductDocument[])
+                      ?.map((p) => p.short_name)
+                      .join(', ') || 'N/A',
+                });
+              }
+            });
+          }
+        }
+      }
+
+      // Only process other types if we should fetch them
+      if (shouldFetchOtherTypes) {
+        // Licenses
+        for (const license of pendingLicenses) {
+          const licenseCost =
+            (license.rate?.amount || 0) * (license.total_license || 0);
+          const order = license.order_id as any;
+          pendingPayments.push({
+            _id: license._id.toString(),
+            type: 'license',
+            status: license.payment_status,
+            pending_amount: licenseCost,
+            payment_identifier: license._id.toString(),
+            payment_date: license.purchase_date,
+            name:
+              (license?.product_id as unknown as ProductDocument)?.short_name ??
+              '',
+            client_name: order?.client_id?.name || 'N/A',
+            product_name:
+              (license?.product_id as unknown as ProductDocument)?.short_name ??
+              'N/A',
+          });
+        }
+
+        // Customizations
+        for (const customization of pendingCustomizations) {
+          const order = customization.order_id as any;
+          pendingPayments.push({
+            _id: customization._id.toString(),
+            type: 'customization',
+            status: customization.payment_status,
+            pending_amount: customization.cost || 0,
+            payment_identifier: customization?._id?.toString(),
+            payment_date: customization.purchased_date,
+            name: customization?.title ?? '',
+            client_name: order?.client_id?.name || 'N/A',
+            product_name:
+              (customization?.product_id as unknown as ProductDocument)
+                ?.short_name ?? 'N/A',
+          });
+        }
+
+        // Additional Services
+        for (const service of pendingServices) {
+          const order = service.order_id as any;
+          pendingPayments.push({
+            _id: service._id.toString(),
+            type: 'additional_service',
+            status: service.payment_status,
+            pending_amount: service.cost || 0,
+            payment_identifier: service._id.toString(),
+            payment_date: service.purchased_date,
+            name: service.name,
+            client_name: order?.client_id?.name || 'N/A',
+            product_name: service.name || 'N/A', // Or a product if linked
           });
         }
       }
 
-      // Licenses
-      for (const license of pendingLicenses) {
-        const licenseCost =
-          (license.rate?.amount || 0) * (license.total_license || 0);
-        const order = license.order_id as any;
-        pendingPayments.push({
-          _id: license._id.toString(),
-          type: 'license',
-          status: license.payment_status,
-          pending_amount: licenseCost,
-          payment_identifier: license._id.toString(),
-          payment_date: license.purchase_date,
-          name:
-            (license?.product_id as unknown as ProductDocument)?.short_name ??
-            '',
-          client_name: order?.client_id?.name || 'N/A',
-          product_name:
-            (license?.product_id as unknown as ProductDocument)?.short_name ??
-            'N/A',
-        });
-      }
-
-      // Customizations
-      for (const customization of pendingCustomizations) {
-        const order = customization.order_id as any;
-        pendingPayments.push({
-          _id: customization._id.toString(),
-          type: 'customization',
-          status: customization.payment_status,
-          pending_amount: customization.cost || 0,
-          payment_identifier: customization?._id?.toString(),
-          payment_date: customization.purchased_date,
-          name: customization?.title ?? '',
-          client_name: order?.client_id?.name || 'N/A',
-          product_name:
-            (customization?.product_id as unknown as ProductDocument)
-              ?.short_name ?? 'N/A',
-        });
-      }
-
-      // Additional Services
-      for (const service of pendingServices) {
-        const order = service.order_id as any;
-        pendingPayments.push({
-          _id: service._id.toString(),
-          type: 'additional_service',
-          status: service.payment_status,
-          pending_amount: service.cost || 0,
-          payment_identifier: service._id.toString(),
-          payment_date: service.purchased_date,
-          name: service.name,
-          client_name: order?.client_id?.name || 'N/A',
-          product_name: service.name || 'N/A',
-        });
-      }
-
-      // Orders
-      for (const order of pendingOrders) {
-        if (Array.isArray(order.payment_terms)) {
-          order.payment_terms.forEach((term, index) => {
-            if (
-              term.status === PAYMENT_STATUS_ENUM.PENDING &&
-              term.calculated_amount
-            ) {
-              pendingPayments.push({
-                _id: order._id.toString(),
-                type: 'order',
-                status: PAYMENT_STATUS_ENUM.PENDING,
-                pending_amount: term.calculated_amount,
-                payment_identifier: index,
-                payment_date: term.invoice_date,
-                name: term.name,
-                client_name: (order.client_id as any)?.name || 'N/A',
-                product_name:
-                  (order.products as unknown as ProductDocument[])
-                    ?.map((p) => p.short_name)
-                    .join(', ') || 'N/A',
-              });
-            }
-          });
+      // Orders - only process if we should fetch order
+      if (shouldFetchOrder) {
+        for (const order of pendingOrders) {
+          if (Array.isArray(order.payment_terms)) {
+            order.payment_terms.forEach((term, index) => {
+              if (
+                term.status === PAYMENT_STATUS_ENUM.PENDING &&
+                term.calculated_amount
+              ) {
+                pendingPayments.push({
+                  _id: order._id.toString(),
+                  type: 'order',
+                  status: PAYMENT_STATUS_ENUM.PENDING,
+                  pending_amount: term.calculated_amount,
+                  payment_identifier: index, // Index of the payment term
+                  payment_date: term.invoice_date, // Due date of this term
+                  name: term.name, // Name of the payment term
+                  client_name: (order.client_id as any)?.name || 'N/A',
+                  product_name:
+                    (order.products as unknown as ProductDocument[])
+                      ?.map((p) => p.short_name)
+                      .join(', ') || 'N/A',
+                });
+              }
+            });
+          }
         }
       }
 
-      const totalCount =
+      // Calculate the total based on the filtered data
+      const totalCount = // Sum of filtered counts
         totalAMCs +
         totalLicenses +
         totalCustomizations +
         totalServices +
         totalOrders;
-      const totalPages = Math.ceil(totalCount / limit);
+
+      const totalPages = Math.ceil(totalCount / limit); // Use overall limit for total pages
 
       this.loggerService.log(
         JSON.stringify({
           message:
-            'getAllPendingPayments: Successfully fetched all pending payments (active orders only)',
-          total: pendingPayments.length,
+            'getAllPendingPayments: Successfully fetched pending payments with filters.',
+          data: {
+            returnedCount: pendingPayments.length,
+            totalFilteredCount: totalCount,
+            page,
+            limit,
+            totalPages,
+            filtersApplied: filters,
+          },
         }),
       );
 
       return {
-        pending_payments: pendingPayments,
+        pending_payments: pendingPayments, // These are from the per-schema paginated fetches
         pagination: {
-          total: totalCount,
+          total: totalCount, // Total based on all filtered items
           currentPage: page,
           totalPages,
-          limit,
+          limit, // Overall limit requested by user
           hasNextPage: page < totalPages,
           hasPreviousPage: page > 1,
         },
@@ -2771,6 +3321,7 @@ export class OrderService {
           message: 'getAllPendingPayments: Error fetching pending payments',
           error: error.message,
           stack: error.stack,
+          filters, // Log filters on error
         }),
       );
       throw new HttpException(
@@ -3960,6 +4511,649 @@ export class OrderService {
           HttpStatus.INTERNAL_SERVER_ERROR,
         );
       }
+    }
+  }
+
+  async exportAmcToExcel(
+    filters: AMC_FILTER[],
+    options: {
+      startDate?: Date | string;
+      endDate?: Date | string;
+      clientId?: string;
+      productId?: string;
+    } = {},
+  ): Promise<Buffer> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportAmcToExcel: Generating Excel export',
+          filters,
+          options,
+        }),
+      );
+
+      // Import Excel library dynamically to avoid server-side issues
+      const ExcelJS = require('exceljs');
+
+      // Create a new Excel workbook and worksheet
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'AMC Management System';
+      workbook.lastModifiedBy = 'AMC Management System';
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      const worksheet = workbook.addWorksheet('AMC Data', {
+        properties: { tabColor: { argb: '4F81BD' } },
+        pageSetup: {
+          paperSize: 9, // A4
+          orientation: 'landscape',
+          fitToPage: true,
+          fitToHeight: 0,
+          fitToWidth: 1,
+          margins: {
+            left: 0.25,
+            right: 0.25,
+            top: 0.75,
+            bottom: 0.75,
+            header: 0.3,
+            footer: 0.3,
+          },
+        },
+      });
+
+      // Build the query for AMC filtering - similar to loadAllAMC
+      const activeOrders = await this.orderModel
+        .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+        .distinct('_id');
+
+      const amcQuery: any = {
+        payments: { $exists: true },
+        order_id: { $in: activeOrders },
+      };
+
+      // Add client_id filter if provided
+      if (options.clientId) {
+        try {
+          amcQuery.client_id = new Types.ObjectId(options.clientId);
+        } catch (error) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'exportAmcToExcel: Invalid client ID format',
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      }
+
+      // Add product_id filter if provided
+      if (options.productId) {
+        try {
+          amcQuery.products = new Types.ObjectId(options.productId);
+        } catch (error) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'exportAmcToExcel: Invalid product ID format',
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        }
+      }
+
+      // Fetch all AMCs with necessary relationships
+      const allAmcs = await this.amcModel
+        .find(amcQuery)
+        .sort({ _id: -1 })
+        .populate([
+          {
+            path: 'client_id',
+            model: Client.name,
+            select: 'name',
+          },
+          {
+            path: 'order_id',
+            model: Order.name,
+            select: 'purchase_date amc_start_date',
+          },
+          {
+            path: 'products',
+            model: Product.name,
+            select: 'name short_name',
+          },
+        ]);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportAmcToExcel: Fetched AMCs for export',
+          count: allAmcs.length,
+        }),
+      );
+
+      // Process date filters
+      const startDate =
+        options.startDate && options.startDate !== 'undefined'
+          ? new Date(options.startDate)
+          : null;
+
+      const endDate =
+        options.endDate && options.endDate !== 'undefined'
+          ? new Date(options.endDate)
+          : null;
+
+      if (startDate) startDate.setHours(0, 0, 0, 0);
+      if (endDate) endDate.setHours(23, 59, 59, 999);
+
+      // Filter AMCs using the same logic as in loadAllAMC
+      const matchingAmcIds = new Map<string, Set<AMC_FILTER>>();
+      const totalAmountByFilter = {} as Record<string, number>;
+
+      // Process each AMC
+      for (const amc of allAmcs) {
+        if (!Array.isArray(amc.payments) || amc.payments.length === 0) {
+          continue;
+        }
+
+        const amcId = amc._id.toString();
+
+        // Check this AMC against each filter type
+        for (const filterType of filters) {
+          let matches = false;
+          let amcAmount = 0;
+
+          switch (filterType) {
+            case AMC_FILTER.PAID:
+              // Check for PAID payments within date range
+              const paidPayments = amc.payments.filter((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
+
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.PAID &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+
+              matches = paidPayments.length > 0;
+              amcAmount = paidPayments.reduce(
+                (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                0,
+              );
+              break;
+
+            case AMC_FILTER.PENDING:
+              // Check for PENDING payments within date range
+              const pendingPayments = amc.payments.filter((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
+
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+
+              matches = pendingPayments.length > 0;
+              amcAmount = pendingPayments.reduce(
+                (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                0,
+              );
+              break;
+
+            case AMC_FILTER.PROFORMA:
+              // Check for PROFORMA payments within date range
+              const proformaPayments = amc.payments.filter((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
+
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+
+              matches = proformaPayments.length > 0;
+              amcAmount = proformaPayments.reduce(
+                (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                0,
+              );
+              break;
+
+            case AMC_FILTER.INVOICE:
+              // Check for INVOICE payments within date range
+              const invoicePayments = amc.payments.filter((payment) => {
+                const paymentDate = new Date(payment.from_date);
+                const dateInRange =
+                  (!startDate || paymentDate >= startDate) &&
+                  (!endDate || paymentDate <= endDate);
+
+                return (
+                  payment.status === PAYMENT_STATUS_ENUM.INVOICE &&
+                  ((!startDate && !endDate) || dateInRange)
+                );
+              });
+
+              matches = invoicePayments.length > 0;
+              amcAmount = invoicePayments.reduce(
+                (sum, payment) => sum + (payment.amc_rate_amount || 0),
+                0,
+              );
+              break;
+          }
+
+          if (matches) {
+            if (!matchingAmcIds.has(amcId)) {
+              matchingAmcIds.set(amcId, new Set<AMC_FILTER>());
+            }
+            matchingAmcIds.get(amcId).add(filterType);
+
+            // Add to total for this filter type
+            totalAmountByFilter[filterType] =
+              (totalAmountByFilter[filterType] || 0) + amcAmount;
+          }
+        }
+      }
+
+      // Calculate overall total
+      const totalAmount = Object.values(totalAmountByFilter).reduce(
+        (sum, amount) => sum + amount,
+        0,
+      );
+
+      // Filter AMCs to those that match our criteria
+      const filteredAmcs = allAmcs.filter((amc) =>
+        matchingAmcIds.has(amc._id.toString()),
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportAmcToExcel: AMCs filtered for export',
+          count: filteredAmcs.length,
+          totalAmount,
+        }),
+      );
+
+      // Define Excel styles
+      const headerStyle: Partial<ExcelJS.Style> = {
+        font: { bold: true, color: { argb: 'FFFFFF' } },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: '4F81BD' },
+        } as ExcelJS.FillPattern,
+        border: {
+          top: { style: 'thin' as ExcelJS.BorderStyle },
+          left: { style: 'thin' as ExcelJS.BorderStyle },
+          bottom: { style: 'thin' as ExcelJS.BorderStyle },
+          right: { style: 'thin' as ExcelJS.BorderStyle },
+        },
+        alignment: { horizontal: 'center', vertical: 'middle' },
+      };
+
+      const dataStyle: Partial<ExcelJS.Style> = {
+        border: {
+          top: { style: 'thin' as ExcelJS.BorderStyle },
+          left: { style: 'thin' as ExcelJS.BorderStyle },
+          bottom: { style: 'thin' as ExcelJS.BorderStyle },
+          right: { style: 'thin' as ExcelJS.BorderStyle },
+        },
+        alignment: { vertical: 'middle' },
+      };
+
+      const amountStyle: Partial<ExcelJS.Style> = {
+        ...dataStyle,
+        numFmt: '#,##0.00',
+        alignment: { ...(dataStyle.alignment || {}), horizontal: 'right' },
+      };
+
+      const dateStyle: Partial<ExcelJS.Style> = {
+        ...dataStyle,
+        numFmt: 'dd-mmm-yyyy',
+        alignment: { ...(dataStyle.alignment || {}), horizontal: 'center' },
+      };
+
+      const highlightStyle: Partial<ExcelJS.Style> = {
+        ...dataStyle,
+        font: { bold: true },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'E6F0FF' },
+        } as ExcelJS.FillPattern,
+      };
+
+      const totalRowStyle: Partial<ExcelJS.Style> = {
+        font: { bold: true },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'DDEBF7' },
+        } as ExcelJS.FillPattern,
+        border: {
+          top: { style: 'thin' as ExcelJS.BorderStyle },
+          left: { style: 'thin' as ExcelJS.BorderStyle },
+          bottom: { style: 'double' as ExcelJS.BorderStyle },
+          right: { style: 'thin' as ExcelJS.BorderStyle },
+        },
+        alignment: { vertical: 'middle' },
+      };
+
+      const totalAmountStyle: Partial<ExcelJS.Style> = {
+        ...totalRowStyle,
+        numFmt: '#,##0.00',
+        alignment: { ...(totalRowStyle.alignment || {}), horizontal: 'right' },
+      };
+
+      // Add filter breakdown at the top
+      worksheet.addRow(['AMC Export Report']).font = { size: 16, bold: true };
+      worksheet.addRow(['Generated on:', new Date()]).getCell(2).style =
+        dateStyle;
+
+      worksheet.addRow([]);
+
+      const filterRow = worksheet.addRow(['Filters Used:', filters.join(', ')]);
+      filterRow.getCell(1).font = { bold: true };
+
+      const dateRangeText =
+        startDate && endDate
+          ? `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`
+          : 'All dates';
+      const dateRangeRow = worksheet.addRow(['Date Range:', dateRangeText]);
+      dateRangeRow.getCell(1).font = { bold: true };
+
+      worksheet.addRow([]);
+
+      // Add amount summary section
+      const summaryRow = worksheet.addRow(['Amount Summary']);
+      summaryRow.font = { size: 14, bold: true };
+
+      // Headers for amount summary
+      const summaryHeaderRow = worksheet.addRow([
+        'Filter Type',
+        'Total Amount',
+      ]);
+      summaryHeaderRow.eachCell((cell) => {
+        cell.style = headerStyle;
+      });
+
+      // Add each filter amount
+      Object.entries(totalAmountByFilter).forEach(([filter, amount]) => {
+        const row = worksheet.addRow([filter, amount]);
+        row.getCell(1).style = highlightStyle;
+        row.getCell(2).style = amountStyle;
+      });
+
+      // Add total row
+      const totalSummaryRow = worksheet.addRow(['TOTAL', totalAmount]);
+      totalSummaryRow.getCell(1).style = totalRowStyle;
+      totalSummaryRow.getCell(2).style = totalAmountStyle;
+
+      worksheet.addRow([]);
+      worksheet.addRow([]);
+
+      // Define columns for the data table
+      worksheet.columns = [
+        { header: 'Client', key: 'client', width: 25 },
+        { header: 'Product', key: 'product', width: 20 },
+        { header: 'Purchase Date', key: 'purchaseDate', width: 15 },
+        { header: 'AMC Start Date', key: 'amcStartDate', width: 15 },
+        { header: 'Status', key: 'status', width: 12 },
+        { header: 'Payment From', key: 'paymentFrom', width: 15 },
+        { header: 'Payment To', key: 'paymentTo', width: 15 },
+        { header: 'Amount', key: 'amount', width: 15 },
+        { header: 'Filter Match', key: 'filterMatch', width: 20 },
+      ];
+
+      // Style the header row
+      worksheet.getRow(worksheet.rowCount).eachCell((cell) => {
+        cell.style = headerStyle;
+      });
+
+      // Add data rows - first collect all payment data
+      const allPaymentRows = [];
+
+      for (const amc of filteredAmcs) {
+        // filteredAmcs contains AMCs that have at least ONE payment matching the criteria
+        const clientName = (amc.client_id as any)?.name || 'Unknown Client';
+        const productNames =
+          (amc.products as any[])
+            ?.map((p) => p.short_name || p.name)
+            .join(', ') || 'Unknown Product';
+        const purchaseDate = (amc.order_id as any)?.purchase_date;
+        const amcStartDateValue = (amc.order_id as any)?.amc_start_date;
+
+        // Iterate through each payment of this AMC
+        for (const payment of amc.payments) {
+          const paymentFromDate = new Date(payment.from_date);
+          let paymentMatchedAnyOfTheUserFilters = false;
+          const specificFiltersThisPaymentMatched = [];
+
+          // Check this specific payment against each of the user's selected filters
+          for (const filterType of filters) {
+            const dateInRange =
+              (!startDate || paymentFromDate >= startDate) &&
+              (!endDate || paymentFromDate <= endDate);
+
+            let currentFilterLogicMatch = false;
+            switch (filterType) {
+              case AMC_FILTER.PAID:
+                currentFilterLogicMatch =
+                  payment.status === PAYMENT_STATUS_ENUM.PAID &&
+                  ((!startDate && !endDate) || dateInRange);
+                break;
+              case AMC_FILTER.PENDING:
+                currentFilterLogicMatch =
+                  payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                  ((!startDate && !endDate) || dateInRange);
+                break;
+              case AMC_FILTER.PROFORMA:
+                currentFilterLogicMatch =
+                  payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                  ((!startDate && !endDate) || dateInRange);
+                break;
+              case AMC_FILTER.INVOICE:
+                currentFilterLogicMatch =
+                  payment.status === PAYMENT_STATUS_ENUM.INVOICE &&
+                  ((!startDate && !endDate) || dateInRange);
+                break;
+            }
+
+            if (currentFilterLogicMatch) {
+              paymentMatchedAnyOfTheUserFilters = true;
+              specificFiltersThisPaymentMatched.push(filterType);
+            }
+          }
+
+          // If this specific payment matched any of the user-selected filters, add it to the Excel rows
+          if (paymentMatchedAnyOfTheUserFilters) {
+            allPaymentRows.push({
+              client: clientName,
+              product: productNames,
+              purchaseDate,
+              amcStartDate: amcStartDateValue,
+              status: payment.status,
+              paymentFrom: payment.from_date,
+              paymentTo: payment.to_date,
+              amount: payment.amc_rate_amount || 0,
+              filterMatch: specificFiltersThisPaymentMatched.join(', '),
+              isFilterMatch: true, // This payment is a direct match to the applied filters
+            });
+          }
+        }
+      }
+
+      // Sort the data by client and payment date
+      allPaymentRows.sort((a, b) => {
+        if (a.client !== b.client) return a.client.localeCompare(b.client);
+        return (
+          new Date(a.paymentFrom).getTime() - new Date(b.paymentFrom).getTime()
+        );
+      });
+
+      // Add all data rows
+      for (const rowData of allPaymentRows) {
+        const row = worksheet.addRow({
+          client: rowData.client,
+          product: rowData.product,
+          purchaseDate: rowData.purchaseDate,
+          amcStartDate: rowData.amcStartDate,
+          status: rowData.status,
+          paymentFrom: rowData.paymentFrom,
+          paymentTo: rowData.paymentTo,
+          amount: rowData.amount,
+          filterMatch: rowData.filterMatch,
+        });
+
+        // Apply styles
+        row.getCell('client').style = dataStyle;
+        row.getCell('product').style = dataStyle;
+        row.getCell('purchaseDate').style = dateStyle;
+        row.getCell('amcStartDate').style = dateStyle;
+
+        // Determine status cell style based on payment status
+        let statusCellStyle: Partial<ExcelJS.Style> = {
+          ...dataStyle, // Copy initial properties from dataStyle
+          alignment: { horizontal: 'center', vertical: 'middle' },
+        };
+
+        switch (rowData.status) {
+          case PAYMENT_STATUS_ENUM.PAID:
+            statusCellStyle.font = { color: { argb: 'FFFFFF' } }; // White text
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: '10B981' },
+            } as ExcelJS.FillPattern; // Tailwind green-700 (approx)
+            break;
+          case PAYMENT_STATUS_ENUM.PENDING:
+            statusCellStyle.font = { color: { argb: 'FFFFFF' } }; // White text
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'EF4444' },
+            } as ExcelJS.FillPattern; // Tailwind red-600 (approx)
+            break;
+          case PAYMENT_STATUS_ENUM.proforma:
+            statusCellStyle.font = { color: { argb: '000000' } }; // Black text
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'F59E0B' },
+            } as ExcelJS.FillPattern; // Tailwind yellow-600 (approx)
+            break;
+          case PAYMENT_STATUS_ENUM.INVOICE:
+            statusCellStyle.font = { color: { argb: 'FFFFFF' } }; // White text
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: '3B82F6' },
+            } as ExcelJS.FillPattern; // Tailwind blue-600 (approx)
+            break;
+        }
+        row.getCell('status').style = statusCellStyle;
+
+        row.getCell('paymentFrom').style = dateStyle;
+        row.getCell('paymentTo').style = dateStyle;
+        row.getCell('amount').style = amountStyle;
+
+        // Apply special highlighting for rows that match filter criteria
+        if (rowData.isFilterMatch) {
+          row.getCell('filterMatch').style = {
+            ...highlightStyle,
+            font: { bold: true, color: { argb: '000000' } },
+            fill: {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFEB9C' },
+            }, // Light yellow
+            alignment: { horizontal: 'center', vertical: 'middle' },
+          };
+
+          // Highlight the entire row with a very light yellow background
+          [
+            'client',
+            'product',
+            'purchaseDate',
+            'amcStartDate',
+            'paymentFrom',
+            'paymentTo',
+            'amount',
+          ].forEach((cellKey) => {
+            // Skip styling the status cell again as it has its own specific color
+            if (cellKey === 'status') return;
+
+            const currentStyle = row.getCell(cellKey).style;
+            row.getCell(cellKey).style = {
+              ...currentStyle,
+              fill: {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFFDE6' },
+              }, // Very light yellow
+            };
+          });
+        } else {
+          row.getCell('filterMatch').style = {
+            ...dataStyle,
+            font: { color: { argb: '808080' } }, // Gray text for non-matches
+            alignment: { horizontal: 'center', vertical: 'middle' },
+          };
+        }
+      }
+
+      // Add a total row at the bottom
+      const finalRow = worksheet.addRow({
+        client: 'TOTAL',
+        amount: totalAmount,
+      });
+
+      finalRow.getCell('client').style = totalRowStyle;
+      finalRow.getCell('product').style = totalRowStyle;
+      finalRow.getCell('purchaseDate').style = totalRowStyle;
+      finalRow.getCell('amcStartDate').style = totalRowStyle;
+      finalRow.getCell('status').style = totalRowStyle;
+      finalRow.getCell('paymentFrom').style = totalRowStyle;
+      finalRow.getCell('paymentTo').style = totalRowStyle;
+      finalRow.getCell('amount').style = totalAmountStyle;
+      finalRow.getCell('filterMatch').style = totalRowStyle;
+
+      // Auto-filter the data table
+      worksheet.autoFilter = {
+        from: {
+          row: worksheet.rowCount - allPaymentRows.length - 1,
+          column: 1,
+        },
+        to: { row: worksheet.rowCount - 1, column: 9 },
+      };
+
+      // Generate the Excel file buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportAmcToExcel: Excel export generated successfully',
+          rowCount: worksheet.rowCount,
+          paymentCount: allPaymentRows.length,
+        }),
+      );
+
+      return buffer;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'exportAmcToExcel: Error generating Excel export',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        'Failed to generate Excel export: ' + error.message,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 }
