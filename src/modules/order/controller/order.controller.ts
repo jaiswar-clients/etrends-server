@@ -475,4 +475,16 @@ export class OrderController {
   async deleteOrderById(@Param('id') id: string) {
     return this.orderService.deleteOrderById(id);
   }
+
+
+  @Post('/amc/:id/update-amc-payments')
+  async createAmcPayments(@Param('id') id: string, @Body() body: { till_year: number }) {
+    console.log(body);
+    return this.orderService.createAmcPaymentsTillYear(id, body.till_year);
+  }
+
+  @Post('/amc/update-amc-payments-for-all-amcs')
+  async createAmcPaymentsForAllAmcs(@Body() body: { till_year: number }) {
+    return this.orderService.createAmcPaymentsTillYearForAllAmcs(body.till_year);
+  }
 }

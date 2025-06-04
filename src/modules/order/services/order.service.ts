@@ -1880,68 +1880,6 @@ export class OrderService {
         }),
       );
 
-      // Clean up startDate and endDate values for consistent caching
-      const startDateParam =
-        options.startDate && options.startDate !== 'undefined'
-          ? options.startDate.toString()
-          : 'null';
-
-      const endDateParam =
-        options.endDate && options.endDate !== 'undefined'
-          ? options.endDate.toString()
-          : 'null';
-
-      // Generate cache key based on parameters
-      const filtersKey = filters.sort().join(',');
-      const clientIdKey = options.clientId || 'null';
-      const productIdKey = options.productId || 'null';
-      const cacheKey = `amc_data_${filtersKey}_${page}_${limit}_${clientIdKey}_${productIdKey}_${startDateParam}_${endDateParam}`;
-
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'loadAllAMC: Checking cache',
-          cacheKey,
-        }),
-      );
-
-      // Try to get data from cache first
-      let cachedData;
-      try {
-        cachedData = await this.cacheManager.get(cacheKey);
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'loadAllAMC: Cache check result',
-            hasCachedData: !!cachedData,
-            cachedData: typeof cachedData,
-          }),
-        );
-      } catch (cacheError: any) {
-        this.loggerService.error(
-          JSON.stringify({
-            message: 'loadAllAMC: Cache retrieval error',
-            error: cacheError?.message || 'Unknown cache error',
-          }),
-        );
-        cachedData = null;
-      }
-
-      if (cachedData) {
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'loadAllAMC: Returning cached data',
-            cacheKey,
-          }),
-        );
-        return cachedData;
-      }
-
-      // Continue with the data fetching since cache miss
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'loadAllAMC: Cache miss, fetching fresh data',
-        }),
-      );
-
       // Fetch active orders first
       const activeOrders = await this.orderModel
         .find({ status: ORDER_STATUS_ENUM.ACTIVE })
@@ -2333,28 +2271,6 @@ export class OrderService {
           data: amcsList,
         },
       };
-
-      // Cache the results for future requests
-      try {
-        // TTL set to 15 minutes (900 seconds)
-        await this.cacheManager.set(cacheKey, responseData, 900);
-
-        this.loggerService.log(
-          JSON.stringify({
-            message: 'loadAllAMC: Data cached successfully',
-            cacheKey,
-            responseDataType: typeof responseData,
-          }),
-        );
-      } catch (cacheError: any) {
-        this.loggerService.error(
-          JSON.stringify({
-            message: 'loadAllAMC: Cache storage error',
-            error: cacheError?.message || 'Unknown cache error',
-            stack: cacheError?.stack || 'No stack trace available',
-          }),
-        );
-      }
 
       return responseData;
     } catch (error: any) {
@@ -2855,11 +2771,10 @@ export class OrderService {
         );
         clientFilterForActiveOrders.client_id.$in =
           clientFilterForActiveOrders.client_id.$in.map((id) => String(id));
-      } else if(clientFilterForActiveOrders.client_id) {
+      } else if (clientFilterForActiveOrders.client_id) {
         this.loggerService.log(
           JSON.stringify({
-            message:
-              'getAllPendingPayments: Converting client_id to string',
+            message: 'getAllPendingPayments: Converting client_id to string',
             clientId,
           }),
         );
@@ -2916,12 +2831,12 @@ export class OrderService {
 
       // Number of payment types to consider based on filter
       let TOTAL_PURCHASES_SCENARIOS = 5; // Default for 'all'
-      
+
       // Determine which types to fetch based on the type filter
       const shouldFetchAMC = type === 'amc' || type === 'all' || !type;
       const shouldFetchOrder = type === 'order' || type === 'all' || !type;
       const shouldFetchOtherTypes = type === 'all' || !type; // licenses, customizations, additional services
-      
+
       // Update the count of active scenarios based on type filter
       if (type === 'amc') {
         TOTAL_PURCHASES_SCENARIOS = 1; // Only AMC
@@ -2929,9 +2844,13 @@ export class OrderService {
         TOTAL_PURCHASES_SCENARIOS = 1; // Only Order
       } else {
         // For 'all' or undefined, keep the original 5 scenarios
-        TOTAL_PURCHASES_SCENARIOS = shouldFetchOtherTypes ? 5 : (shouldFetchAMC && shouldFetchOrder) ? 2 : 1;
+        TOTAL_PURCHASES_SCENARIOS = shouldFetchOtherTypes
+          ? 5
+          : shouldFetchAMC && shouldFetchOrder
+            ? 2
+            : 1;
       }
-      
+
       // Calculate adjusted limit for each schema based on active scenarios
       const pendingLimitForEachSchema = Math.max(
         1,
@@ -3016,32 +2935,38 @@ export class OrderService {
         totalServices,
         totalOrders,
       ] = [0, 0, 0, 0, 0]; // Initialize with zeros
-      
+
       // Prepare query promises based on type filter
       const countPromises: Promise<number>[] = [];
-      
+
       if (shouldFetchAMC) {
         countPromises.push(this.amcModel.countDocuments(amcBaseQuery));
       } else {
         countPromises.push(Promise.resolve(0));
       }
-      
+
       if (shouldFetchOtherTypes) {
         countPromises.push(this.licenseModel.countDocuments(licenseBaseQuery));
-        countPromises.push(this.customizationModel.countDocuments(customizationBaseQuery));
-        countPromises.push(this.additionalServiceModel.countDocuments(serviceBaseQuery));
+        countPromises.push(
+          this.customizationModel.countDocuments(customizationBaseQuery),
+        );
+        countPromises.push(
+          this.additionalServiceModel.countDocuments(serviceBaseQuery),
+        );
       } else {
         countPromises.push(Promise.resolve(0));
         countPromises.push(Promise.resolve(0));
         countPromises.push(Promise.resolve(0));
       }
-      
+
       if (shouldFetchOrder) {
-        countPromises.push(this.orderModel.countDocuments(orderPaymentTermsBaseQuery));
+        countPromises.push(
+          this.orderModel.countDocuments(orderPaymentTermsBaseQuery),
+        );
       } else {
         countPromises.push(Promise.resolve(0));
       }
-      
+
       [
         totalAMCs,
         totalLicenses,
@@ -3067,7 +2992,7 @@ export class OrderService {
 
       // Prepare fetch promises based on type filter
       const fetchPromises: Promise<any>[] = [];
-      
+
       if (shouldFetchAMC) {
         fetchPromises.push(
           this.amcModel
@@ -3075,12 +3000,12 @@ export class OrderService {
             .populate('client_id', 'name')
             .populate('products', 'short_name')
             .skip(skipAmount)
-            .limit(pendingLimitForEachSchema)
+            .limit(pendingLimitForEachSchema),
         );
       } else {
         fetchPromises.push(Promise.resolve([]));
       }
-      
+
       if (shouldFetchOtherTypes) {
         fetchPromises.push(
           this.licenseModel
@@ -3091,9 +3016,9 @@ export class OrderService {
             })
             .populate({ path: 'product_id', select: 'short_name' })
             .skip(skipAmount)
-            .limit(pendingLimitForEachSchema)
+            .limit(pendingLimitForEachSchema),
         );
-        
+
         fetchPromises.push(
           this.customizationModel
             .find(customizationBaseQuery)
@@ -3103,9 +3028,9 @@ export class OrderService {
             })
             .populate('product_id', 'short_name')
             .skip(skipAmount)
-            .limit(pendingLimitForEachSchema)
+            .limit(pendingLimitForEachSchema),
         );
-        
+
         fetchPromises.push(
           this.additionalServiceModel
             .find(serviceBaseQuery)
@@ -3114,14 +3039,14 @@ export class OrderService {
               populate: { path: 'client_id', select: 'name' },
             })
             .skip(skipAmount)
-            .limit(pendingLimitForEachSchema)
+            .limit(pendingLimitForEachSchema),
         );
       } else {
         fetchPromises.push(Promise.resolve([]));
         fetchPromises.push(Promise.resolve([]));
         fetchPromises.push(Promise.resolve([]));
       }
-      
+
       if (shouldFetchOrder) {
         fetchPromises.push(
           this.orderModel
@@ -3135,7 +3060,7 @@ export class OrderService {
               },
             ])
             .skip(skipAmount)
-            .limit(pendingLimitForEachSchema)
+            .limit(pendingLimitForEachSchema),
         );
       } else {
         fetchPromises.push(Promise.resolve([]));
@@ -5153,6 +5078,457 @@ export class OrderService {
       throw new HttpException(
         'Failed to generate Excel export: ' + error.message,
         HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async createAmcPaymentsTillYear(amcId: string, tillYear: number) {
+    try {
+      // Validate and convert tillYear
+      const validTillYear =
+        typeof tillYear === 'string' ? parseInt(tillYear, 10) : tillYear;
+
+      if (
+        !validTillYear ||
+        isNaN(validTillYear) ||
+        validTillYear < 2000 ||
+        validTillYear > 2100
+      ) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'createAmcPaymentsTillYear: Invalid tillYear parameter',
+            data: { amcId, tillYear, validTillYear, typeof: typeof tillYear },
+          }),
+        );
+        throw new HttpException(
+          'Invalid tillYear parameter. Must be a valid year between 2000 and 2100. current tillYear: ' +
+            tillYear,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createAmcPaymentsTillYear: Starting AMC payments creation',
+          data: { amcId, tillYear: validTillYear, originalTillYear: tillYear },
+        }),
+      );
+
+      // Find AMC with populated order and client information
+      const amc = await this.amcModel.findById(amcId).populate({
+        path: 'order_id',
+        model: Order.name,
+        populate: [
+          {
+            path: 'customizations',
+            model: Customization.name,
+          },
+          {
+            path: 'licenses',
+            model: License.name,
+          },
+          {
+            path: 'client_id',
+            model: Client.name,
+            select: 'amc_frequency_in_months',
+          },
+        ],
+      });
+
+      if (!amc) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'createAmcPaymentsTillYear: AMC not found',
+            data: { amcId },
+          }),
+        );
+        throw new HttpException('AMC not found', HttpStatus.NOT_FOUND);
+      }
+
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) {
+        this.loggerService.error(
+          JSON.stringify({
+            message:
+              'createAmcPaymentsTillYear: Order or AMC start date not found',
+            data: { amcId, orderId: order?._id },
+          }),
+        );
+        throw new HttpException(
+          'Order or AMC start date not found',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      // Skip if payments array is empty - need at least one payment to continue from
+      if (!amc.payments || amc.payments.length === 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message:
+              'createAmcPaymentsTillYear: Skipping AMC with empty payments array',
+            data: { amcId },
+          }),
+        );
+        return {
+          amcId,
+          newPaymentsCreated: 0,
+          totalPayments: 0,
+          tillYear: validTillYear,
+          lastAmcPayment: null,
+          amcStartDate: order.amc_start_date,
+          message:
+            'No payments exist - cannot create future payments without base payment',
+        };
+      }
+
+      // Get AMC frequency from client settings or default to yearly (12 months)
+      const amc_frequency_in_months =
+        order.client_id?.amc_frequency_in_months || DEFAULT_AMC_CYCLE_IN_MONTHS;
+
+      const lastPayment = amc.payments[amc.payments.length - 1];
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createAmcPaymentsTillYear: Retrieved AMC and order details',
+          data: {
+            amcId,
+            orderId: order._id,
+            amcStartDate: order.amc_start_date,
+            amcFrequency: amc_frequency_in_months,
+            existingPaymentsCount: amc.payments.length,
+            lastPaymentToDate: lastPayment.to_date,
+            lastPaymentToDateYear: new Date(lastPayment.to_date).getFullYear(),
+            tillYear: validTillYear,
+          },
+        }),
+      );
+
+      // Check if we need to add payments up to the target year
+      const lastPaymentYear = new Date(lastPayment.to_date).getFullYear();
+
+      if (lastPaymentYear >= validTillYear) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'createAmcPaymentsTillYear: No new payments needed',
+            data: {
+              amcId,
+              tillYear: validTillYear,
+              lastPaymentYear,
+              message: 'Last payment already covers the target year or beyond',
+            },
+          }),
+        );
+        return {
+          amcId,
+          newPaymentsCreated: 0,
+          totalPayments: amc.payments.length,
+          tillYear: validTillYear,
+          lastAmcPayment: lastPayment,
+          amcStartDate: order.amc_start_date,
+          message:
+            'No new payments needed - payments already exist till specified year',
+        };
+      }
+
+      // We need to add payments up to the target year
+      let fromDate = new Date(lastPayment.to_date);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'createAmcPaymentsTillYear: Adding payments to cover target year',
+          data: {
+            amcId,
+            lastPaymentToDate: fromDate,
+            tillYear: validTillYear,
+            lastPaymentYear,
+          },
+        }),
+      );
+
+      // Calculate total cost including customizations and licenses
+      let totalCost = order.base_cost || 0;
+
+      // Add customization costs
+      const customizations = order.customizations || [];
+      for (const customization of customizations) {
+        totalCost += customization.cost || 0;
+      }
+
+      // Add license costs
+      const licenses = order.licenses || [];
+      for (const license of licenses) {
+        const licenseCost =
+          (license.rate?.amount || 0) * (license.total_license || 0);
+        totalCost += licenseCost;
+      }
+
+      // Calculate AMC amount based on total cost
+      const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createAmcPaymentsTillYear: Calculated AMC amounts',
+          data: {
+            amcId,
+            totalCost,
+            amcPercentage: order.amc_rate.percentage,
+            amcAmount,
+          },
+        }),
+      );
+
+      const newPayments = [];
+      let currentPaymentsCount = amc.payments.length;
+
+      // Create new payments to cover the target year - similar to updateAMCPayments logic
+      while (fromDate.getFullYear() < validTillYear) {
+        const toDate = this.getNextDate(
+          new Date(fromDate),
+          amc_frequency_in_months,
+        );
+
+        const newPayment = {
+          from_date: new Date(fromDate),
+          to_date: toDate,
+          status: PAYMENT_STATUS_ENUM.PENDING,
+          amc_frequency: amc_frequency_in_months,
+          total_cost: totalCost,
+          amc_rate_applied: order.amc_rate.percentage,
+          amc_rate_amount: amcAmount,
+        };
+
+        // Add the payment to the AMC
+        await this.amcModel.findByIdAndUpdate(amc._id, {
+          $push: { payments: newPayment },
+          amount: amcAmount,
+          total_cost: totalCost,
+        });
+
+        newPayments.push(newPayment);
+        currentPaymentsCount++;
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'createAmcPaymentsTillYear: Added new payment',
+            data: {
+              amcId,
+              newPayment,
+              fromYear: fromDate.getFullYear(),
+              toYear: toDate.getFullYear(),
+            },
+          }),
+        );
+
+        fromDate = toDate;
+
+        // Safety check to prevent infinite loop
+        if (fromDate.getFullYear() > validTillYear + 5) {
+          this.loggerService.warn(
+            JSON.stringify({
+              message:
+                'createAmcPaymentsTillYear: Breaking loop to prevent infinite iteration',
+              data: {
+                amcId,
+                currentYear: fromDate.getFullYear(),
+                tillYear: validTillYear,
+              },
+            }),
+          );
+          break;
+        }
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'createAmcPaymentsTillYear: Successfully created AMC payments',
+          data: {
+            amcId,
+            newPaymentsCount: newPayments.length,
+            totalPaymentsCount: currentPaymentsCount,
+            tillYear: validTillYear,
+          },
+        }),
+      );
+
+      // Get the updated AMC to return the latest payment
+      const updatedAmc = await this.amcModel.findById(amcId);
+
+      return {
+        amcId,
+        newPaymentsCreated: newPayments.length,
+        totalPayments: currentPaymentsCount,
+        tillYear: validTillYear,
+        lastAmcPayment: updatedAmc.payments[updatedAmc.payments.length - 1],
+        amcStartDate: order.amc_start_date,
+        message:
+          newPayments.length > 0
+            ? `Successfully created ${newPayments.length} new payment(s)`
+            : 'No new payments needed - payments already exist till specified year',
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'createAmcPaymentsTillYear: Error creating AMC payments',
+          data: { amcId, tillYear },
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async createAmcPaymentsTillYearForAllAmcs(tillYear: number) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'createAmcPaymentsTillYearForAllAmcs: Starting bulk AMC payments creation',
+          data: { tillYear },
+        }),
+      );
+
+      // Get all AMCs with basic information
+      const allAmcs = await this.amcModel.find({}).select('_id order_id');
+
+      if (!allAmcs || allAmcs.length === 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'createAmcPaymentsTillYearForAllAmcs: No AMCs found',
+            data: { tillYear },
+          }),
+        );
+        return {
+          tillYear,
+          totalAmcsProcessed: 0,
+          successfulAmcs: 0,
+          failedAmcs: 0,
+          results: [],
+          message: 'No AMCs found to process',
+        };
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'createAmcPaymentsTillYearForAllAmcs: Found AMCs to process',
+          data: {
+            tillYear,
+            totalAmcsFound: allAmcs.length,
+          },
+        }),
+      );
+
+      const results = [];
+      let successfulAmcs = 0;
+      let failedAmcs = 0;
+
+      // Process each AMC
+      for (const amc of allAmcs) {
+        try {
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'createAmcPaymentsTillYearForAllAmcs: Processing AMC',
+              data: {
+                amcId: amc._id,
+                tillYear,
+              },
+            }),
+          );
+
+          // Call the individual function for this AMC
+          const result = await this.createAmcPaymentsTillYear(
+            amc._id.toString(),
+            tillYear,
+          );
+
+          results.push({
+            amcId: amc._id,
+            success: true,
+            ...result,
+          });
+
+          successfulAmcs++;
+
+          this.loggerService.log(
+            JSON.stringify({
+              message:
+                'createAmcPaymentsTillYearForAllAmcs: Successfully processed AMC',
+              data: {
+                amcId: amc._id,
+                newPaymentsCreated: result.newPaymentsCreated,
+                tillYear,
+              },
+            }),
+          );
+        } catch (error: any) {
+          failedAmcs++;
+
+          this.loggerService.error(
+            JSON.stringify({
+              message:
+                'createAmcPaymentsTillYearForAllAmcs: Failed to process AMC',
+              data: {
+                amcId: amc._id,
+                tillYear,
+                error: error.message,
+              },
+            }),
+          );
+
+          results.push({
+            amcId: amc._id,
+            success: false,
+            error: error.message,
+            tillYear,
+          });
+        }
+      }
+
+      const totalNewPayments = results
+        .filter((r) => r.success)
+        .reduce((sum, r) => sum + (r.newPaymentsCreated || 0), 0);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'createAmcPaymentsTillYearForAllAmcs: Completed bulk processing',
+          data: {
+            tillYear,
+            totalAmcsProcessed: allAmcs.length,
+            successfulAmcs,
+            failedAmcs,
+            totalNewPaymentsCreated: totalNewPayments,
+          },
+        }),
+      );
+
+      return {
+        tillYear,
+        totalAmcsProcessed: allAmcs.length,
+        successfulAmcs,
+        failedAmcs,
+        totalNewPaymentsCreated: totalNewPayments,
+        results,
+        message: `Processed ${allAmcs.length} AMCs. ${successfulAmcs} successful, ${failedAmcs} failed. Created ${totalNewPayments} new payments total.`,
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'createAmcPaymentsTillYearForAllAmcs: Error in bulk processing',
+          data: { tillYear },
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }

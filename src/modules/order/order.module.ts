@@ -18,7 +18,10 @@ import { Client, ClientSchema } from '@/db/schema/client.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
 import { MailService } from '@/common/mail/service/mail.service';
 import { CacheModule } from '@nestjs/cache-manager';
-import { Reminder, ReminderSchema } from '@/db/schema/reminders/reminder.schema';
+import {
+  Reminder,
+  ReminderSchema,
+} from '@/db/schema/reminders/reminder.schema';
 
 @Module({
   imports: [
@@ -40,7 +43,7 @@ import { Reminder, ReminderSchema } from '@/db/schema/reminders/reminder.schema'
       ttl: 900, // 15 minutes
       max: 100, // Maximum number of items in cache
       isGlobal: false,
-    })
+    }),
   ],
   controllers: [OrderController],
   providers: [OrderService, MailService],

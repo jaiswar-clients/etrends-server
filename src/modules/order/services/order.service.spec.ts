@@ -655,4 +655,244 @@ describe('OrderService', () => {
       expect(result[result.length - 1].status).toBe(PAYMENT_STATUS_ENUM.PENDING);
     });
   });
+
+  describe('createAmcPaymentsTillYear', () => {
+    const mockAmcId = 'amc123';
+    const tillYear = 2026;
+    
+    const mockOrder = {
+      _id: 'order123',
+      amc_start_date: new Date('2024-01-01'),
+      base_cost: 10000,
+      amc_rate: {
+        percentage: 20,
+        amount: 2000
+      },
+      client_id: {
+        amc_frequency_in_months: 12
+      },
+      customizations: [
+        {
+          purchased_date: new Date('2024-06-01'),
+          cost: 5000
+        }
+      ],
+      licenses: [
+        {
+          purchase_date: new Date('2024-08-01'),
+          rate: {
+            amount: 1000
+          },
+          total_license: 2
+        }
+      ]
+    };
+
+    const mockAmc = {
+      _id: mockAmcId,
+      order_id: mockOrder,
+      client_id: 'client123',
+      total_cost: 17000,
+      amount: 3400,
+      amc_percentage: 20,
+      products: [],
+      payments: [
+        {
+          from_date: new Date('2024-01-01'),
+          to_date: new Date('2025-01-01'),
+          status: PAYMENT_STATUS_ENUM.PAID,
+        }
+      ],
+      save: jest.fn().mockResolvedValue(true)
+    } as any;
+
+    beforeEach(() => {
+      jest.spyOn(amcModel, 'findById').mockReturnThis();
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(mockAmc);
+      jest.spyOn(loggerService, 'log').mockImplementation();
+      jest.spyOn(loggerService, 'error').mockImplementation();
+    });
+
+    afterEach(() => {
+      jest.clearAllMocks();
+      jest.restoreAllMocks();
+    });
+
+    it('should create AMC payments till specified year successfully', async () => {
+      const result = await service.createAmcPaymentsTillYear(mockAmcId, tillYear);
+
+      expect(amcModel.findById).toHaveBeenCalledWith(mockAmcId);
+      expect(amcModel.populate).toHaveBeenCalled();
+      
+      expect(result).toEqual({
+        amcId: mockAmcId,
+        newPaymentsCreated: 1,
+        totalPayments: 2,
+        tillYear,
+        message: 'Successfully created 1 new payment(s)'
+      });
+
+      expect(mockAmc.save).toHaveBeenCalled();
+      
+      // Verify new payment was added with correct calculations
+      expect(mockAmc.payments).toHaveLength(2);
+      expect(mockAmc.payments[1]).toEqual(
+        expect.objectContaining({
+          from_date: new Date('2025-01-01'),
+          to_date: new Date('2026-01-01'),
+          status: PAYMENT_STATUS_ENUM.PENDING,
+          amc_rate_applied: 20,
+          amc_rate_amount: 3400, // 20% of (10000 + 5000 + 2000)
+          total_cost: 17000
+        })
+      );
+    });
+
+    it('should skip existing payment years and only create missing ones', async () => {
+      const mockAmcWithMultiplePayments = {
+        ...mockAmc,
+        payments: [
+          {
+            from_date: new Date('2024-01-01'),
+            to_date: new Date('2025-01-01'),
+            status: PAYMENT_STATUS_ENUM.PAID,
+          },
+          {
+            from_date: new Date('2025-01-01'),
+            to_date: new Date('2026-01-01'),
+            status: PAYMENT_STATUS_ENUM.PENDING,
+          }
+        ]
+      } as any;
+
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(mockAmcWithMultiplePayments);
+
+      const result = await service.createAmcPaymentsTillYear(mockAmcId, 2026);
+
+      expect(result).toEqual({
+        amcId: mockAmcId,
+        newPaymentsCreated: 0,
+        totalPayments: 2,
+        tillYear: 2026,
+        message: 'No new payments needed'
+      });
+
+      expect(mockAmcWithMultiplePayments.save).not.toHaveBeenCalled();
+    });
+
+    it('should handle AMC with no existing payments', async () => {
+      const mockAmcWithNoPayments = {
+        ...mockAmc,
+        payments: []
+      } as any;
+
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(mockAmcWithNoPayments);
+
+      const result = await service.createAmcPaymentsTillYear(mockAmcId, 2025);
+
+      expect(result).toEqual({
+        amcId: mockAmcId,
+        newPaymentsCreated: 2,
+        totalPayments: 2,
+        tillYear: 2025,
+        message: 'Successfully created 2 new payment(s)'
+      });
+
+      // Should create payments for 2024 and 2025
+      expect(mockAmcWithNoPayments.payments).toHaveLength(2);
+      expect(mockAmcWithNoPayments.save).toHaveBeenCalled();
+    });
+
+    it('should throw error when AMC is not found', async () => {
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(null);
+
+      await expect(service.createAmcPaymentsTillYear(mockAmcId, tillYear))
+        .rejects.toThrow(new HttpException('AMC not found', HttpStatus.NOT_FOUND));
+
+      expect(loggerService.error).toHaveBeenCalledWith(
+        expect.stringContaining('AMC not found')
+      );
+    });
+
+    it('should throw error when order or AMC start date is not found', async () => {
+      const mockAmcWithoutOrder = {
+        ...mockAmc,
+        order_id: null
+      } as any;
+
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(mockAmcWithoutOrder);
+
+      await expect(service.createAmcPaymentsTillYear(mockAmcId, tillYear))
+        .rejects.toThrow(new HttpException('Order or AMC start date not found', HttpStatus.BAD_REQUEST));
+
+      expect(loggerService.error).toHaveBeenCalledWith(
+        expect.stringContaining('Order or AMC start date not found')
+      );
+    });
+
+    it('should calculate costs correctly without customizations and licenses', async () => {
+      const mockOrderWithoutAdditions = {
+        ...mockOrder,
+        customizations: [],
+        licenses: []
+      };
+
+      const mockAmcWithoutAdditions = {
+        ...mockAmc,
+        order_id: mockOrderWithoutAdditions,
+        payments: []
+      } as any;
+
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(mockAmcWithoutAdditions);
+
+      await service.createAmcPaymentsTillYear(mockAmcId, 2024);
+
+      // Should only include base cost
+      expect(mockAmcWithoutAdditions.payments[0]).toEqual(
+        expect.objectContaining({
+          total_cost: 10000,
+          amc_rate_amount: 2000 // 20% of 10000
+        })
+      );
+    });
+
+    it('should use default AMC frequency when client frequency is not available', async () => {
+      const mockOrderWithoutFrequency = {
+        ...mockOrder,
+        client_id: {}
+      };
+
+      const mockAmcWithoutFrequency = {
+        ...mockAmc,
+        order_id: mockOrderWithoutFrequency,
+        payments: []
+      } as any;
+
+      jest.spyOn(amcModel, 'populate').mockResolvedValue(mockAmcWithoutFrequency);
+
+      await service.createAmcPaymentsTillYear(mockAmcId, 2024);
+
+      // Should use default 12 months frequency
+      expect(mockAmcWithoutFrequency.payments[0]).toEqual(
+        expect.objectContaining({
+          from_date: new Date('2024-01-01'),
+          to_date: new Date('2025-01-01')
+        })
+      );
+    });
+
+    it('should handle save error gracefully', async () => {
+      const saveError = new Error('Database save failed');
+      mockAmc.save.mockRejectedValue(saveError);
+
+      await expect(service.createAmcPaymentsTillYear(mockAmcId, tillYear))
+        .rejects.toThrow(HttpException);
+
+      expect(loggerService.error).toHaveBeenCalledWith(
+        expect.stringContaining('Error creating AMC payments')
+      );
+    });
+  });
+
+  
 });

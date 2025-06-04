@@ -1,4 +1,10 @@
-import { DynamicModule, ForwardReference, Module, Type } from '@nestjs/common';
+import {
+  DynamicModule,
+  ForwardReference,
+  Module,
+  OnModuleInit,
+  Type,
+} from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { LoggerModule } from '@/common/logger/logger.module';
@@ -58,4 +64,8 @@ const appModules: NestModuleImport[] = [LoggerModule, HttpModule, ConfigModule];
   controllers: [AppController],
   providers: [AppService, TasksService],
 })
-export class AppModule {}
+export class AppModule implements OnModuleInit {
+  constructor(private appService: AppService) {}
+
+  async onModuleInit() {}
+}
