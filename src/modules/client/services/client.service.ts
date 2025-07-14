@@ -7,6 +7,19 @@ import { LoggerService } from '@/common/logger/services/logger.service';
 import { encrypt } from '@/utils/cryptography';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
+import { Product, ProductDocument } from '@/db/schema/product.schema';
+import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
+import { Types } from 'mongoose';
+
+interface ClientFilterOptions {
+  parentCompanyId?: string;
+  clientName?: string;
+  industry?: string;
+  productId?: string;
+  startDate?: string;
+  endDate?: string;
+  hasOrders?: string;
+}
 
 @Injectable()
 export class ClientService {
@@ -14,100 +27,339 @@ export class ClientService {
     @InjectModel(Client.name)
     private clientModel: SoftDeleteModel<ClientDocument>,
     @InjectModel(Order.name) private orderModel: SoftDeleteModel<OrderDocument>,
+    @InjectModel(Product.name) private productModel: SoftDeleteModel<ProductDocument>,
     private loggerService: LoggerService,
   ) {}
 
-  async getAllClients(page = 1, limit = 10, fetchAll = false) {
+  async getAllClients(
+    page = 1,
+    limit = 10,
+    fetchAll = false,
+    filters: ClientFilterOptions = {},
+  ): Promise<{
+    clients: any[];
+    pagination?: {
+      total: number;
+      page: number;
+      limit: number;
+      pages: number;
+      hasNextPage: boolean;
+      hasPreviousPage: boolean;
+    };
+  }> {
     try {
+      // Validate industry if provided
+      if (
+        filters.industry &&
+        !Object.values(INDUSTRIES_ENUM).includes(filters.industry as any)
+      ) {
+        throw new HttpException('Invalid industry value', HttpStatus.BAD_REQUEST);
+      }
+
+      // Validate dates
+      let parsedStartDate: Date | undefined = undefined;
+      let parsedEndDate: Date | undefined = undefined;
+
+      if (filters.startDate && filters.startDate !== 'undefined') {
+        parsedStartDate = new Date(filters.startDate);
+        if (isNaN(parsedStartDate.getTime())) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'getAllClients: Invalid start date format, ignoring',
+              startDate: filters.startDate,
+            }),
+          );
+          parsedStartDate = undefined;
+        }
+      }
+
+      if (filters.endDate && filters.endDate !== 'undefined') {
+        parsedEndDate = new Date(filters.endDate);
+        if (isNaN(parsedEndDate.getTime())) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'getAllClients: Invalid end date format, ignoring',
+              endDate: filters.endDate,
+            }),
+          );
+          parsedEndDate = undefined;
+        }
+      }
+
+      // Validate date range
+      if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+        this.loggerService.warn(
+          JSON.stringify({
+            message: 'getAllClients: Start date is after end date, date filter will be ignored',
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
+          }),
+        );
+        parsedStartDate = undefined;
+        parsedEndDate = undefined;
+      }
+
       this.loggerService.log(
         JSON.stringify({
-          message: 'getAllClients: Fetching Clients info ',
+          message: 'getAllClients: Fetching clients with pagination and filters',
+          data: {
+            page,
+            limit,
+            fetchAll,
+            filters,
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
+          },
+        }),
+      );
+
+      const filterQuery: any = { is_parent_company: false };
+      let orderIdsForFilter: Types.ObjectId[] | null = null;
+
+      // Apply date range filter to createdAt
+      if (parsedStartDate && parsedEndDate) {
+        filterQuery.createdAt = {
+          $gte: parsedStartDate,
+          $lte: parsedEndDate,
+        };
+      } else if (parsedStartDate) {
+        filterQuery.createdAt = { $gte: parsedStartDate };
+      } else if (parsedEndDate) {
+        filterQuery.createdAt = { $lte: parsedEndDate };
+      }
+
+      // 1. Filter by Client Name
+      if (filters.clientName && filters.clientName.trim() !== '') {
+        filterQuery.name = { $regex: filters.clientName, $options: 'i' };
+      }
+
+      // 2. Filter by Parent Company
+      if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
+        try {
+          const parentCompanyObjectId = new Types.ObjectId(filters.parentCompanyId);
+          filterQuery.parent_company_id = parentCompanyObjectId;
+        } catch (error: any) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'getAllClients: Invalid parent company ID, skipping filter',
+              error: error.message,
+              parentCompanyId: filters.parentCompanyId,
+            }),
+          );
+        }
+      }
+
+      // 3. Filter by Industry
+      if (filters.industry && filters.industry.trim() !== '') {
+        filterQuery.industry = filters.industry;
+      }
+
+      // 4. Filter by Product ID or short_name (find orders first)
+      if (filters.productId && filters.productId.trim() !== '') {
+        const identifiers = filters.productId.split(',').map(id => id.trim());
+        const objectIds: (Types.ObjectId | string)[] = [];
+        const shortNames: string[] = [];
+        
+        identifiers.forEach(identifier => {
+          if (Types.ObjectId.isValid(identifier)) {
+            objectIds.push(new Types.ObjectId(identifier));
+            objectIds.push(identifier);
+          } else {
+            shortNames.push(identifier);
+          }
+        });
+        
+        if (shortNames.length > 0) {
+          const products = await this.productModel
+            .find({ short_name: { $in: shortNames } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          
+          products.forEach(product => {
+            objectIds.push(product._id);
+            objectIds.push(product._id.toString());
+          });
+        }
+        
+        if (objectIds.length > 0) {
+          const ordersWithProducts = await this.orderModel
+            .find({ products: { $in: objectIds } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          
+          orderIdsForFilter = ordersWithProducts.map(order => order._id);
+          
+          if (orderIdsForFilter.length === 0) {
+            // No orders found with these products
+            return {
+              clients: [],
+              pagination: fetchAll ? undefined : {
+                total: 0,
+                page,
+                limit,
+                pages: 0,
+                hasNextPage: false,
+                hasPreviousPage: false,
+              },
+            };
+          }
+          
+          filterQuery.orders = { $in: orderIdsForFilter };
+        }
+      }
+
+      // 5. Filter by hasOrders
+      if (filters.hasOrders && filters.hasOrders.trim() !== '') {
+        const hasOrdersBoolean = filters.hasOrders.toLowerCase() === 'true';
+        if (hasOrdersBoolean) {
+          filterQuery.orders = { $exists: true, $ne: [] };
+        } else {
+          filterQuery.orders = { $exists: false, $eq: [] };
+        }
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAllClients: Constructed filter query',
+          data: filterQuery,
+        }),
+      );
+
+      // Get total count for pagination (only if not fetchAll)
+      let totalClients = 0;
+      if (!fetchAll) {
+        totalClients = await this.clientModel.countDocuments(filterQuery);
+        
+        if (totalClients === 0) {
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'getAllClients: No clients found',
+              data: filterQuery,
+            }),
+          );
+          return {
+            clients: [],
+            pagination: {
+              total: 0,
+              page,
+              limit,
+              pages: 0,
+              hasNextPage: false,
+              hasPreviousPage: false,
+            },
+          };
+        }
+      }
+
+      // Build query
+      let clientQuery = this.clientModel
+        .find(filterQuery)
+        .sort({ createdAt: -1 })
+        .select('orders name industry createdAt parent_company_id');
+
+      // Apply pagination if not fetchAll
+      if (!fetchAll) {
+        clientQuery = clientQuery.skip((page - 1) * limit).limit(limit);
+      }
+
+      // Execute query with population
+      const clients = await clientQuery.populate({
+        path: 'orders',
+        model: 'Order',
+        select: 'products purchased_date',
+        populate: {
+          path: 'products',
+          model: 'Product',
+          select: 'name short_name',
+        },
+      });
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAllClients: Clients fetched successfully',
+          count: clients.length,
           page,
           limit,
         }),
       );
 
-      let clients;
-      if (fetchAll) {
-        clients = await this.clientModel
-          .find({ is_parent_company: false })
-          .sort({ createdAt: -1 })
-          .select('orders name industry createdAt parent_company_id')
-          .populate({
-            path: 'orders',
-            model: 'Order',
-            select: 'products',
-            populate: {
-              path: 'products',
-              model: 'Product',
-              select: 'name short_name',
-            },
-          });
-      } else {
-        clients = await this.clientModel
-          .find({ is_parent_company: false })
-          .sort({ createdAt: -1 })
-          .select('orders name industry createdAt parent_company_id')
-          .skip((page - 1) * limit)
-          .limit(limit)
-          .populate({
-            path: 'orders',
-            model: 'Order',
-            select: 'products',
-            populate: {
-              path: 'products',
-              model: 'Product',
-              select: 'name',
-            },
-          });
-      }
-      
+      // Transform clients data
+      const transformedClients = await Promise.all(
+        clients.map(async (client: any) => {
+          const clientObj = client.toObject();
+          
+          // Extract unique products from orders
+          const productSet = new Set();
+          const products: string[] = [];
+          
+          if (client.orders && client.orders.length > 0) {
+            client.orders.forEach((order: any) => {
+              if (order.products && order.products.length > 0) {
+                order.products.forEach((product: any) => {
+                  if (product && product.name && !productSet.has(product.name)) {
+                    productSet.add(product.name);
+                    products.push(product.name);
+                  }
+                });
+              }
+            });
+          }
 
-      // extract products from the orders and add it in client object
-      const transformedClients = [];
-      for (const client of clients) {
-        let products = [];
-        for (const order of client.orders) {
-          products = order.products.map((product) => product.name);
-        }
+          // Get first order date
+          let first_order_date = null;
+          if (client.orders && client.orders.length > 0) {
+            const ordersWithDates = client.orders
+              .filter((order: any) => order.purchased_date)
+              .sort((a: any, b: any) => new Date(a.purchased_date).getTime() - new Date(b.purchased_date).getTime());
+            
+            if (ordersWithDates.length > 0) {
+              first_order_date = ordersWithDates[0].purchased_date;
+            }
+          }
 
-        let first_order_date = null;
-        if (client.orders && client.orders.length > 0) {
-          const firstOrder = await this.orderModel
-            .findById(client.orders[0])
-            .select('purchased_date')
-            .lean();
-          first_order_date = firstOrder?.purchased_date || null;
-        }
+          // Get parent company info
+          let parent_company = null;
+          if (clientObj.parent_company_id) {
+            const parentCompany = await this.clientModel
+              .findById(clientObj.parent_company_id)
+              .select('name')
+              .lean();
+            parent_company = parentCompany?.name || null;
+          }
 
-        const clientObj = client.toObject();
-        let parent_company = null;
-
-        if (clientObj.parent_company_id) {
-          const parentCompany = await this.clientModel
-            .findById(clientObj.parent_company_id)
-            .select('name')
-            .lean();
-          parent_company = parentCompany?.name || null;
-        }
-
-        transformedClients.push({
-          ...clientObj,
-          products,
-          first_order_date,
-          parent_company,
-        });
-      }
-      clients = transformedClients;
-
-      this.loggerService.warn(
-        JSON.stringify({
-          message: 'getAllClients: Clients Fetched',
-          clients,
+          return {
+            ...clientObj,
+            products,
+            first_order_date,
+            parent_company,
+          };
         }),
       );
 
-      return clients;
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAllClients: Completed processing clients',
+          data: { processedCount: transformedClients.length },
+        }),
+      );
+
+      const result: any = {
+        clients: transformedClients,
+      };
+
+      // Add pagination info if not fetchAll
+      if (!fetchAll) {
+        result.pagination = {
+          total: totalClients,
+          page,
+          limit,
+          pages: Math.ceil(totalClients / limit),
+          hasNextPage: page < Math.ceil(totalClients / limit),
+          hasPreviousPage: page > 1,
+        };
+      }
+
+      return result;
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({

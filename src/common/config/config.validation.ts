@@ -19,4 +19,6 @@ export const validationSchema = Joi.object({
   EMAIL_PASSWORD: Joi.string().required(),
   
   TURN_OFF_EMAIL_REMINDER: Joi.boolean().default(false),
+
+  ANTHROPHIC_API_KEY: Joi.string().required(),
 });

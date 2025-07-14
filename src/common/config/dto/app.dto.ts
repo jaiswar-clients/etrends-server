@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsNumber, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsNumber, IsString } from 'class-validator';
 
 export class AppConfigDTO {
   @IsString()
@@ -60,5 +60,11 @@ export class AppConfigDTO {
   @IsNotEmpty()
   EMAIL_PASSWORD: string;
 
+  @IsBoolean()
+  @IsNotEmpty()
   TURN_OFF_EMAIL_REMINDER: boolean;
+
+  @IsString()
+  @IsNotEmpty()
+  ANTHROPHIC_API_KEY: string;
 }

@@ -1073,22 +1073,48 @@ export class OrderService {
         }
       }
 
-      // 4. Filter by Product ID
+      // 4. Filter by Product ID or short_name
       if (filters.productId && filters.productId.trim() !== '') {
-        try {
-          filterQuery.products = new Types.ObjectId(filters.productId); // Assumes products is array of ObjectIds
-        } catch (error: any) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'loadAllOrdersWithAttributes: Invalid product ID, skipping filter',
-              error: error.message,
-              productId: filters.productId,
-            }),
-          );
-          // Don't return early, just skip this filter
-          // return { purchases: [], pagination: { total: 0, page, limit, pages: 0, hasNextPage: false, hasPreviousPage: false } };
+        const identifiers = filters.productId.split(',').map(id => id.trim());
+        const objectIds: (Types.ObjectId | string)[] = [];
+        const shortNames: string[] = [];
+        
+        identifiers.forEach(identifier => {
+          if (Types.ObjectId.isValid(identifier)) {
+            // Add both ObjectId and string format to handle mixed storage
+            objectIds.push(new Types.ObjectId(identifier));
+            objectIds.push(identifier); // Add string version too
+          } else {
+            shortNames.push(identifier);
+          }
+        });
+        
+        if (shortNames.length > 0) {
+          const products = await this.productModel
+            .find({ short_name: { $in: shortNames } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          
+          products.forEach(product => {
+            objectIds.push(product._id);
+            objectIds.push(product._id.toString()); // Add string version too
+          });
         }
+        
+        filterQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+        
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllOrdersWithAttributes: Product filter applied',
+            data: {
+              originalProductId: filters.productId,
+              identifiers,
+              shortNames,
+              objectIds: objectIds.map(id => id.toString()),
+              filterQuery: filterQuery.products,
+            },
+          }),
+        );
       }
 
       // 5. Filter by Status
@@ -1920,25 +1946,43 @@ export class OrderService {
 
       // Add product_id filter if provided
       if (options.productId) {
-        try {
-          amcQuery.products = new Types.ObjectId(options.productId);
-          this.loggerService.log(
-            JSON.stringify({
-              message: 'loadAllAMC: Applied product filter',
-              productId: options.productId,
-            }),
-          );
-        } catch (error) {
-          this.loggerService.error(
-            JSON.stringify({
-              message: 'loadAllAMC: Invalid product ID format',
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          );
+        const identifiers = options.productId.split(',').map(id => id.trim());
+        const objectIds: (Types.ObjectId | string)[] = [];
+        const shortNames: string[] = [];
+        identifiers.forEach(identifier => {
+          if (Types.ObjectId.isValid(identifier)) {
+            objectIds.push(new Types.ObjectId(identifier));
+            objectIds.push(identifier); // Add string version too
+          } else {
+            shortNames.push(identifier);
+          }
+        });
+        if (shortNames.length > 0) {
+          const products = await this.productModel
+            .find({ short_name: { $in: shortNames } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          products.forEach(product => {
+            objectIds.push(product._id);
+            objectIds.push(product._id.toString());
+          });
         }
+        amcQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllAMC: Product filter applied',
+            data: {
+              originalProductId: options.productId,
+              identifiers,
+              shortNames,
+              objectIds: objectIds.map(id => id.toString()),
+              filterQuery: amcQuery.products,
+            },
+          }),
+        );
       }
 
-      // Fetch all AMCs with basic filtering
+      // Fetch all AMCs with necessary relationships
       const allAmcs = await this.amcModel
         .find(amcQuery)
         .sort({ _id: -1 })
@@ -3709,7 +3753,7 @@ export class OrderService {
         );
       }
 
-      console.log(payments)
+      console.log(payments);
       // Ensure the most recent payment is marked as pending
       payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
 
@@ -4549,16 +4593,40 @@ export class OrderService {
 
       // Add product_id filter if provided
       if (options.productId) {
-        try {
-          amcQuery.products = new Types.ObjectId(options.productId);
-        } catch (error) {
-          this.loggerService.error(
-            JSON.stringify({
-              message: 'exportAmcToExcel: Invalid product ID format',
-              error: error instanceof Error ? error.message : String(error),
-            }),
-          );
+        const identifiers = options.productId.split(',').map(id => id.trim());
+        const objectIds: (Types.ObjectId | string)[] = [];
+        const shortNames: string[] = [];
+        identifiers.forEach(identifier => {
+          if (Types.ObjectId.isValid(identifier)) {
+            objectIds.push(new Types.ObjectId(identifier));
+            objectIds.push(identifier); // Add string version too
+          } else {
+            shortNames.push(identifier);
+          }
+        });
+        if (shortNames.length > 0) {
+          const products = await this.productModel
+            .find({ short_name: { $in: shortNames } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          products.forEach(product => {
+            objectIds.push(product._id);
+            objectIds.push(product._id.toString());
+          });
         }
+        amcQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'loadAllAMC: Product filter applied',
+            data: {
+              originalProductId: options.productId,
+              identifiers,
+              shortNames,
+              objectIds: objectIds.map(id => id.toString()),
+              filterQuery: amcQuery.products,
+            },
+          }),
+        );
       }
 
       // Fetch all AMCs with necessary relationships

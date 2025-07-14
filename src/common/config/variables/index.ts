@@ -16,5 +16,6 @@ export const app = registerAs('APP', () => ({
   EMAIL_ID: process.env['EMAIL_ID'],
   EMAIL_PASSWORD: process.env['EMAIL_PASSWORD'],
   TURN_OFF_EMAIL_REMINDER: process.env['TURN_OFF_EMAIL_REMINDER'] === 'true',
+  ANTHROPHIC_API_KEY: process.env['ANTHROPHIC_API_KEY'],
 }));
 

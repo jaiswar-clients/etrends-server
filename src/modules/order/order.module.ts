@@ -1,6 +1,8 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { OrderController } from './controller/order.controller';
+import { OrderAiController } from './controller/order.ai.controller';
 import { OrderService } from './services/order.service';
+import { OrderAiService } from './services/order.ai.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { StorageModule } from '@/common/storage/storage.module';
 import {
@@ -45,9 +47,9 @@ import {
       isGlobal: false,
     }),
   ],
-  controllers: [OrderController],
-  providers: [OrderService, MailService],
-  exports: [OrderService],
+  controllers: [OrderController, OrderAiController],
+  providers: [OrderService, MailService, OrderAiService],
+  exports: [OrderService, OrderAiService],
 })
 export class OrderModule implements OnModuleInit {
   constructor(private orderService: OrderService) {}

@@ -1,0 +1,87 @@
+---
+description: 
+globs: src\modules\order\controller\order.ai.controller.ts,src\modules\order\services\order.ai.service.ts
+alwaysApply: false
+---
+# API Definitions
+
+This document provides a summary of the available API endpoints. For more context on how these entities relate to each other, see the [Project Overview](mdc:.cursor/rules/project-overview.mdc).
+
+---
+
+## App Controller (`[app.controller.ts](mdc:src/modules/app.controller.ts)`)
+
+-   `POST /upload`: Upload a single file.
+-   `POST /upload-multiple`: Upload multiple files.
+
+---
+
+## Client Controller (`[client.controller.ts](mdc:src/modules/client/controller/client.controller.ts)`)
+
+-   `GET /clients`: Get a list of all clients (paginated). (`ClientService.getAllClients`)
+-   `GET /clients/generate-client-id`: Generate a new unique client ID. (`ClientService.generateUniqueClientId`)
+-   `GET /clients/parent-companies`: Get a list of all parent companies. (`ClientService.getAllParentCompanies`)
+-   `GET /clients/:id`: Get a specific client by their ID. (`ClientService.getClientById`)
+-   `GET /clients/:id/products`: Get a list of products purchased by a specific client. (`ClientService.getProductsPurchasedByClient`)
+-   `GET /clients/:id/profit`: Calculate and retrieve the profit generated from a specific client. (`ClientService.getProfitFromClient`)
+-   `POST /clients`: Create a new client. (`ClientService.createClient`)
+-   `PATCH /clients/:id`: Update an existing client's information. (`ClientService.updateClient`)
+
+---
+
+## Order Controller (`[order.controller.ts](mdc:src/modules/order/controller/order.controller.ts)`)
+
+-   `GET /orders/all-orders`: Retrieve a paginated list of all orders with filtering options. (`OrderService.loadAllOrdersWithAttributes`)
+-   `GET /orders/filters/company-data`: Get data for populating company-related filters. (`OrderService.getCompanyFilterData`)
+-   `GET /orders/all-amc`: Get a list of all AMCs with filtering and pagination. (`OrderService.loadAllAMC`)
+-   `GET /orders/export-amc`: Export AMC data to an Excel file based on filters. (`OrderService.exportAmcToExcel`)
+-   `GET /orders/pending-payments`: Get a list of all pending payments. (`OrderService.getAllPendingPayments`)
+-   `GET /orders/:id`: Get a specific order by its ID. (`OrderService.getOrderById`)
+-   `GET /orders/:id/amc`: Get AMC details for a specific order. (`OrderService.getAmcByOrderId`)
+-   `GET /orders/client/:id`: Get all orders for a specific client. (`OrderService.getOrdersByClientId`)
+-   `GET /orders/license/:id`: Get license details for a specific order. (`OrderService.getLicenseById`)
+-   `GET /orders/additional-service/:id`: Get additional service details for an order. (`OrderService.getAdditionalServiceById`)
+-   `GET /orders/customization/:id`: Get customization details for an order. (`OrderService.getCustomizationById`)
+-   `GET /orders/amc-payments-review/:id`: Get the AMC review history for an order. (`OrderService.getAmcReviewByOrderId`)
+-   `POST /orders/:clientId`: Create a new order for a specific client. (`OrderService.createOrder`)
+-   `POST /orders/:orderId/license`: Add a new license to an existing order. (`OrderService.addLicense`)
+-   `POST /orders/:orderId/additional-service`: Add an additional service to an existing order. (`OrderService.addAdditionalService`)
+-   `POST /orders/:orderId/customization`: Add a customization to an existing order. (`OrderService.addCustomization`)
+-   `POST /orders/amc/:id/update-amc-payments`: Create AMC payment entries for an order up to a specified year. (`OrderService.createAmcPaymentsTillYear`)
+-   `POST /orders/amc/update-amc-payments-for-all-amcs`: Create AMC payment entries for all AMCs up to a specified year. (`OrderService.createAmcPaymentsTillYearForAllAmcs`)
+-   `PATCH /orders/:id`: Update an existing order. (`OrderService.updateOrder`)
+-   `PATCH /orders/customization/:id`: Update a specific customization by its ID. (`OrderService.updateCustomizationById`)
+-   `PATCH /orders/license/:id`: Update a specific license by its ID. (`OrderService.updateLicenseById`)
+-   `PATCH /orders/additional-service/:id`: Update an additional service by its ID. (`OrderService.updateAdditionalServiceById`)
+-   `PATCH /orders/amc/:id`: Update AMC details by the AMC ID. (`OrderService.updateAMCById`)
+-   `PATCH /orders/amc/:id/payments`: Add multiple payment records to an AMC. (`OrderService.addPaymentsIntoAmc`)
+-   `PATCH /orders/amc/:id/payment/:paymentId`: Update a specific payment record within an AMC. (`OrderService.updateAmcPaymentById`)
+-   `PATCH /orders/pending-payments/:id`: Update the status of a pending payment. (`OrderService.updatePendingPayment`)
+-   `DELETE /orders/:id`: Delete an order by its ID. (`OrderService.deleteOrderById`)
+-   `DELETE /orders/amc/:id/payment/:paymentId`: Delete a specific payment record from an AMC. (`OrderService.deleteAmcPaymentById`)
+
+---
+
+## Product Controller (`[product.controller.ts](mdc:src/modules/product/controller/product.controller.ts)`)
+
+-   `GET /products`: Get a list of all available products. (`ProductService.getAllProducts`)
+-   `GET /products/:id`: Get a specific product by its ID. (`ProductService.getProductById`)
+-   `POST /products`: Create a new product. (`ProductService.createProduct`)
+-   `PATCH /products/:id`: Update an existing product. (`ProductService.updateProductById`)
+-   `DELETE /products/:id`: Delete a product. (`ProductService.deleteProductById`)
+
+---
+
+## User Controller (`[user.controller.ts](mdc:src/modules/user/controller/user.controller.ts)`)
+
+-   `POST /users`: Create a new user.
+-   `POST /users/login`: Authenticate a user and receive a login token.
+-   `GET /users/internal-team-emails`: Get a list of email addresses for the internal team.
+
+---
+
+## Order AI Controller (`[order.ai.controller.ts](mdc:src/modules/order/controller/order.ai.controller.ts)`)
+
+This controller currently has no exposed API endpoints.
+
+

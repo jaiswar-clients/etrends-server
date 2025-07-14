@@ -1,0 +1,70 @@
+---
+description: 
+globs: src\modules\order\services\order.ai.service.ts,src\modules\order\controller\order.ai.controller.ts
+alwaysApply: false
+---
+# Project Overview
+
+This document shows how this project works including schema relations and all.
+
+This project is an in-house tool for managing sales orders, Annual Maintenance Contracts (AMCs), and related analytics.
+
+## Core Entities
+
+The system revolves around a few core data models:
+
+- **User** (`[user.schema.ts](mdc:src/db/schema/user.schema.ts)`): Represents the system user who manages the data.
+- **Client** (`[client.schema.ts](mdc:src/db/schema/client.schema.ts)`): Represents the customer purchasing products or services.
+- **Product** (`[product.schema.ts](mdc:src/db/schema/product.schema.ts)`): Represents the items or services that can be sold.
+
+## Order Management Workflow
+
+The primary workflow for managing an order is as follows:
+
+1.  **Create a Client**: The first step is to add a new `Client` to the system.
+
+2.  **Create a Product Order**: Once a client exists, a `Product Order` (`[product-order.schema.ts](mdc:src/db/schema/order/product-order.schema.ts)`) is created for them. This is the main order record and contains details about the products purchased.
+
+3.  **Add Order Components**: The main order can be supplemented with several components:
+    -   **License** (`[license.schema.ts](mdc:src/db/schema/order/license.schema.ts)`): If a product within the order is configured with `does_have_license: true`, a license can be attached to the order.
+    -   **Customization** (`[customization.schema.ts](mdc:src/db/schema/order/customization.schema.ts)`): Represents any custom development work done as part of the order.
+    -   **Additional Service** (`[additional-service.schema.ts](mdc:src/db/schema/order/additional-service.schema.ts)`): Represents other services included in the sale.
+
+4.  **Manage AMC**: An `AMC` (`[amc.schema.ts](mdc:src/db/schema/amc/amc.schema.ts)`) record is created to track the annual maintenance for the main order, including all its associated services and customizations.
+
+## Schema Relationships
+
+Here is a diagram illustrating the relationships between the main schemas:
+
+```mermaid
+graph TD
+    subgraph "Core Entities"
+        User(["User<br/>(user.schema.ts)"])
+        Client(["Client<br/>(client.schema.ts)"])
+        Product(["Product<br/>(product.schema.ts)"])
+    end
+
+    subgraph "Order & AMC"
+        ProductOrder["Product Order<br/>(product-order.schema.ts)"]
+        License["License<br/>(license.schema.ts)"]
+        Customization["Customization<br/>(customization.schema.ts)"]
+        AdditionalService["Additional Service<br/>(additional-service.schema.ts)"]
+        AMC["AMC<br/>(amc.schema.ts)"]
+    end
+
+    User -- "Manages data for" --> Client
+    User -- "Manages data for" --> Product
+    
+    Client -- "has one or more" --> ProductOrder
+    ProductOrder -- "contains one or more" --> Product
+    
+    ProductOrder -- "can have" --> License
+    ProductOrder -- "can have" --> Customization
+    ProductOrder -- "can have" --> AdditionalService
+    
+    ProductOrder -- "is tracked by" --> AMC
+
+
+
+
+```
