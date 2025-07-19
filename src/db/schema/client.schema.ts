@@ -106,6 +106,9 @@ ClientSchema.plugin(mongooseDelete, {
   overrideMethods: 'all',
 });
 
+// Create text index on name field for full-text search
+ClientSchema.index({ name: 'text' });
+
 ClientSchema.set('toObject', { virtuals: true });
 ClientSchema.set('toJSON', { virtuals: true });
 

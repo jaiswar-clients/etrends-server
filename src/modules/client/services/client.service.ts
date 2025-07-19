@@ -27,7 +27,8 @@ export class ClientService {
     @InjectModel(Client.name)
     private clientModel: SoftDeleteModel<ClientDocument>,
     @InjectModel(Order.name) private orderModel: SoftDeleteModel<OrderDocument>,
-    @InjectModel(Product.name) private productModel: SoftDeleteModel<ProductDocument>,
+    @InjectModel(Product.name)
+    private productModel: SoftDeleteModel<ProductDocument>,
     private loggerService: LoggerService,
   ) {}
 
@@ -53,7 +54,10 @@ export class ClientService {
         filters.industry &&
         !Object.values(INDUSTRIES_ENUM).includes(filters.industry as any)
       ) {
-        throw new HttpException('Invalid industry value', HttpStatus.BAD_REQUEST);
+        throw new HttpException(
+          'Invalid industry value',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       // Validate dates
@@ -90,7 +94,8 @@ export class ClientService {
       if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
         this.loggerService.warn(
           JSON.stringify({
-            message: 'getAllClients: Start date is after end date, date filter will be ignored',
+            message:
+              'getAllClients: Start date is after end date, date filter will be ignored',
             startDate: parsedStartDate,
             endDate: parsedEndDate,
           }),
@@ -101,7 +106,8 @@ export class ClientService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'getAllClients: Fetching clients with pagination and filters',
+          message:
+            'getAllClients: Fetching clients with pagination and filters',
           data: {
             page,
             limit,
@@ -136,12 +142,15 @@ export class ClientService {
       // 2. Filter by Parent Company
       if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
         try {
-          const parentCompanyObjectId = new Types.ObjectId(filters.parentCompanyId);
+          const parentCompanyObjectId = new Types.ObjectId(
+            filters.parentCompanyId,
+          );
           filterQuery.parent_company_id = parentCompanyObjectId;
         } catch (error: any) {
           this.loggerService.error(
             JSON.stringify({
-              message: 'getAllClients: Invalid parent company ID, skipping filter',
+              message:
+                'getAllClients: Invalid parent company ID, skipping filter',
               error: error.message,
               parentCompanyId: filters.parentCompanyId,
             }),
@@ -156,11 +165,11 @@ export class ClientService {
 
       // 4. Filter by Product ID or short_name (find orders first)
       if (filters.productId && filters.productId.trim() !== '') {
-        const identifiers = filters.productId.split(',').map(id => id.trim());
+        const identifiers = filters.productId.split(',').map((id) => id.trim());
         const objectIds: (Types.ObjectId | string)[] = [];
         const shortNames: string[] = [];
-        
-        identifiers.forEach(identifier => {
+
+        identifiers.forEach((identifier) => {
           if (Types.ObjectId.isValid(identifier)) {
             objectIds.push(new Types.ObjectId(identifier));
             objectIds.push(identifier);
@@ -168,42 +177,44 @@ export class ClientService {
             shortNames.push(identifier);
           }
         });
-        
+
         if (shortNames.length > 0) {
           const products = await this.productModel
             .find({ short_name: { $in: shortNames } })
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
-          
-          products.forEach(product => {
+
+          products.forEach((product) => {
             objectIds.push(product._id);
             objectIds.push(product._id.toString());
           });
         }
-        
+
         if (objectIds.length > 0) {
           const ordersWithProducts = await this.orderModel
             .find({ products: { $in: objectIds } })
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
-          
-          orderIdsForFilter = ordersWithProducts.map(order => order._id);
-          
+
+          orderIdsForFilter = ordersWithProducts.map((order) => order._id);
+
           if (orderIdsForFilter.length === 0) {
             // No orders found with these products
             return {
               clients: [],
-              pagination: fetchAll ? undefined : {
-                total: 0,
-                page,
-                limit,
-                pages: 0,
-                hasNextPage: false,
-                hasPreviousPage: false,
-              },
+              pagination: fetchAll
+                ? undefined
+                : {
+                    total: 0,
+                    page,
+                    limit,
+                    pages: 0,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
+                  },
             };
           }
-          
+
           filterQuery.orders = { $in: orderIdsForFilter };
         }
       }
@@ -229,7 +240,7 @@ export class ClientService {
       let totalClients = 0;
       if (!fetchAll) {
         totalClients = await this.clientModel.countDocuments(filterQuery);
-        
+
         if (totalClients === 0) {
           this.loggerService.log(
             JSON.stringify({
@@ -287,16 +298,20 @@ export class ClientService {
       const transformedClients = await Promise.all(
         clients.map(async (client: any) => {
           const clientObj = client.toObject();
-          
+
           // Extract unique products from orders
           const productSet = new Set();
           const products: string[] = [];
-          
+
           if (client.orders && client.orders.length > 0) {
             client.orders.forEach((order: any) => {
               if (order.products && order.products.length > 0) {
                 order.products.forEach((product: any) => {
-                  if (product && product.name && !productSet.has(product.name)) {
+                  if (
+                    product &&
+                    product.name &&
+                    !productSet.has(product.name)
+                  ) {
                     productSet.add(product.name);
                     products.push(product.name);
                   }
@@ -310,8 +325,12 @@ export class ClientService {
           if (client.orders && client.orders.length > 0) {
             const ordersWithDates = client.orders
               .filter((order: any) => order.purchased_date)
-              .sort((a: any, b: any) => new Date(a.purchased_date).getTime() - new Date(b.purchased_date).getTime());
-            
+              .sort(
+                (a: any, b: any) =>
+                  new Date(a.purchased_date).getTime() -
+                  new Date(b.purchased_date).getTime(),
+              );
+
             if (ordersWithDates.length > 0) {
               first_order_date = ordersWithDates[0].purchased_date;
             }
@@ -962,6 +981,81 @@ export class ClientService {
       throw new HttpException(
         'Failed to generate unique client ID',
         HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async checkClientNameExists(clientName: string): Promise<{
+    exists: boolean;
+    clients: any[];
+  }> {
+    try {
+      const normalizedName = clientName.toLowerCase().replace(/\s+/g, '');
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'checkClientNameExists: Checking if client name exists',
+          originalName: clientName,
+          normalizedName,
+        }),
+      );
+
+      // Fetch only relevant clients and limit for performance
+      const clients = await this.clientModel
+        .find({})
+        .select('name client_id industry createdAt')
+        .lean();
+
+      const filteredClients = clients
+        .map((client) => {
+          const normalized = client.name.toLowerCase().replace(/\s+/g, '');
+          return {
+            ...client,
+            normalizedName: normalized,
+          };
+        })
+        .filter((client) => client.normalizedName.startsWith(normalizedName))
+        .sort((a, b) => {
+          // Exact matches first, then alphabetically
+          if (a.normalizedName === normalizedName) return -1;
+          if (b.normalizedName === normalizedName) return 1;
+          return a.normalizedName.localeCompare(b.normalizedName);
+        })
+        .map(({ normalizedName, ...client }) => client); // Strip temp field
+
+      const exists =
+        filteredClients.length > 0 &&
+        filteredClients[0].name.toLowerCase().replace(/\s+/g, '') ===
+          normalizedName;
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'checkClientNameExists: Client name search completed',
+          exists,
+          totalResults: filteredClients.length,
+          normalizedName,
+        }),
+      );
+
+      return {
+        exists: filteredClients.length > 0,
+        clients: filteredClients,
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'checkClientNameExists: Failed to check client name existence',
+          error: error.message,
+          stack: error.stack,
+          clientName,
+        }),
+      );
+
+      throw new HttpException(
+        error.message ?? 'Failed to check client name existence',
+        HttpStatus.BAD_GATEWAY,
+        { cause: error },
       );
     }
   }

@@ -101,6 +101,11 @@ export class ClientController {
     return this.clientService.generateUniqueClientId();
   }
 
+  @Get('/check-client-name')
+  async checkClientName(@Query('name') name: string) {
+    return this.clientService.checkClientNameExists(name);
+  }
+
   @Get('/parent-companies')
   async getAllParentCompanies() {
     return this.clientService.getAllParentCompanies();

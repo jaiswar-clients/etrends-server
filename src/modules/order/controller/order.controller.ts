@@ -300,6 +300,93 @@ export class OrderController {
     return res.send(excelBuffer);
   }
 
+  @Get('/export-purchases')
+  async exportPurchasesToExcel(
+    @Query('parent_company_id') parentCompanyId?: string,
+    @Query('client_id') clientId?: string,
+    @Query('client_name') clientName?: string,
+    @Query('product_id') productId?: string,
+    @Query('status') status?: ORDER_STATUS_ENUM,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Res() res?: Response,
+  ) {
+    // Validate status if provided
+    if (status && !Object.values(ORDER_STATUS_ENUM).includes(status)) {
+      throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
+    }
+
+    // Validate dates
+    let parsedStartDate: Date | undefined = undefined;
+    let parsedEndDate: Date | undefined = undefined;
+
+    if (startDate && startDate !== 'undefined') {
+      parsedStartDate = new Date(startDate);
+      if (isNaN(parsedStartDate.getTime())) {
+        throw new HttpException(
+          'Invalid start date format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    if (endDate && endDate !== 'undefined') {
+      parsedEndDate = new Date(endDate);
+      if (isNaN(parsedEndDate.getTime())) {
+        throw new HttpException(
+          'Invalid end date format',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    // Validate date range
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      throw new HttpException(
+        'Start date cannot be after end date',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'exportPurchasesToExcel: Requested Purchases export',
+        filters: {
+          parentCompanyId,
+          clientId,
+          clientName,
+          productId,
+          status,
+          startDate: parsedStartDate,
+          endDate: parsedEndDate,
+        },
+      }),
+    );
+
+    // Generate Excel buffer
+    const excelBuffer = await this.orderService.exportPurchasesToExcel({
+      parentCompanyId,
+      clientId,
+      clientName,
+      productId,
+      status,
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
+    });
+
+    // Set headers for file download
+    const date = new Date().toISOString().split('T')[0];
+    const fileName = `Purchases_Export_${date}.xlsx`;
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': excelBuffer.length,
+    });
+
+    // Send the file
+    return res.send(excelBuffer);
+  }
+
   @Get('/pending-payments')
   async getAllPendingPayments(
     @Query('page') page: number = 1,

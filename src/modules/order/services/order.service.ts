@@ -287,6 +287,65 @@ export class OrderService {
         return agreement;
       });
 
+      if (
+        body.amc_rate &&
+        body.amc_rate.percentage !== existingOrder.amc_rate.percentage
+      ) {
+        const amc = await this.amcModel.findById(existingOrder.amc_id).populate({
+          path: 'order_id',
+          model: Order.name,
+          populate: [
+            {
+              path: 'client_id',
+              model: Client.name,
+              select: 'amc_frequency_in_months',
+            },
+          ],
+        });
+        
+        if (amc) {
+          const order = amc.order_id as any;
+          const amc_frequency_in_months = 
+            order?.client_id?.amc_frequency_in_months || 12;
+          
+          const today = new Date();
+          const currentCycleEndDate = new Date();
+          currentCycleEndDate.setMonth(currentCycleEndDate.getMonth() + amc_frequency_in_months);
+          
+          // Find payments that start after the current cycle ends
+          const nextCyclePaymentIndex = amc.payments.findIndex(
+            (p) => new Date(p.from_date) >= currentCycleEndDate,
+          );
+
+          if (nextCyclePaymentIndex !== -1) {
+            const newAmcAmount =
+              (amc.total_cost / 100) * body.amc_rate.percentage;
+
+            // Update all payments from the next cycle onwards
+            for (let i = nextCyclePaymentIndex; i < amc.payments.length; i++) {
+              amc.payments[i].amc_rate_applied = body.amc_rate.percentage;
+              amc.payments[i].amc_rate_amount = newAmcAmount;
+            }
+            
+            await this.amcModel.findByIdAndUpdate(amc._id, {
+              payments: amc.payments,
+            });
+            
+            this.loggerService.log(
+              JSON.stringify({
+                message: 'updateOrder: AMC rate updated for future cycles',
+                orderId: orderId,
+                oldRate: existingOrder.amc_rate.percentage,
+                newRate: body.amc_rate.percentage,
+                amcFrequencyInMonths: amc_frequency_in_months,
+                nextCycleStartIndex: nextCyclePaymentIndex,
+                updatedPaymentsCount: amc.payments.length - nextCyclePaymentIndex,
+              }),
+            );
+          }
+        }
+      }
+
       const updatedOrder = await this.orderModel.findByIdAndUpdate(
         orderId,
         orderPayload,
@@ -1837,7 +1896,22 @@ export class OrderService {
 
   async updateLicenseById(id: string, body: CreateLicenseDto) {
     try {
-      const { cost_per_license, product_id, total_license } = body;
+      // Destructure all fields from DTO
+      const {
+        cost_per_license,
+        product_id,
+        total_license,
+        licenses_with_base_price,
+        purchase_date,
+        purchase_order_document,
+        purchase_order_number,
+        invoice_number,
+        invoice_date,
+        invoice_document,
+        payment_status,
+        payment_receive_date,
+      } = body;
+
       this.loggerService.log(
         JSON.stringify({
           message: 'updateLicense: Updating license',
@@ -1846,28 +1920,49 @@ export class OrderService {
         }),
       );
 
+      // Prepare update object, converting date strings to Date objects where needed
+      const updateObj: any = {
+        'rate.amount': cost_per_license,
+        'rate.percentage': 0,
+        total_license,
+        product_id,
+        purchase_date: purchase_date ? new Date(purchase_date) : undefined,
+        purchase_order_document,
+        purchase_order_number,
+        invoice_number,
+        invoice_date: invoice_date ? new Date(invoice_date) : undefined,
+        invoice_document,
+        payment_status,
+        payment_receive_date: payment_receive_date ? new Date(payment_receive_date) : undefined,
+      };
+      if (licenses_with_base_price !== undefined) {
+        updateObj.licenses_with_base_price = licenses_with_base_price;
+      }
+
+      // Remove undefined fields to avoid overwriting with undefined
+      Object.keys(updateObj).forEach(
+        (key) => updateObj[key] === undefined && delete updateObj[key],
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'updateLicense: Update object prepared',
+          id,
+          updateObj,
+        }),
+      );
+
       const license = await this.licenseModel.findByIdAndUpdate(
         id,
-        {
-          $set: {
-            'rate.amount': cost_per_license,
-            'rate.percentage': 0,
-            total_license,
-            product_id,
-            purchase_date: body.purchase_date,
-            purchase_order_document: body.purchase_order_document,
-            invoice_document: body.invoice_document,
-          },
-        },
-        {
-          new: true,
-        },
+        { $set: updateObj },
+        { new: true },
       );
 
       this.loggerService.log(
         JSON.stringify({
           message: 'updateLicense: License updated successfully',
           id,
+          updatedLicense: license,
         }),
       );
 
@@ -4538,6 +4633,19 @@ export class OrderService {
         }),
       );
 
+      // Define columns for the data table
+      const columns = [
+        { header: 'Client', key: 'client', width: 25 },
+        { header: 'Product', key: 'product', width: 20 },
+        { header: 'Purchase Date', key: 'purchaseDate', width: 15 },
+        { header: 'AMC Start Date', key: 'amcStartDate', width: 15 },
+        { header: 'Status', key: 'status', width: 12 },
+        { header: 'Payment From', key: 'paymentFrom', width: 15 },
+        { header: 'Payment To', key: 'paymentTo', width: 15 },
+        { header: 'Amount', key: 'amount', width: 15 },
+        { header: 'Filter Match', key: 'filterMatch', width: 20 },
+      ];
+
       // Import Excel library dynamically to avoid server-side issues
       const ExcelJS = require('exceljs');
 
@@ -4883,8 +4991,6 @@ export class OrderService {
       worksheet.addRow(['Generated on:', new Date()]).getCell(2).style =
         dateStyle;
 
-      worksheet.addRow([]);
-
       const filterRow = worksheet.addRow(['Filters Used:', filters.join(', ')]);
       filterRow.getCell(1).font = { bold: true };
 
@@ -4894,9 +5000,7 @@ export class OrderService {
           : 'All dates';
       const dateRangeRow = worksheet.addRow(['Date Range:', dateRangeText]);
       dateRangeRow.getCell(1).font = { bold: true };
-
       worksheet.addRow([]);
-
       // Add amount summary section
       const summaryRow = worksheet.addRow(['Amount Summary']);
       summaryRow.font = { size: 14, bold: true };
@@ -4921,25 +5025,18 @@ export class OrderService {
       const totalSummaryRow = worksheet.addRow(['TOTAL', totalAmount]);
       totalSummaryRow.getCell(1).style = totalRowStyle;
       totalSummaryRow.getCell(2).style = totalAmountStyle;
-
       worksheet.addRow([]);
       worksheet.addRow([]);
 
-      // Define columns for the data table
-      worksheet.columns = [
-        { header: 'Client', key: 'client', width: 25 },
-        { header: 'Product', key: 'product', width: 20 },
-        { header: 'Purchase Date', key: 'purchaseDate', width: 15 },
-        { header: 'AMC Start Date', key: 'amcStartDate', width: 15 },
-        { header: 'Status', key: 'status', width: 12 },
-        { header: 'Payment From', key: 'paymentFrom', width: 15 },
-        { header: 'Payment To', key: 'paymentTo', width: 15 },
-        { header: 'Amount', key: 'amount', width: 15 },
-        { header: 'Filter Match', key: 'filterMatch', width: 20 },
-      ];
+      // Set columns using the pre-defined columns variable, but without creating a header row
+      worksheet.columns = columns.map((col) => ({
+        key: col.key,
+        width: col.width,
+      }));
 
-      // Style the header row
-      worksheet.getRow(worksheet.rowCount).eachCell((cell) => {
+      // Manually add the header row
+      const headerRow = worksheet.addRow(columns.map((col) => col.header));
+      headerRow.eachCell((cell) => {
         cell.style = headerStyle;
       });
 
@@ -5636,5 +5733,662 @@ export class OrderService {
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  async exportPurchasesToExcel(
+    filters: {
+      clientName?: string;
+      clientId?: string;
+      parentCompanyId?: string;
+      productId?: string;
+      status?: ORDER_STATUS_ENUM;
+      startDate?: Date | string;
+      endDate?: Date | string;
+    } = {},
+  ): Promise<Buffer> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportPurchasesToExcel: Generating Excel export',
+          filters,
+        }),
+      );
+
+      // Define columns for the data table
+      const columns = [
+        { header: 'Client', key: 'client', width: 25 },
+        { header: 'Parent Company', key: 'parentCompany', width: 25 },
+        { header: 'Products', key: 'products', width: 30 },
+        { header: 'Status', key: 'status', width: 15 },
+        { header: 'Base Cost', key: 'baseCost', width: 15 },
+        { header: 'AMC Rate %', key: 'amcRatePercentage', width: 12 },
+        { header: 'AMC Amount', key: 'amcAmount', width: 15 },
+        { header: 'Purchase Date', key: 'purchaseDate', width: 15 },
+        { header: 'AMC Start Date', key: 'amcStartDate', width: 15 },
+        { header: 'Licenses Count', key: 'licensesCount', width: 12 },
+        { header: 'Customizations Count', key: 'customizationsCount', width: 18 },
+        { header: 'Additional Services Count', key: 'additionalServicesCount', width: 20 },
+        { header: 'Training Cost', key: 'trainingCost', width: 15 },
+        { header: 'Purchase Order', key: 'purchaseOrderNumber', width: 20 },
+      ];
+
+      // Import Excel library dynamically
+      const ExcelJS = require('exceljs');
+
+      // Create a new Excel workbook and worksheet
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Purchases Management System';
+      workbook.lastModifiedBy = 'Purchases Management System';
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      const worksheet = workbook.addWorksheet('Purchases Data', {
+        properties: { tabColor: { argb: '4F81BD' } },
+        pageSetup: {
+          paperSize: 9, // A4
+          orientation: 'landscape',
+          fitToPage: true,
+          fitToHeight: 0,
+          fitToWidth: 1,
+          margins: {
+            left: 0.25,
+            right: 0.25,
+            top: 0.75,
+            bottom: 0.75,
+            header: 0.3,
+            footer: 0.3,
+          },
+        },
+      });
+
+      // Use the same filtering logic as loadAllOrdersWithAttributes (without pagination)
+      // Validate status if provided
+      if (
+        filters.status &&
+        !Object.values(ORDER_STATUS_ENUM).includes(filters.status)
+      ) {
+        throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
+      }
+
+      // Validate dates
+      let parsedStartDate: Date | undefined = undefined;
+      let parsedEndDate: Date | undefined = undefined;
+
+      if (filters.startDate && filters.startDate !== 'undefined') {
+        parsedStartDate = new Date(filters.startDate);
+        if (isNaN(parsedStartDate.getTime())) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'exportPurchasesToExcel: Invalid start date format, ignoring',
+              startDate: filters.startDate,
+            }),
+          );
+          parsedStartDate = undefined;
+        }
+      }
+
+      if (filters.endDate && filters.endDate !== 'undefined') {
+        parsedEndDate = new Date(filters.endDate);
+        if (isNaN(parsedEndDate.getTime())) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'exportPurchasesToExcel: Invalid end date format, ignoring',
+              endDate: filters.endDate,
+            }),
+          );
+          parsedEndDate = undefined;
+        }
+      }
+
+      // Validate date range
+      if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+        this.loggerService.warn(
+          JSON.stringify({
+            message: 'exportPurchasesToExcel: Start date is after end date, date filter will be ignored',
+            startDate: parsedStartDate,
+            endDate: parsedEndDate,
+          }),
+        );
+        parsedStartDate = undefined;
+        parsedEndDate = undefined;
+      }
+
+      const filterQuery: any = {};
+      let clientIdsForFilter: Types.ObjectId[] | null = null;
+
+      // Apply date range filter to purchase_date
+      if (parsedStartDate && parsedEndDate) {
+        filterQuery.purchased_date = {
+          $gte: parsedStartDate,
+          $lte: parsedEndDate,
+        };
+      } else if (parsedStartDate) {
+        filterQuery.purchased_date = { $gte: parsedStartDate };
+      } else if (parsedEndDate) {
+        filterQuery.purchased_date = { $lte: parsedEndDate };
+      }
+
+      // Filter by Client Name
+      if (filters.clientName && filters.clientName.trim() !== '') {
+        const clientsByName = await this.clientModel
+          .find({
+            name: { $regex: filters.clientName, $options: 'i' },
+          })
+          .select('_id')
+          .lean<{ _id: Types.ObjectId }[]>();
+        clientIdsForFilter = clientsByName.map((c) => c._id);
+        
+        if (clientIdsForFilter.length === 0) {
+          // No matching clients found
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'exportPurchasesToExcel: No clients found with name filter',
+              clientName: filters.clientName,
+            }),
+          );
+          return this.generateEmptyExcelBuffer(workbook, worksheet, columns);
+        }
+        filterQuery.client_id = { $in: clientIdsForFilter };
+      }
+
+      // Filter by Parent Company
+      if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
+        try {
+          const parentCompanyObjectId = new Types.ObjectId(filters.parentCompanyId);
+          const childClients = await this.clientModel
+            .find({
+              parent_company_id: parentCompanyObjectId,
+            })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+
+          const childClientIds: Types.ObjectId[] = childClients.map((c) => c._id);
+
+          if (
+            filterQuery.client_id &&
+            filterQuery.client_id.$in &&
+            Array.isArray(filterQuery.client_id.$in)
+          ) {
+            const existingClientIds = filterQuery.client_id.$in
+              .map((id) =>
+                id instanceof Types.ObjectId
+                  ? id
+                  : Types.ObjectId.isValid(id)
+                    ? new Types.ObjectId(id)
+                    : null,
+              )
+              .filter((id) => id !== null);
+
+            clientIdsForFilter = existingClientIds.filter(
+              (id: Types.ObjectId) =>
+                childClientIds.some((childId) => childId.equals(id)),
+            );
+          } else {
+            clientIdsForFilter = childClientIds;
+          }
+
+          if (clientIdsForFilter.length === 0) {
+            filterQuery.client_id = { $in: [] };
+          } else {
+            filterQuery.client_id = { $in: clientIdsForFilter };
+          }
+        } catch (error: any) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'exportPurchasesToExcel: Invalid parent company ID, skipping filter',
+              error: error.message,
+              parentCompanyId: filters.parentCompanyId,
+            }),
+          );
+        }
+      }
+
+      // Filter by specific Client ID
+      if (filters.clientId && filters.clientId.trim() !== '') {
+        try {
+          const specificClientId = new Types.ObjectId(filters.clientId);
+          if (
+            filterQuery.client_id &&
+            filterQuery.client_id.$in &&
+            Array.isArray(filterQuery.client_id.$in)
+          ) {
+            const currentFilteredIds: Types.ObjectId[] = filterQuery.client_id.$in
+              .map((id) =>
+                id instanceof Types.ObjectId
+                  ? id
+                  : Types.ObjectId.isValid(id)
+                    ? new Types.ObjectId(id)
+                    : null,
+              )
+              .filter((id) => id !== null);
+
+            if (currentFilteredIds.some((id) => id.equals(specificClientId))) {
+              filterQuery.client_id = specificClientId;
+            } else {
+              filterQuery.client_id = { $in: [] };
+            }
+          } else {
+            filterQuery.client_id = specificClientId;
+          }
+        } catch (error: any) {
+          this.loggerService.error(
+            JSON.stringify({
+              message: 'exportPurchasesToExcel: Invalid client ID, skipping filter',
+              error: error.message,
+              clientId: filters.clientId,
+            }),
+          );
+        }
+      }
+
+      // Filter by Product ID or short_name
+      if (filters.productId && filters.productId.trim() !== '') {
+        const identifiers = filters.productId.split(',').map(id => id.trim());
+        const objectIds: (Types.ObjectId | string)[] = [];
+        const shortNames: string[] = [];
+        
+        identifiers.forEach(identifier => {
+          if (Types.ObjectId.isValid(identifier)) {
+            objectIds.push(new Types.ObjectId(identifier));
+            objectIds.push(identifier);
+          } else {
+            shortNames.push(identifier);
+          }
+        });
+        
+        if (shortNames.length > 0) {
+          const products = await this.productModel
+            .find({ short_name: { $in: shortNames } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          
+          products.forEach(product => {
+            objectIds.push(product._id);
+            objectIds.push(product._id.toString());
+          });
+        }
+        
+        filterQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+      }
+
+      // Filter by Status
+      if (filters.status) {
+        filterQuery.status = filters.status;
+      }
+
+      // Convert client_id to string for consistency
+      if (filterQuery.client_id?.$in) {
+        filterQuery.client_id.$in = filterQuery.client_id.$in.map((id) => String(id));
+      } else if (filterQuery.client_id) {
+        filterQuery.client_id = String(filterQuery.client_id);
+      }
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportPurchasesToExcel: Constructed filter query',
+          filterQuery,
+        }),
+      );
+
+      // Fetch all matching orders (no pagination for export)
+      const orders = await this.orderModel
+        .find(filterQuery)
+        .sort({ createdAt: -1 })
+        .populate([
+          { path: 'licenses', model: License.name },
+          { path: 'customizations', model: Customization.name },
+          { path: 'additional_services', model: AdditionalService.name },
+          { path: 'client_id', select: 'name parent_company_id' },
+          { path: 'products', model: Product.name },
+        ]);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportPurchasesToExcel: Orders fetched for export',
+          count: orders.length,
+        }),
+      );
+
+      // Process orders similar to loadAllOrdersWithAttributes
+      const processedOrders = await Promise.all(
+        orders.map(async (order: any) => {
+          const orderObj: any = order.toObject();
+          
+          // Process Client and Parent Company Info
+          if (order.client_id && orderObj.client_id) {
+            try {
+              const parentCompanyId = order.client_id?.parent_company_id;
+              if (parentCompanyId) {
+                const parentCompany = await this.clientModel
+                  .findById(parentCompanyId)
+                  .select('name')
+                  .lean();
+                if (parentCompany) {
+                  orderObj.client_id.parent_company = parentCompany;
+                }
+              }
+            } catch (error) {
+              this.loggerService.warn(
+                JSON.stringify({
+                  message: 'exportPurchasesToExcel: Error processing parent company',
+                  orderId: order._id?.toString(),
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                }),
+              );
+            }
+          }
+          
+          return orderObj;
+        }),
+      );
+
+      // Calculate totals
+      const totalBaseCost = processedOrders.reduce((sum, order) => sum + (order.base_cost || 0), 0);
+      const totalAmcAmount = processedOrders.reduce((sum, order) => sum + (order.amc_rate?.amount || 0), 0);
+      const totalTrainingCost = processedOrders.reduce((sum, order) => sum + (order.training_and_implementation_cost || 0), 0);
+
+      // Define Excel styles
+      const headerStyle: Partial<ExcelJS.Style> = {
+        font: { bold: true, color: { argb: 'FFFFFF' } },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: '4F81BD' },
+        } as ExcelJS.FillPattern,
+        border: {
+          top: { style: 'thin' as ExcelJS.BorderStyle },
+          left: { style: 'thin' as ExcelJS.BorderStyle },
+          bottom: { style: 'thin' as ExcelJS.BorderStyle },
+          right: { style: 'thin' as ExcelJS.BorderStyle },
+        },
+        alignment: { horizontal: 'center', vertical: 'middle' },
+      };
+
+      const dataStyle: Partial<ExcelJS.Style> = {
+        border: {
+          top: { style: 'thin' as ExcelJS.BorderStyle },
+          left: { style: 'thin' as ExcelJS.BorderStyle },
+          bottom: { style: 'thin' as ExcelJS.BorderStyle },
+          right: { style: 'thin' as ExcelJS.BorderStyle },
+        },
+        alignment: { vertical: 'middle' },
+      };
+
+      const amountStyle: Partial<ExcelJS.Style> = {
+        ...dataStyle,
+        numFmt: '#,##0.00',
+        alignment: { ...(dataStyle.alignment || {}), horizontal: 'right' },
+      };
+
+      const dateStyle: Partial<ExcelJS.Style> = {
+        ...dataStyle,
+        numFmt: 'dd-mmm-yyyy',
+        alignment: { ...(dataStyle.alignment || {}), horizontal: 'center' },
+      };
+
+      const statusStyle: Partial<ExcelJS.Style> = {
+        ...dataStyle,
+        alignment: { horizontal: 'center', vertical: 'middle' },
+      };
+
+      const totalRowStyle: Partial<ExcelJS.Style> = {
+        font: { bold: true },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'DDEBF7' },
+        } as ExcelJS.FillPattern,
+        border: {
+          top: { style: 'thin' as ExcelJS.BorderStyle },
+          left: { style: 'thin' as ExcelJS.BorderStyle },
+          bottom: { style: 'double' as ExcelJS.BorderStyle },
+          right: { style: 'thin' as ExcelJS.BorderStyle },
+        },
+        alignment: { vertical: 'middle' },
+      };
+
+      const totalAmountStyle: Partial<ExcelJS.Style> = {
+        ...totalRowStyle,
+        numFmt: '#,##0.00',
+        alignment: { ...(totalRowStyle.alignment || {}), horizontal: 'right' },
+      };
+
+      // Add report header
+      worksheet.addRow(['Purchases Export Report']).font = { size: 16, bold: true };
+      worksheet.addRow(['Generated on:', new Date()]).getCell(2).style = dateStyle;
+      
+      // Add applied filters info
+      const appliedFilters = [];
+      if (filters.clientName) appliedFilters.push(`Client: ${filters.clientName}`);
+      if (filters.status) appliedFilters.push(`Status: ${filters.status}`);
+      if (filters.productId) appliedFilters.push(`Product: ${filters.productId}`);
+      if (parsedStartDate || parsedEndDate) {
+        const dateRange = parsedStartDate && parsedEndDate
+          ? `${parsedStartDate.toISOString().split('T')[0]} to ${parsedEndDate.toISOString().split('T')[0]}`
+          : parsedStartDate
+            ? `From ${parsedStartDate.toISOString().split('T')[0]}`
+            : `Until ${parsedEndDate.toISOString().split('T')[0]}`;
+        appliedFilters.push(`Date Range: ${dateRange}`);
+      }
+      
+      const filtersRow = worksheet.addRow(['Applied Filters:', appliedFilters.join(', ') || 'None']);
+      filtersRow.getCell(1).font = { bold: true };
+      
+      worksheet.addRow(['Total Records:', processedOrders.length]);
+      worksheet.addRow([]);
+
+      // Add summary section
+      const summaryRow = worksheet.addRow(['Summary']);
+      summaryRow.font = { size: 14, bold: true };
+
+      const summaryHeaderRow = worksheet.addRow(['Metric', 'Total Amount']);
+      summaryHeaderRow.eachCell((cell) => {
+        cell.style = headerStyle;
+      });
+
+      const summaryData = [
+        ['Total Base Cost', totalBaseCost],
+        ['Total AMC Amount', totalAmcAmount],
+        ['Total Training Cost', totalTrainingCost],
+        ['GRAND TOTAL', totalBaseCost + totalAmcAmount + totalTrainingCost],
+      ];
+
+      summaryData.forEach(([metric, amount], index) => {
+        const row = worksheet.addRow([metric, amount]);
+        row.getCell(1).style = index === summaryData.length - 1 ? totalRowStyle : dataStyle;
+        row.getCell(2).style = index === summaryData.length - 1 ? totalAmountStyle : amountStyle;
+      });
+
+      worksheet.addRow([]);
+      worksheet.addRow([]);
+
+      // Set columns
+      worksheet.columns = columns.map((col) => ({
+        key: col.key,
+        width: col.width,
+      }));
+
+      // Add header row
+      const headerRow = worksheet.addRow(columns.map((col) => col.header));
+      headerRow.eachCell((cell) => {
+        cell.style = headerStyle;
+      });
+
+      // Add data rows
+      processedOrders.forEach((order) => {
+        const row = worksheet.addRow({
+          client: order.client_id?.name || 'Unknown Client',
+          parentCompany: order.client_id?.parent_company?.name || 'N/A',
+          products: order.products?.map((p) => p.short_name || p.name).join(', ') || 'Unknown Product',
+          status: order.status || 'Unknown',
+          baseCost: order.base_cost || 0,
+          amcRatePercentage: Number(Number(order.amc_rate?.percentage || 0).toFixed(2)),
+          amcAmount: order.amc_rate?.amount || 0,
+          purchaseDate: order.purchased_date,
+          amcStartDate: order.amc_start_date,
+          licensesCount: order.licenses?.length || 0,
+          customizationsCount: order.customizations?.length || 0,
+          additionalServicesCount: order.additional_services?.length || 0,
+          trainingCost: order.training_and_implementation_cost || 0,
+          purchaseOrderNumber: order.purchase_order_number || 'N/A',
+        });
+
+        // Apply styles to each cell
+        row.getCell('client').style = dataStyle;
+        row.getCell('parentCompany').style = dataStyle;
+        row.getCell('products').style = dataStyle;
+        
+        // Status cell with color coding
+        let statusCellStyle: Partial<ExcelJS.Style> = {
+          ...statusStyle,
+          font: { color: { argb: 'FFFFFF' } },
+        };
+
+        switch (order.status) {
+          case ORDER_STATUS_ENUM.ACTIVE:
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: '10B981' },
+            } as ExcelJS.FillPattern;
+            break;
+          case ORDER_STATUS_ENUM.INACTIVE:
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'EF4444' },
+            } as ExcelJS.FillPattern;
+            break;
+          // case ORDER_STATUS_ENUM.PENDING:
+          //   statusCellStyle.font = { color: { argb: '000000' } };
+          //   statusCellStyle.fill = {
+          //     type: 'pattern',
+          //     pattern: 'solid',
+          //     fgColor: { argb: 'F59E0B' },
+          //   } as ExcelJS.FillPattern;
+          //   break;
+          default:
+            statusCellStyle.font = { color: { argb: '000000' } };
+            statusCellStyle.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'E5E7EB' },
+            } as ExcelJS.FillPattern;
+        }
+        row.getCell('status').style = statusCellStyle;
+
+        // Apply amount and date styles
+        row.getCell('baseCost').style = amountStyle;
+        row.getCell('amcRatePercentage').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
+        row.getCell('amcAmount').style = amountStyle;
+        row.getCell('purchaseDate').style = dateStyle;
+        row.getCell('amcStartDate').style = dateStyle;
+        row.getCell('licensesCount').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
+        row.getCell('customizationsCount').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
+        row.getCell('additionalServicesCount').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
+        row.getCell('trainingCost').style = amountStyle;
+        row.getCell('purchaseOrderNumber').style = dataStyle;
+      });
+
+      // Add total row
+      const totalRow = worksheet.addRow({
+        client: 'TOTAL',
+        baseCost: totalBaseCost,
+        amcAmount: totalAmcAmount,
+        trainingCost: totalTrainingCost,
+      });
+
+      // Apply total row styling
+      totalRow.getCell('client').style = totalRowStyle;
+      totalRow.getCell('parentCompany').style = totalRowStyle;
+      totalRow.getCell('products').style = totalRowStyle;
+      totalRow.getCell('status').style = totalRowStyle;
+      totalRow.getCell('baseCost').style = totalAmountStyle;
+      totalRow.getCell('amcRatePercentage').style = totalRowStyle;
+      totalRow.getCell('amcAmount').style = totalAmountStyle;
+      totalRow.getCell('purchaseDate').style = totalRowStyle;
+      totalRow.getCell('amcStartDate').style = totalRowStyle;
+      totalRow.getCell('licensesCount').style = totalRowStyle;
+      totalRow.getCell('customizationsCount').style = totalRowStyle;
+      totalRow.getCell('additionalServicesCount').style = totalRowStyle;
+      totalRow.getCell('trainingCost').style = totalAmountStyle;
+      totalRow.getCell('purchaseOrderNumber').style = totalRowStyle;
+
+      // Auto-filter the data table
+      if (processedOrders.length > 0) {
+        worksheet.autoFilter = {
+          from: {
+            row: worksheet.rowCount - processedOrders.length - 1,
+            column: 1,
+          },
+          to: { row: worksheet.rowCount - 1, column: columns.length },
+        };
+      }
+
+      // Generate the Excel file buffer
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportPurchasesToExcel: Excel export generated successfully',
+          rowCount: worksheet.rowCount,
+          orderCount: processedOrders.length,
+          totalBaseCost,
+          totalAmcAmount,
+          totalTrainingCost,
+        }),
+      );
+
+      return buffer;
+    } catch (error: any) {
+      console.log(error);
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'exportPurchasesToExcel: Error generating Excel export',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        'Failed to generate Excel export: ' + error.message,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // Helper method to generate empty Excel buffer when no data found
+  private async generateEmptyExcelBuffer(workbook: any, worksheet: any, columns: any[]): Promise<Buffer> {
+    // Set columns
+    worksheet.columns = columns.map((col) => ({
+      key: col.key,
+      width: col.width,
+    }));
+
+    // Add header
+    worksheet.addRow(['No data found matching the specified filters']).font = { size: 14, bold: true };
+    worksheet.addRow(['Generated on:', new Date()]);
+    worksheet.addRow([]);
+
+    // Add empty table with headers
+    const headerRow = worksheet.addRow(columns.map((col) => col.header));
+    headerRow.eachCell((cell) => {
+      cell.style = {
+        font: { bold: true, color: { argb: 'FFFFFF' } },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: '4F81BD' },
+        } as any,
+        border: {
+          top: { style: 'thin' as any },
+          left: { style: 'thin' as any },
+          bottom: { style: 'thin' as any },
+          right: { style: 'thin' as any },
+        },
+        alignment: { horizontal: 'center', vertical: 'middle' },
+      };
+    });
+
+    return await workbook.xlsx.writeBuffer();
   }
 }
