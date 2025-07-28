@@ -2953,266 +2953,592 @@ export class OrderService {
 
       // 4. Helper to build date filter part for queries
       const buildDateFilter = (
-        dateField: string,
-        pStartDate?: Date,
-        pEndDate?: Date,
+        startDate?: Date,
+        endDate?: Date,
       ): any => {
         const filter: any = {};
-        if (pStartDate && pEndDate) {
-          filter[dateField] = { $gte: pStartDate, $lte: pEndDate };
-        } else if (pStartDate) {
-          filter[dateField] = { $gte: pStartDate };
-        } else if (pEndDate) {
-          filter[dateField] = { $lte: pEndDate };
+        if (startDate && endDate) {
+          filter.$gte = startDate;
+          filter.$lte = endDate;
+        } else if (startDate) {
+          filter.$gte = startDate;
+        } else if (endDate) {
+          filter.$lte = endDate;
         }
-        return Object.keys(filter).length > 0 ? filter : {}; // Return empty object if no dates
+        return Object.keys(filter).length > 0 ? filter : null;
       };
-
-      // Number of payment types to consider based on filter
-      let TOTAL_PURCHASES_SCENARIOS = 5; // Default for 'all'
 
       // Determine which types to fetch based on the type filter
       const shouldFetchAMC = type === 'amc' || type === 'all' || !type;
       const shouldFetchOrder = type === 'order' || type === 'all' || !type;
-      const shouldFetchOtherTypes = type === 'all' || !type; // licenses, customizations, additional services
+      const shouldFetchOtherTypes = type === 'all' || !type;
 
-      // Update the count of active scenarios based on type filter
-      if (type === 'amc') {
-        TOTAL_PURCHASES_SCENARIOS = 1; // Only AMC
-      } else if (type === 'order') {
-        TOTAL_PURCHASES_SCENARIOS = 1; // Only Order
-      } else {
-        // For 'all' or undefined, keep the original 5 scenarios
-        TOTAL_PURCHASES_SCENARIOS = shouldFetchOtherTypes
-          ? 5
-          : shouldFetchAMC && shouldFetchOrder
-            ? 2
-            : 1;
-      }
+      // Calculate skip amount for pagination
+      const skipAmount = (page - 1) * limit;
 
-      // Calculate adjusted limit for each schema based on active scenarios
-      const pendingLimitForEachSchema = Math.max(
-        1,
-        Math.floor(limit / TOTAL_PURCHASES_SCENARIOS),
-      ); // Ensure at least 1
+      // 5. Build aggregation pipelines for AMC payments (filter by payment due dates)
+      let pendingAMCs: any[] = [];
+      let totalAMCPayments = 0;
 
-      // 5. Define queries with filters for each model
-      const amcDateFilter = buildDateFilter(
-        'createdAt',
-        parsedStartDate,
-        parsedEndDate,
-      );
-      const amcBaseQuery = {
-        order_id: { $in: activeOrderIds },
-        'payments.1': { $exists: true },
-        'payments.status': PAYMENT_STATUS_ENUM.PENDING,
-        ...amcDateFilter,
-        ...finalClientFilterCriteria, // Direct client filter for AMCs
-      };
+      if (shouldFetchAMC) {
+        const amcPipeline: any[] = [
+          {
+            $match: {
+              order_id: { $in: activeOrderIds },
+              ...finalClientFilterCriteria,
+            },
+          },
+          {
+            $unwind: {
+              path: '$payments',
+              includeArrayIndex: 'paymentIndex',
+            },
+          },
+          {
+            $match: {
+              'payments.status': PAYMENT_STATUS_ENUM.PENDING,
+            },
+          },
+        ];
 
-      const licenseDateFilter = buildDateFilter(
-        'purchase_date',
-        parsedStartDate,
-        parsedEndDate,
-      );
-      const licenseBaseQuery = {
-        order_id: { $in: activeOrderIds },
-        payment_status: PAYMENT_STATUS_ENUM.PENDING,
-        ...licenseDateFilter,
-      };
+        // Add date filter for AMC payments based on from_date (due date)
+        if (parsedStartDate || parsedEndDate) {
+          const dateFilter = buildDateFilter(parsedStartDate, parsedEndDate);
+          if (dateFilter) {
+            amcPipeline.push({
+              $match: {
+                'payments.from_date': dateFilter,
+              },
+            });
+          }
+        }
 
-      const customizationDateFilter = buildDateFilter(
-        'purchased_date',
-        parsedStartDate,
-        parsedEndDate,
-      );
-      const customizationBaseQuery = {
-        order_id: { $in: activeOrderIds },
-        payment_status: PAYMENT_STATUS_ENUM.PENDING,
-        ...customizationDateFilter,
-      };
+        // Add lookup for client and products
+        amcPipeline.push(
+          {
+            $lookup: {
+              from: 'clients',
+              localField: 'client_id',
+              foreignField: '_id',
+              as: 'client',
+            },
+          },
+          {
+            $lookup: {
+              from: 'products',
+              localField: 'products',
+              foreignField: '_id',
+              as: 'productDetails',
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              amount: 1,
+              payments: 1,
+              paymentIndex: 1,
+              client_name: { $arrayElemAt: ['$client.name', 0] },
+              product_names: '$productDetails.short_name',
+            },
+          },
+        );
 
-      const serviceDateFilter = buildDateFilter(
-        'purchased_date',
-        parsedStartDate,
-        parsedEndDate,
-      );
-      const serviceBaseQuery = {
-        order_id: { $in: activeOrderIds },
-        payment_status: PAYMENT_STATUS_ENUM.PENDING,
-        ...serviceDateFilter,
-      };
+        // Get total count
+        const countPipeline = [...amcPipeline, { $count: 'total' }];
+        const countResult = await this.amcModel.aggregate(countPipeline);
+        totalAMCPayments = countResult[0]?.total || 0;
 
-      const orderPaymentTermsDateFilter = buildDateFilter(
-        'createdAt',
-        parsedStartDate,
-        parsedEndDate,
-      ); // Order's createdAt
-      const orderPaymentTermsBaseQuery = {
-        _id: { $in: activeOrderIds }, // Already client filtered via activeOrderIds
-        'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
-        ...orderPaymentTermsDateFilter,
-      };
+        // Get paginated results
+        const dataPipeline = [
+          ...amcPipeline,
+          { $skip: skipAmount },
+          { $limit: limit },
+        ];
+        pendingAMCs = await this.amcModel.aggregate(dataPipeline);
 
-      // Short-circuit if activeOrderIds is empty and filters weren't client-specific (already handled above if client specific)
-      // This check is to prevent unnecessary DB calls if there are no active orders at all for other reasons.
-      if (activeOrderIds.length === 0) {
         this.loggerService.log(
           JSON.stringify({
-            message:
-              'getAllPendingPayments: No active orders found (globally or after non-client filters led to empty set for sub-items). Returning empty.',
+            message: 'getAllPendingPayments: AMC aggregation completed',
+            totalAMCPayments,
+            fetchedAMCs: pendingAMCs.length,
           }),
         );
-        return emptyPaginationResult(page, limit);
       }
 
-      // Get total counts with filters - only count what we need based on type filter
-      let [
-        totalAMCs,
-        totalLicenses,
-        totalCustomizations,
-        totalServices,
-        totalOrders,
-      ] = [0, 0, 0, 0, 0]; // Initialize with zeros
-
-      // Prepare query promises based on type filter
-      const countPromises: Promise<number>[] = [];
-
-      if (shouldFetchAMC) {
-        countPromises.push(this.amcModel.countDocuments(amcBaseQuery));
-      } else {
-        countPromises.push(Promise.resolve(0));
-      }
-
-      if (shouldFetchOtherTypes) {
-        countPromises.push(this.licenseModel.countDocuments(licenseBaseQuery));
-        countPromises.push(
-          this.customizationModel.countDocuments(customizationBaseQuery),
-        );
-        countPromises.push(
-          this.additionalServiceModel.countDocuments(serviceBaseQuery),
-        );
-      } else {
-        countPromises.push(Promise.resolve(0));
-        countPromises.push(Promise.resolve(0));
-        countPromises.push(Promise.resolve(0));
-      }
+      // 6. Build aggregation pipeline for Order payment terms (filter by payment term dates)
+      let pendingOrders: any[] = [];
+      let totalOrderPayments = 0;
 
       if (shouldFetchOrder) {
-        countPromises.push(
-          this.orderModel.countDocuments(orderPaymentTermsBaseQuery),
-        );
-      } else {
-        countPromises.push(Promise.resolve(0));
-      }
-
-      [
-        totalAMCs,
-        totalLicenses,
-        totalCustomizations,
-        totalServices,
-        totalOrders,
-      ] = await Promise.all(countPromises);
-
-      this.loggerService.log(
-        JSON.stringify({
-          message: 'Counts after filters',
-          type,
-          totalAMCs,
-          totalLicenses,
-          totalCustomizations,
-          totalServices,
-          totalOrders,
-        }),
-      );
-
-      // Fetch items with filters, pagination per schema
-      const skipAmount = (page - 1) * pendingLimitForEachSchema;
-
-      // Prepare fetch promises based on type filter
-      const fetchPromises: Promise<any>[] = [];
-
-      if (shouldFetchAMC) {
-        fetchPromises.push(
-          this.amcModel
-            .find(amcBaseQuery)
-            .populate('client_id', 'name')
-            .populate('products', 'short_name')
-            .skip(skipAmount)
-            .limit(pendingLimitForEachSchema),
-        );
-      } else {
-        fetchPromises.push(Promise.resolve([]));
-      }
-
-      if (shouldFetchOtherTypes) {
-        fetchPromises.push(
-          this.licenseModel
-            .find(licenseBaseQuery)
-            .populate({
-              path: 'order_id',
-              populate: { path: 'client_id', select: 'name' },
-            })
-            .populate({ path: 'product_id', select: 'short_name' })
-            .skip(skipAmount)
-            .limit(pendingLimitForEachSchema),
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Starting order pipeline',
+            data: {
+              activeOrderIds: activeOrderIds.length,
+              parsedStartDate,
+              parsedEndDate,
+              shouldFetchOrder,
+            },
+          }),
         );
 
-        fetchPromises.push(
-          this.customizationModel
-            .find(customizationBaseQuery)
-            .populate({
-              path: 'order_id',
-              populate: { path: 'client_id', select: 'name' },
-            })
-            .populate('product_id', 'short_name')
-            .skip(skipAmount)
-            .limit(pendingLimitForEachSchema),
-        );
+        const orderPipeline: any[] = [
+          {
+            $match: {
+              _id: { $in: activeOrderIds },
+            },
+          },
+          {
+            $unwind: {
+              path: '$payment_terms',
+              includeArrayIndex: 'termIndex',
+            },
+          },
+          {
+            $match: {
+              'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
+              'payment_terms.calculated_amount': { $exists: true, $gt: 0 },
+            },
+          },
+        ];
 
-        fetchPromises.push(
-          this.additionalServiceModel
-            .find(serviceBaseQuery)
-            .populate({
-              path: 'order_id',
-              populate: { path: 'client_id', select: 'name' },
-            })
-            .skip(skipAmount)
-            .limit(pendingLimitForEachSchema),
-        );
-      } else {
-        fetchPromises.push(Promise.resolve([]));
-        fetchPromises.push(Promise.resolve([]));
-        fetchPromises.push(Promise.resolve([]));
-      }
-
-      if (shouldFetchOrder) {
-        fetchPromises.push(
-          this.orderModel
-            .find(orderPaymentTermsBaseQuery)
-            .populate([
-              { path: 'client_id', select: 'name' },
-              {
-                path: 'products',
-                select: 'name short_name',
-                model: Product.name,
+        // Add date filter for order payment terms based on invoice_date
+        if (parsedStartDate || parsedEndDate) {
+          const dateFilter = buildDateFilter(parsedStartDate, parsedEndDate);
+          if (dateFilter) {
+            this.loggerService.log(
+              JSON.stringify({
+                message: 'getAllPendingPayments: Adding date filter to order pipeline',
+                dateFilter,
+              }),
+            );
+            
+            orderPipeline.push({
+              $match: {
+                'payment_terms.invoice_date': dateFilter,
               },
-            ])
-            .skip(skipAmount)
-            .limit(pendingLimitForEachSchema),
+            });
+          }
+        }
+
+        // Add lookup for client and products with more robust client lookup
+        orderPipeline.push(
+          {
+            $lookup: {
+              from: 'clients',
+              let: { clientId: '$client_id' },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        { $eq: ['$_id', '$$clientId'] },
+                        { $eq: [{ $toString: '$_id' }, { $toString: '$$clientId' }] }
+                      ]
+                    }
+                  }
+                }
+              ],
+              as: 'client',
+            },
+          },
+          {
+            $lookup: {
+              from: 'products',
+              localField: 'products',
+              foreignField: '_id',
+              as: 'productDetails',
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              payment_terms: 1,
+              termIndex: 1,
+              client_id: 1,
+              client: 1,
+              client_name: { 
+                $cond: {
+                  if: { $gt: [{ $size: '$client' }, 0] },
+                  then: { $arrayElemAt: ['$client.name', 0] },
+                  else: 'N/A'
+                }
+              },
+              product_names: '$productDetails.short_name',
+            },
+          },
         );
-      } else {
-        fetchPromises.push(Promise.resolve([]));
+
+        // Debug: Check orders with payment_terms before filtering
+        const debugOrdersWithPaymentTerms = await this.orderModel.aggregate([
+          {
+            $match: {
+              _id: { $in: activeOrderIds },
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              payment_terms_count: { $size: { $ifNull: ['$payment_terms', []] } },
+              has_payment_terms: { $gt: [{ $size: { $ifNull: ['$payment_terms', []] } }, 0] },
+            },
+          },
+        ]);
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Debug - Orders with payment terms',
+            debugOrdersWithPaymentTerms,
+          }),
+        );
+
+        // Debug: Check pending payment terms without date filter
+        const debugPendingTerms = await this.orderModel.aggregate([
+          {
+            $match: {
+              _id: { $in: activeOrderIds },
+            },
+          },
+          {
+            $unwind: {
+              path: '$payment_terms',
+              includeArrayIndex: 'termIndex',
+            },
+          },
+          {
+            $match: {
+              'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
+              'payment_terms.calculated_amount': { $exists: true, $gt: 0 },
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              'payment_terms.invoice_date': 1,
+              'payment_terms.status': 1,
+              'payment_terms.calculated_amount': 1,
+              termIndex: 1,
+            },
+          },
+        ]);
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Debug - Pending payment terms without date filter',
+            debugPendingTerms,
+          }),
+        );
+
+        // Debug: Check if there are any payment terms with invoice dates in the specified range
+        if (parsedStartDate || parsedEndDate) {
+          const debugDateRangeTerms = await this.orderModel.aggregate([
+            {
+              $match: {
+                _id: { $in: activeOrderIds },
+              },
+            },
+            {
+              $unwind: {
+                path: '$payment_terms',
+                includeArrayIndex: 'termIndex',
+              },
+            },
+            {
+              $match: {
+                'payment_terms.invoice_date': { $exists: true, $ne: null },
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                'payment_terms.invoice_date': 1,
+                'payment_terms.status': 1,
+                'payment_terms.calculated_amount': 1,
+                termIndex: 1,
+              },
+            },
+          ]);
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'getAllPendingPayments: Debug - All payment terms with invoice dates',
+              debugDateRangeTerms,
+              dateRange: { parsedStartDate, parsedEndDate },
+            }),
+          );
+        }
+
+        // Debug: Check client lookup issue
+        const debugClientLookup = await this.orderModel.aggregate([
+          {
+            $match: {
+              _id: { $in: activeOrderIds },
+            },
+          },
+          {
+            $project: {
+              _id: 1,
+              client_id: 1,
+              client_id_type: { $type: '$client_id' },
+            },
+          },
+        ]);
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Debug - Client ID information',
+            debugClientLookup,
+          }),
+        );
+
+        // Debug: Check if client exists
+        if (debugClientLookup.length > 0 && debugClientLookup[0].client_id) {
+          const clientId = debugClientLookup[0].client_id;
+          const clientExists = await this.clientModel.findById(clientId).select('name').lean();
+          
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'getAllPendingPayments: Debug - Client lookup test',
+              clientId,
+              clientExists,
+            }),
+          );
+        }
+
+        // Get total count
+        const countPipeline = [...orderPipeline, { $count: 'total' }];
+        const countResult = await this.orderModel.aggregate(countPipeline);
+        totalOrderPayments = countResult[0]?.total || 0;
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Order count result',
+            totalOrderPayments,
+            countResult,
+          }),
+        );
+
+        // If no results with date filter, try without date filter as fallback
+        if (totalOrderPayments === 0 && (parsedStartDate || parsedEndDate)) {
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'getAllPendingPayments: No results with date filter, trying without date filter',
+            }),
+          );
+          
+          const fallbackPipeline: any[] = [
+            {
+              $match: {
+                _id: { $in: activeOrderIds },
+              },
+            },
+            {
+              $unwind: {
+                path: '$payment_terms',
+                includeArrayIndex: 'termIndex',
+              },
+            },
+            {
+              $match: {
+                'payment_terms.status': PAYMENT_STATUS_ENUM.PENDING,
+                'payment_terms.calculated_amount': { $exists: true, $gt: 0 },
+              },
+            },
+          ];
+
+          // Add lookups with robust client lookup
+          fallbackPipeline.push(
+            {
+              $lookup: {
+                from: 'clients',
+                let: { clientId: '$client_id' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $or: [
+                          { $eq: ['$_id', '$$clientId'] },
+                          { $eq: [{ $toString: '$_id' }, { $toString: '$$clientId' }] }
+                        ]
+                      }
+                    }
+                  }
+                ],
+                as: 'client',
+              },
+            },
+            {
+              $lookup: {
+                from: 'products',
+                localField: 'products',
+                foreignField: '_id',
+                as: 'productDetails',
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                payment_terms: 1,
+                termIndex: 1,
+                client_id: 1,
+                client: 1,
+                client_name: { 
+                  $cond: {
+                    if: { $gt: [{ $size: '$client' }, 0] },
+                    then: { $arrayElemAt: ['$client.name', 0] },
+                    else: 'N/A'
+                  }
+                },
+                product_names: '$productDetails.short_name',
+              },
+            },
+          );
+
+          const fallbackCountPipeline = [...fallbackPipeline, { $count: 'total' }];
+          const fallbackCountResult = await this.orderModel.aggregate(fallbackCountPipeline);
+          const fallbackTotal = fallbackCountResult[0]?.total || 0;
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'getAllPendingPayments: Fallback count result',
+              fallbackTotal,
+              fallbackCountResult,
+            }),
+          );
+
+          if (fallbackTotal > 0) {
+            // Use fallback pipeline for data
+            const fallbackRemainingLimit = Math.max(0, limit - pendingAMCs.length);
+            const fallbackOrderSkip = shouldFetchAMC ? Math.max(0, skipAmount - totalAMCPayments) : skipAmount;
+            
+            if (fallbackRemainingLimit > 0) {
+              const fallbackDataPipeline = [
+                ...fallbackPipeline,
+                { $skip: fallbackOrderSkip },
+                { $limit: fallbackRemainingLimit },
+              ];
+              pendingOrders = await this.orderModel.aggregate(fallbackDataPipeline);
+              totalOrderPayments = fallbackTotal;
+            }
+          }
+        }
+
+        // Get paginated results (only if AMC didn't fill the limit and we haven't used fallback)
+        if (pendingOrders.length === 0) {
+          const remainingLimit = Math.max(0, limit - pendingAMCs.length);
+          const orderSkip = shouldFetchAMC ? Math.max(0, skipAmount - totalAMCPayments) : skipAmount;
+          
+          if (remainingLimit > 0) {
+            const dataPipeline = [
+              ...orderPipeline,
+              { $skip: orderSkip },
+              { $limit: remainingLimit },
+            ];
+            pendingOrders = await this.orderModel.aggregate(dataPipeline);
+          }
+        }
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Order aggregation completed',
+            totalOrderPayments,
+            fetchedOrders: pendingOrders.length,
+            sampleOrder: pendingOrders.length > 0 ? pendingOrders[0] : null,
+          }),
+        );
       }
 
-      const [
-        pendingAMCs,
-        pendingLicenses,
-        pendingCustomizations,
-        pendingServices,
-        pendingOrders,
-      ] = await Promise.all(fetchPromises);
+      // 7. Handle other types (licenses, customizations, additional services) with proper date filtering
+      let pendingLicenses: any[] = [];
+      let pendingCustomizations: any[] = [];
+      let pendingServices: any[] = [];
+      let totalLicenses = 0;
+      let totalCustomizations = 0;
+      let totalServices = 0;
 
+      if (shouldFetchOtherTypes) {
+        const currentResults = pendingAMCs.length + pendingOrders.length;
+        const remainingLimit = Math.max(0, limit - currentResults);
+        const otherSkip = Math.max(0, skipAmount - totalAMCPayments - totalOrderPayments);
+
+        if (remainingLimit > 0) {
+          // Build date filters for other types
+          const licenseDateFilter: any = {
+            order_id: { $in: activeOrderIds },
+            payment_status: PAYMENT_STATUS_ENUM.PENDING,
+          };
+          const customizationDateFilter: any = {
+            order_id: { $in: activeOrderIds },
+            payment_status: PAYMENT_STATUS_ENUM.PENDING,
+          };
+          const serviceeDateFilter: any = {
+            order_id: { $in: activeOrderIds },
+            payment_status: PAYMENT_STATUS_ENUM.PENDING,
+          };
+
+          if (parsedStartDate || parsedEndDate) {
+            const dateFilter = buildDateFilter(parsedStartDate, parsedEndDate);
+            if (dateFilter) {
+              licenseDateFilter.purchase_date = dateFilter;
+              customizationDateFilter.purchased_date = dateFilter;
+              serviceeDateFilter.purchased_date = dateFilter;
+            }
+          }
+
+          // Get counts
+          [totalLicenses, totalCustomizations, totalServices] = await Promise.all([
+            this.licenseModel.countDocuments(licenseDateFilter),
+            this.customizationModel.countDocuments(customizationDateFilter),
+            this.additionalServiceModel.countDocuments(serviceeDateFilter),
+          ]);
+
+          // Fetch data with remaining limit distributed among the three types
+          const limitPerType = Math.ceil(remainingLimit / 3);
+          
+          [pendingLicenses, pendingCustomizations, pendingServices] = await Promise.all([
+            this.licenseModel
+              .find(licenseDateFilter)
+              .populate({
+                path: 'order_id',
+                populate: { path: 'client_id', select: 'name' },
+              })
+              .populate({ path: 'product_id', select: 'short_name' })
+              .skip(Math.floor(otherSkip / 3))
+              .limit(limitPerType),
+            this.customizationModel
+              .find(customizationDateFilter)
+              .populate({
+                path: 'order_id',
+                populate: { path: 'client_id', select: 'name' },
+              })
+              .populate('product_id', 'short_name')
+              .skip(Math.floor(otherSkip / 3))
+              .limit(limitPerType),
+            this.additionalServiceModel
+              .find(serviceeDateFilter)
+              .populate({
+                path: 'order_id',
+                populate: { path: 'client_id', select: 'name' },
+              })
+              .skip(Math.floor(otherSkip / 3))
+              .limit(limitPerType),
+          ]);
+        }
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'getAllPendingPayments: Other types fetched',
+            totalLicenses,
+            totalCustomizations,
+            totalServices,
+            fetchedLicenses: pendingLicenses.length,
+            fetchedCustomizations: pendingCustomizations.length,
+            fetchedServices: pendingServices.length,
+          }),
+        );
+      }
+
+      // 8. Transform results into consistent format
       const pendingPayments: Array<{
         _id: string;
         type:
@@ -3226,137 +3552,97 @@ export class OrderService {
         payment_identifier?: string | number;
         client_name?: string;
         product_name?: string;
+        payment_date?: Date;
+        name?: string;
         [key: string]: any;
       }> = [];
 
-      // AMCs - only process if we should fetch AMC
-      if (shouldFetchAMC) {
-        for (const amc of pendingAMCs) {
-          if (Array.isArray(amc.payments)) {
-            amc.payments.forEach((payment, index) => {
-              if (payment.status === PAYMENT_STATUS_ENUM.PENDING) {
-                pendingPayments.push({
-                  _id: amc._id.toString(),
-                  type: 'amc',
-                  status: PAYMENT_STATUS_ENUM.PENDING,
-                  pending_amount: amc.amount || 0, // AMC total amount
-                  payment_identifier: index, // Index of the pending payment installment
-                  payment_date: payment.from_date, // Due date of this installment
-                  name: `AMC no ${index + 1}`, // Name of the installment
-                  client_name: (amc.client_id as any)?.name || 'N/A',
-                  product_name:
-                    (amc.products as unknown as ProductDocument[])
-                      ?.map((p) => p.short_name)
-                      .join(', ') || 'N/A',
-                });
-              }
-            });
-          }
-        }
+      // Transform AMC payments
+      for (const amc of pendingAMCs) {
+        const payment = amc.payments;
+        pendingPayments.push({
+          _id: amc._id.toString(),
+          type: 'amc',
+          status: PAYMENT_STATUS_ENUM.PENDING,
+          pending_amount: amc.amount || 0,
+          payment_identifier: amc.paymentIndex,
+          payment_date: payment.from_date,
+          name: `AMC no ${amc.paymentIndex + 1}`,
+          client_name: amc.client_name || 'N/A',
+          product_name: (amc.product_names || []).join(', ') || 'N/A',
+        });
       }
 
-      // Only process other types if we should fetch them
-      if (shouldFetchOtherTypes) {
-        // Licenses
-        for (const license of pendingLicenses) {
-          const licenseCost =
-            (license.rate?.amount || 0) * (license.total_license || 0);
-          const order = license.order_id as any;
-          pendingPayments.push({
-            _id: license._id.toString(),
-            type: 'license',
-            status: license.payment_status,
-            pending_amount: licenseCost,
-            payment_identifier: license._id.toString(),
-            payment_date: license.purchase_date,
-            name:
-              (license?.product_id as unknown as ProductDocument)?.short_name ??
-              '',
-            client_name: order?.client_id?.name || 'N/A',
-            product_name:
-              (license?.product_id as unknown as ProductDocument)?.short_name ??
-              'N/A',
-          });
-        }
-
-        // Customizations
-        for (const customization of pendingCustomizations) {
-          const order = customization.order_id as any;
-          pendingPayments.push({
-            _id: customization._id.toString(),
-            type: 'customization',
-            status: customization.payment_status,
-            pending_amount: customization.cost || 0,
-            payment_identifier: customization?._id?.toString(),
-            payment_date: customization.purchased_date,
-            name: customization?.title ?? '',
-            client_name: order?.client_id?.name || 'N/A',
-            product_name:
-              (customization?.product_id as unknown as ProductDocument)
-                ?.short_name ?? 'N/A',
-          });
-        }
-
-        // Additional Services
-        for (const service of pendingServices) {
-          const order = service.order_id as any;
-          pendingPayments.push({
-            _id: service._id.toString(),
-            type: 'additional_service',
-            status: service.payment_status,
-            pending_amount: service.cost || 0,
-            payment_identifier: service._id.toString(),
-            payment_date: service.purchased_date,
-            name: service.name,
-            client_name: order?.client_id?.name || 'N/A',
-            product_name: service.name || 'N/A', // Or a product if linked
-          });
-        }
+      // Transform Order payment terms
+      for (const order of pendingOrders) {
+        const term = order.payment_terms;
+        pendingPayments.push({
+          _id: order._id.toString(),
+          type: 'order',
+          status: PAYMENT_STATUS_ENUM.PENDING,
+          pending_amount: term.calculated_amount,
+          payment_identifier: order.termIndex,
+          payment_date: term.invoice_date,
+          name: term.name,
+          client_name: order.client_name || 'N/A',
+          product_name: (order.product_names || []).join(', ') || 'N/A',
+        });
       }
 
-      // Orders - only process if we should fetch order
-      if (shouldFetchOrder) {
-        for (const order of pendingOrders) {
-          if (Array.isArray(order.payment_terms)) {
-            order.payment_terms.forEach((term, index) => {
-              if (
-                term.status === PAYMENT_STATUS_ENUM.PENDING &&
-                term.calculated_amount
-              ) {
-                pendingPayments.push({
-                  _id: order._id.toString(),
-                  type: 'order',
-                  status: PAYMENT_STATUS_ENUM.PENDING,
-                  pending_amount: term.calculated_amount,
-                  payment_identifier: index, // Index of the payment term
-                  payment_date: term.invoice_date, // Due date of this term
-                  name: term.name, // Name of the payment term
-                  client_name: (order.client_id as any)?.name || 'N/A',
-                  product_name:
-                    (order.products as unknown as ProductDocument[])
-                      ?.map((p) => p.short_name)
-                      .join(', ') || 'N/A',
-                });
-              }
-            });
-          }
-        }
+      // Transform other types
+      for (const license of pendingLicenses) {
+        const licenseCost = (license.rate?.amount || 0) * (license.total_license || 0);
+        const order = license.order_id as any;
+        pendingPayments.push({
+          _id: license._id.toString(),
+          type: 'license',
+          status: license.payment_status,
+          pending_amount: licenseCost,
+          payment_identifier: license._id.toString(),
+          payment_date: license.purchase_date,
+          name: (license?.product_id as unknown as ProductDocument)?.short_name ?? '',
+          client_name: order?.client_id?.name || 'N/A',
+          product_name: (license?.product_id as unknown as ProductDocument)?.short_name ?? 'N/A',
+        });
       }
 
-      // Calculate the total based on the filtered data
-      const totalCount = // Sum of filtered counts
-        totalAMCs +
-        totalLicenses +
-        totalCustomizations +
-        totalServices +
-        totalOrders;
+      for (const customization of pendingCustomizations) {
+        const order = customization.order_id as any;
+        pendingPayments.push({
+          _id: customization._id.toString(),
+          type: 'customization',
+          status: customization.payment_status,
+          pending_amount: customization.cost || 0,
+          payment_identifier: customization?._id?.toString(),
+          payment_date: customization.purchased_date,
+          name: customization?.title ?? '',
+          client_name: order?.client_id?.name || 'N/A',
+          product_name: (customization?.product_id as unknown as ProductDocument)?.short_name ?? 'N/A',
+        });
+      }
 
-      const totalPages = Math.ceil(totalCount / limit); // Use overall limit for total pages
+      for (const service of pendingServices) {
+        const order = service.order_id as any;
+        pendingPayments.push({
+          _id: service._id.toString(),
+          type: 'additional_service',
+          status: service.payment_status,
+          pending_amount: service.cost || 0,
+          payment_identifier: service._id.toString(),
+          payment_date: service.purchased_date,
+          name: service.name,
+          client_name: order?.client_id?.name || 'N/A',
+          product_name: service.name || 'N/A',
+        });
+      }
+
+      // Calculate total count
+      const totalCount = totalAMCPayments + totalOrderPayments + totalLicenses + totalCustomizations + totalServices;
+      const totalPages = Math.ceil(totalCount / limit);
 
       this.loggerService.log(
         JSON.stringify({
-          message:
-            'getAllPendingPayments: Successfully fetched pending payments with filters.',
+          message: 'getAllPendingPayments: Successfully fetched pending payments with proper date filtering',
           data: {
             returnedCount: pendingPayments.length,
             totalFilteredCount: totalCount,
@@ -3364,17 +3650,24 @@ export class OrderService {
             limit,
             totalPages,
             filtersApplied: filters,
+            breakdown: {
+              totalAMCPayments,
+              totalOrderPayments,
+              totalLicenses,
+              totalCustomizations,
+              totalServices,
+            },
           },
         }),
       );
 
       return {
-        pending_payments: pendingPayments, // These are from the per-schema paginated fetches
+        pending_payments: pendingPayments,
         pagination: {
-          total: totalCount, // Total based on all filtered items
+          total: totalCount,
           currentPage: page,
           totalPages,
-          limit, // Overall limit requested by user
+          limit,
           hasNextPage: page < totalPages,
           hasPreviousPage: page > 1,
         },
@@ -3385,7 +3678,7 @@ export class OrderService {
           message: 'getAllPendingPayments: Error fetching pending payments',
           error: error.message,
           stack: error.stack,
-          filters, // Log filters on error
+          filters,
         }),
       );
       throw new HttpException(
