@@ -137,4 +137,15 @@ export class CreateOrderDto {
     date: Date;
     user: Types.ObjectId;
   }[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => Object)
+  amc_start_logs: {
+    from: Date;
+    to: Date;
+    date: Date;
+    user: Types.ObjectId;
+  }[];
 }

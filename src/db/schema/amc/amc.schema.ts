@@ -76,6 +76,27 @@ export class AMC extends Document {
   @Prop({ type: Number })
   amc_percentage: number;
 
+  @Prop({ type: Date })
+  start_date?: Date;
+
+  @Prop({
+    type: [
+      {
+        from: Date,
+        to: Date,
+        date: Date,
+        user: MongooseSchema.Types.ObjectId,
+      },
+    ],
+    default: [],
+  })
+  amc_start_logs: {
+    from: Date;
+    to: Date;
+    date: Date;
+    user: MongooseSchema.Types.ObjectId;
+  }[];
+
   @Prop({
     type: [
       {

@@ -397,6 +397,203 @@ export class ClientService {
     }
   }
 
+  async exportClientsToExcel(filters: ClientFilterOptions = {}): Promise<Buffer> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportClientsToExcel: Generating client Excel export',
+          filters,
+        }),
+      );
+
+      const { clients } = await this.getAllClients(1, 10, true, filters);
+
+      const ExcelJS = require('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'AMC Management System';
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      const worksheet = workbook.addWorksheet('Clients', {
+        properties: { tabColor: { argb: '4F81BD' } },
+        pageSetup: {
+          paperSize: 9,
+          orientation: 'landscape',
+          fitToPage: true,
+          fitToHeight: 0,
+          fitToWidth: 1,
+          margins: {
+            left: 0.25,
+            right: 0.25,
+            top: 0.75,
+            bottom: 0.75,
+            header: 0.3,
+            footer: 0.3,
+          },
+        },
+      });
+
+      worksheet.addRow(['Client Export Report']).font = { size: 16, bold: true };
+      const generatedRow = worksheet.addRow(['Generated on:', new Date()]);
+      generatedRow.getCell(2).numFmt = 'dd-mmm-yyyy hh:mm';
+
+      const activeFilters = Object.entries(filters || {})
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([key, value]) => `${key}: ${value}`);
+
+      const filtersRow = worksheet.addRow([
+        'Filters:',
+        activeFilters.length > 0 ? activeFilters.join(', ') : 'None',
+      ]);
+      filtersRow.getCell(1).font = { bold: true };
+      worksheet.addRow([]);
+
+      const columns = [
+        { header: 'Client Name', key: 'name', width: 30 },
+        { header: 'Client ID', key: 'clientId', width: 18 },
+        { header: 'Industry', key: 'industry', width: 20 },
+        { header: 'Parent Company', key: 'parentCompany', width: 25 },
+        { header: 'Products', key: 'products', width: 35 },
+        { header: 'Orders Count', key: 'ordersCount', width: 18 },
+        { header: 'First Order Date', key: 'firstOrderDate', width: 20 },
+        { header: 'Created At', key: 'createdAt', width: 20 },
+      ];
+
+      worksheet.columns = columns.map((column) => ({
+        key: column.key,
+        width: column.width,
+      }));
+
+      const headerRow = worksheet.addRow(columns.map((column) => column.header));
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFF' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: '4F81BD' },
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' },
+        };
+      });
+
+      clients.forEach((client: any) => {
+        const products =
+          Array.isArray(client.products) && client.products.length > 0
+            ? client.products.join(', ')
+            : 'N/A';
+
+        const ordersCount = Array.isArray(client.orders) ? client.orders.length : 0;
+
+        const firstOrderDateRaw = client.first_order_date
+          ? new Date(client.first_order_date)
+          : null;
+        const firstOrderDate =
+          firstOrderDateRaw && !isNaN(firstOrderDateRaw.getTime()) ? firstOrderDateRaw : null;
+
+        const createdAtRaw = client.createdAt ? new Date(client.createdAt) : null;
+        const createdAt =
+          createdAtRaw && !isNaN(createdAtRaw.getTime()) ? createdAtRaw : null;
+
+        const row = worksheet.addRow({
+          name: client.name || 'Unknown',
+          clientId: client.client_id || 'N/A',
+          industry: client.industry || 'N/A',
+          parentCompany: client.parent_company || 'N/A',
+          products,
+          ordersCount,
+          firstOrderDate,
+          createdAt,
+        });
+
+        row.getCell('ordersCount').alignment = { horizontal: 'center', vertical: 'middle' };
+
+        if (firstOrderDate) {
+          row.getCell('firstOrderDate').alignment = {
+            horizontal: 'center',
+            vertical: 'middle',
+          };
+          row.getCell('firstOrderDate').numFmt = 'dd-mmm-yyyy';
+        }
+        if (createdAt) {
+          row.getCell('createdAt').alignment = {
+            horizontal: 'center',
+            vertical: 'middle',
+          };
+          row.getCell('createdAt').numFmt = 'dd-mmm-yyyy';
+        }
+
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          };
+        });
+      });
+
+      const totalRow = worksheet.addRow({
+        name: 'TOTAL CLIENTS',
+        ordersCount: clients.length,
+      });
+
+      totalRow.eachCell((cell, colNumber) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'DDEBF7' },
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'double' },
+          right: { style: 'thin' },
+        };
+
+        if (colNumber === columns.findIndex((column) => column.key === 'ordersCount') + 1) {
+          cell.alignment = { horizontal: 'center' };
+        }
+      });
+
+      worksheet.autoFilter = {
+        from: { row: headerRow.number, column: 1 },
+        to: { row: worksheet.rowCount, column: columns.length },
+      };
+
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportClientsToExcel: Excel export generated successfully',
+          totalClients: clients.length,
+          rowCount: worksheet.rowCount,
+        }),
+      );
+
+      return buffer;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'exportClientsToExcel: Failed to generate client export',
+          error: error.message,
+          stack: error.stack,
+          filters,
+        }),
+      );
+      throw new HttpException(
+        error.message ?? 'Failed to generate client export',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        { cause: error },
+      );
+    }
+  }
+
   async getAllParentCompanies() {
     try {
       this.loggerService.log(

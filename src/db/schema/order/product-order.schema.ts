@@ -213,6 +213,24 @@ export class Order extends Document {
   @Prop({
     type: [
       {
+        from: Date,
+        to: Date,
+        date: Date,
+        user: Types.ObjectId,
+      },
+    ],
+    default: [],
+  })
+  amc_start_logs: {
+    from: Date;
+    to: Date;
+    date: Date;
+    user: Types.ObjectId;
+  }[];
+
+  @Prop({
+    type: [
+      {
         percentage: Number,
         amount: Number,
         date: Date,

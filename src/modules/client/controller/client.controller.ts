@@ -9,12 +9,14 @@ import {
   UseGuards,
   HttpException,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { ClientService } from '../services/client.service';
 import { CreateNewClientDto } from '../dto/create-client.dto';
 import { AuthGuard } from '@/common/guards/auth.guard';
 import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
 import { LoggerService } from '@/common/logger/services/logger.service';
+import { Response } from 'express';
 
 @Controller('clients')
 @UseGuards(AuthGuard)
@@ -22,8 +24,8 @@ export class ClientController {
   constructor(
     private clientService: ClientService,
     private loggerService: LoggerService,
-  ) {}
-  
+  ) { }
+
   @Get()
   async getAllClients(
     @Query('page') page: number = 1,
@@ -43,7 +45,7 @@ export class ClientController {
       50,
       Math.max(1, parseInt(String(limit)) || 10),
     );
-    const fetchAll = Boolean(all);
+    const fetchAll = String(all).toLowerCase() === 'true';
 
     // Validate industry if provided
     if (industry && !Object.values(INDUSTRIES_ENUM).includes(industry as any)) {
@@ -94,6 +96,72 @@ export class ClientController {
         hasOrders,
       },
     );
+  }
+
+  @Get('/export')
+  async exportClientsToExcel(
+    @Query('all') all: string = 'true',
+    @Query('parent_company_id') parentCompanyId: string | undefined = undefined,
+    @Query('client_name') clientName: string | undefined = undefined,
+    @Query('industry') industry: string | undefined = undefined,
+    @Query('product_id') productId: string | undefined = undefined,
+    @Query('startDate') startDate: string | undefined = undefined,
+    @Query('endDate') endDate: string | undefined = undefined,
+    @Query('has_orders') hasOrders: string | undefined = undefined,
+    @Res() res: Response,
+  ) {
+    const fetchAll = String(all).toLowerCase() === 'true';
+
+    if (industry && !Object.values(INDUSTRIES_ENUM).includes(industry as any)) {
+      throw new HttpException('Invalid industry value', HttpStatus.BAD_REQUEST);
+    }
+
+    if (startDate && isNaN(new Date(startDate).getTime())) {
+      throw new HttpException('Invalid start date format', HttpStatus.BAD_REQUEST);
+    }
+    if (endDate && isNaN(new Date(endDate).getTime())) {
+      throw new HttpException('Invalid end date format', HttpStatus.BAD_REQUEST);
+    }
+    if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
+      throw new HttpException('Start date cannot be after end date', HttpStatus.BAD_REQUEST);
+    }
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'exportClientsToExcel: Requested client export',
+        data: {
+          fetchAll,
+          parentCompanyId,
+          clientName,
+          industry,
+          productId,
+          startDate,
+          endDate,
+          hasOrders,
+        },
+      }),
+    );
+
+    const excelBuffer = await this.clientService.exportClientsToExcel({
+      parentCompanyId,
+      clientName,
+      industry,
+      productId,
+      startDate,
+      endDate,
+      hasOrders,
+    });
+
+    const date = new Date().toISOString().split('T')[0];
+    const fileName = `Client_Export_${date}.xlsx`;
+
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': excelBuffer.length,
+    });
+
+    return res.send(excelBuffer);
   }
 
   @Get('/generate-client-id')

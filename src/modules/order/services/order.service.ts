@@ -368,87 +368,87 @@ export class OrderService {
 
         let payments = amc?.payments || [];
 
-        // Handle payments update for date/frequency changes
-        if (
-          body?.amc_start_date?.toString() !==
-            existingOrder?.amc_start_date?.toString() &&
-          payments.length
-        ) {
+        const newStartDateCandidate = body?.amc_start_date
+          ? new Date(body.amc_start_date)
+          : null;
+
+        const hasStartDateChanged =
+          !!newStartDateCandidate &&
+          (!existingOrder?.amc_start_date ||
+            newStartDateCandidate.getTime() !==
+              new Date(existingOrder.amc_start_date).getTime());
+
+        if (hasStartDateChanged && payments.length && newStartDateCandidate) {
+          const amc_frequency_in_months =
+            (amc.client_id as any)?.amc_frequency_in_months ||
+            DEFAULT_AMC_CYCLE_IN_MONTHS;
+          const newStartDate = new Date(newStartDateCandidate);
+          const firstPendingIndex = payments.findIndex(
+            (payment) => payment.status !== PAYMENT_STATUS_ENUM.PAID,
+          );
+
           this.loggerService.log(
             JSON.stringify({
-              message: 'updateAMC: Start date has changed',
+              message: 'updateAMC: Start date has changed, recalculating pending payments',
               previousStartDate: existingOrder.amc_start_date,
-              newStartDate: body.amc_start_date,
+              newStartDate,
+              firstPendingIndex,
+              totalPayments: payments.length,
+              amcFrequencyInMonths: amc_frequency_in_months,
             }),
           );
 
-          const payments = [...amc.payments];
-          const lastPayment = payments[payments.length - 1];
-          const secondLastPayment = payments[payments.length - 2];
+          if (firstPendingIndex !== -1) {
+            const recalculatedPayments = [...payments];
 
-          // Only update if last payment is pending
-          if (
-            lastPayment &&
-            lastPayment.status === PAYMENT_STATUS_ENUM.PENDING
-          ) {
-            this.loggerService.log(
-              JSON.stringify({
-                message:
-                  'updateAMC: Last payment is pending, updating payment dates',
-                lastPayment,
-                secondLastPayment,
-              }),
-            );
-
-            const amc_frequency_in_months =
-              (amc.client_id as any)?.amc_frequency_in_months ||
-              DEFAULT_AMC_CYCLE_IN_MONTHS;
-
-            let fromDate;
-            if (secondLastPayment) {
-              // If there's a second last payment, use its to_date as fromDate
-              fromDate = secondLastPayment.to_date;
-              this.loggerService.log(
-                JSON.stringify({
-                  message:
-                    'updateAMC: Using second last payment to_date as fromDate',
-                  fromDate,
-                }),
-              );
-            } else {
-              // Otherwise find the last paid payment or use start_date
-              const lastPaidPayment = [...payments]
-                .slice(0, -1)
-                .reverse()
-                .find((p) => p.status === PAYMENT_STATUS_ENUM.PAID);
-              fromDate = lastPaidPayment
-                ? lastPaidPayment.to_date
-                : body.amc_start_date;
-              this.loggerService.log(
-                JSON.stringify({
-                  message:
-                    'updateAMC: No second last payment found, using last paid payment or start_date',
-                  fromDate,
-                }),
+            let cursorDate = new Date(newStartDate);
+            if (firstPendingIndex > 0) {
+              cursorDate.setMonth(
+                cursorDate.getMonth() +
+                  amc_frequency_in_months * firstPendingIndex,
               );
             }
 
-            lastPayment.from_date = fromDate;
-            lastPayment.to_date = this.getNextDate(
-              new Date(fromDate),
-              amc_frequency_in_months,
-            );
-            this.loggerService.log(
-              JSON.stringify({
-                message: 'updateAMC: Updated last payment dates',
-                lastPayment,
-              }),
-            );
-          }
+            for (let index = firstPendingIndex; index < recalculatedPayments.length; index++) {
+              const payment = recalculatedPayments[index];
+              const normalizedFrom = new Date(cursorDate);
+              const normalizedTo = this.getNextDate(
+                new Date(cursorDate),
+                amc_frequency_in_months,
+              );
 
-          amc.payments = payments;
-          await amc.save();
+              const effectiveTotalCost =
+                typeof payment.total_cost === 'number' && !Number.isNaN(payment.total_cost)
+                  ? payment.total_cost
+                  : amc.total_cost ?? amcTotalCost;
+
+              const effectiveRate =
+                payment.amc_rate_applied ??
+                amc.amc_percentage ??
+                amcPercentage;
+
+              payment.from_date = normalizedFrom;
+              payment.to_date = normalizedTo;
+              payment.total_cost =
+                effectiveTotalCost ?? amcTotalCost ?? updatedOrder.base_cost;
+              payment.amc_rate_applied = effectiveRate ?? 0;
+              payment.amc_rate_amount =
+                ((payment.total_cost || 0) / 100) * (payment.amc_rate_applied || 0);
+
+              cursorDate = normalizedTo;
+            }
+
+            payments = recalculatedPayments;
+          }
         }
+
+        const amcStartLogs =
+          body?.amc_start_logs ??
+          (amc?.amc_start_logs
+            ? amc.amc_start_logs.map((log: any) =>
+                typeof log.toObject === 'function' ? log.toObject() : log,
+              )
+            : []);
 
         await this.amcModel.findByIdAndUpdate(updatedOrder.amc_id, {
           total_cost: amcTotalCost,
@@ -457,8 +457,9 @@ export class OrderService {
           amc_percentage: amcPercentage,
           start_date: body.amc_start_date
             ? new Date(body.amc_start_date)
-            : undefined,
+            : amc?.start_date,
           payments,
+          amc_start_logs: amcStartLogs,
         });
       }
 
@@ -551,6 +552,16 @@ export class OrderService {
             orderObj.agreements[i].document,
           );
         }
+      }
+
+      if (orderObj.amc_start_logs && orderObj.amc_start_logs.length) {
+        orderObj.amc_start_logs = orderObj.amc_start_logs.map((log: any) => ({
+          ...log,
+          from: log.from ? new Date(log.from) : log.from,
+          to: log.to ? new Date(log.to) : log.to,
+          date: log.date ? new Date(log.date) : log.date,
+          user: log.user ? log.user.toString() : log.user,
+        }));
       }
 
       if (orderObj.amc_id) {
@@ -1459,6 +1470,16 @@ export class OrderService {
       const amcObject = amc.toObject();
       amcObject['client'] = amcObject.client_id;
       delete amcObject.client_id;
+
+      if (amcObject.amc_start_logs && amcObject.amc_start_logs.length) {
+        amcObject.amc_start_logs = amcObject.amc_start_logs.map((log: any) => ({
+          ...log,
+          from: log.from ? new Date(log.from) : log.from,
+          to: log.to ? new Date(log.to) : log.to,
+          date: log.date ? new Date(log.date) : log.date,
+          user: log.user ? log.user.toString() : log.user,
+        }));
+      }
 
       amcObject.payments.forEach((payment) => {
         if (payment.purchase_order_document) {
