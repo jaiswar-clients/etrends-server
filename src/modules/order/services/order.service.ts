@@ -4291,14 +4291,21 @@ export class OrderService {
       const customizations =
         order.customizations as unknown as CustomizationDocument[];
 
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Debugging Customizations',
+          count: customizations?.length,
+          customizations: customizations?.map(c => ({ id: c._id, date: c.purchased_date, cost: c.cost }))
+        })
+      );
+
       for (const customization of customizations) {
-        const customizationYear = new Date(
-          customization.purchased_date,
-        ).getFullYear();
-        const paymentIndex = payments.findIndex((payment) => {
-          const paymentYear = new Date(payment.from_date).getFullYear();
-          return paymentYear === customizationYear;
-        });
+        let purchaseDate = customization.purchased_date
+          ? new Date(customization.purchased_date)
+          : new Date(order.purchased_date);
+        
+        // Normalize to start of day
+        purchaseDate.setHours(0, 0, 0, 0);
 
         this.loggerService.log(
           JSON.stringify({
@@ -4306,31 +4313,58 @@ export class OrderService {
             data: {
               orderId,
               customizationId: customization._id,
-              customizationYear,
+              purchaseDate: purchaseDate.toISOString(),
               customizationCost: customization.cost,
-              affectedPaymentsCount: payments.length - (paymentIndex + 1),
+              usingOrderDate: !customization.purchased_date,
+              orderPurchasedDate: order.purchased_date
             },
           }),
         );
 
-        for (let i = paymentIndex + 1; i < payments.length; i++) {
-          const payment = payments[i];
-          const newTotalCost = payment.total_cost + customization.cost;
-          const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+        for (const payment of payments) {
+          const paymentDate = new Date(payment.from_date);
+          paymentDate.setHours(0, 0, 0, 0);
 
-          payment.amc_rate_amount = newAmount;
-          payment.total_cost = newTotalCost;
+          const shouldAdd = purchaseDate <= paymentDate;
+          
+          this.loggerService.log(
+              JSON.stringify({
+                  message: 'getAmcReviewByOrderId: Checking payment for customization',
+                  paymentDate: paymentDate.toISOString(),
+                  purchaseDate: purchaseDate.toISOString(),
+                  shouldAdd,
+                  currentTotal: payment.total_cost
+              })
+          );
+
+          // If purchased on or before the payment date, include the cost
+          if (shouldAdd) {
+            const newTotalCost = payment.total_cost + customization.cost;
+            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+
+            payment.amc_rate_amount = newAmount;
+            payment.total_cost = newTotalCost;
+          }
         }
       }
 
       const licenses = order.licenses as unknown as LicenseDocument[];
 
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getAmcReviewByOrderId: Debugging Licenses',
+          count: licenses?.length,
+          licenses: licenses?.map(l => ({ id: l._id, date: l.purchase_date, total: l.total_license }))
+        })
+      );
+
       for (const license of licenses) {
-        const licenseYear = new Date(license.purchase_date).getFullYear();
-        const paymentIndex = payments.findIndex((payment) => {
-          const paymentYear = new Date(payment.from_date).getFullYear();
-          return paymentYear === licenseYear;
-        });
+        let purchaseDate = license.purchase_date
+          ? new Date(license.purchase_date)
+          : new Date(order.purchased_date);
+          
+        // Normalize to start of day
+        purchaseDate.setHours(0, 0, 0, 0);
 
         const licenseCost = license.rate?.amount * license.total_license;
 
@@ -4340,23 +4374,29 @@ export class OrderService {
             data: {
               orderId,
               licenseId: license._id,
-              licenseYear,
+              purchaseDate: purchaseDate.toISOString(),
               licenseCost,
               totalLicenses: license.total_license,
               licenseRate: license.rate?.amount,
-              affectedPaymentsCount: payments.length - (paymentIndex + 1),
+              usingOrderDate: !license.purchase_date,
             },
           }),
         );
 
-        for (let i = paymentIndex + 1; i < payments.length; i++) {
-          const payment = payments[i];
+        for (const payment of payments) {
+          const paymentDate = new Date(payment.from_date);
+          paymentDate.setHours(0, 0, 0, 0);
 
-          const newTotalCost = payment.total_cost + licenseCost;
-          const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+          const shouldAdd = purchaseDate <= paymentDate;
 
-          payment.amc_rate_amount = newAmount;
-          payment.total_cost = newTotalCost;
+          // If purchased on or before the payment date, include the cost
+          if (shouldAdd) {
+            const newTotalCost = payment.total_cost + licenseCost;
+            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+
+            payment.amc_rate_amount = newAmount;
+            payment.total_cost = newTotalCost;
+          }
         }
       }
 
