@@ -5,6 +5,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Client, ClientSchema } from '@/db/schema/client.schema';
 import { Order, OrderSchema } from '@/db/schema/order/product-order.schema';
 import { Product, ProductSchema } from '@/db/schema/product.schema';
+import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
+import { Reminder, ReminderSchema } from '@/db/schema/reminders/reminder.schema';
 
 @Module({
   imports: [
@@ -12,6 +14,8 @@ import { Product, ProductSchema } from '@/db/schema/product.schema';
       { name: Client.name, schema: ClientSchema },
       { name: Order.name, schema: OrderSchema },
       { name: Product.name, schema: ProductSchema },
+      { name: AMC.name, schema: AMCSchema },
+      { name: Reminder.name, schema: ReminderSchema },
     ]),
   ],
   controllers: [ClientController],

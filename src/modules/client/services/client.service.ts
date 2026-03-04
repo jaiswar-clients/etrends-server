@@ -6,10 +6,11 @@ import { CreateNewClientDto } from '../dto/create-client.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { encrypt } from '@/utils/cryptography';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
-import { AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
+import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
 import { Product, ProductDocument } from '@/db/schema/product.schema';
 import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
 import { Types } from 'mongoose';
+import { Reminder, ReminderDocument } from '@/db/schema/reminders/reminder.schema';
 
 interface ClientFilterOptions {
   parentCompanyId?: string;
@@ -29,6 +30,10 @@ export class ClientService {
     @InjectModel(Order.name) private orderModel: SoftDeleteModel<OrderDocument>,
     @InjectModel(Product.name)
     private productModel: SoftDeleteModel<ProductDocument>,
+    @InjectModel(AMC.name)
+    private amcModel: SoftDeleteModel<AMCDocument>,
+    @InjectModel(Reminder.name)
+    private reminderModel: SoftDeleteModel<ReminderDocument>,
     private loggerService: LoggerService,
   ) {}
 
@@ -266,7 +271,7 @@ export class ClientService {
       let clientQuery = this.clientModel
         .find(filterQuery)
         .sort({ createdAt: -1 })
-        .select('orders name industry createdAt parent_company_id');
+        .select('orders name industry createdAt parent_company_id client_id');
 
       // Apply pagination if not fetchAll
       if (!fetchAll) {
@@ -1251,6 +1256,127 @@ export class ClientService {
 
       throw new HttpException(
         error.message ?? 'Failed to check client name existence',
+        HttpStatus.BAD_GATEWAY,
+        { cause: error },
+      );
+    }
+  }
+
+  async deleteClient(clientId: string): Promise<{ message: string; deletedId: string }> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteClient: Initiating client deletion',
+          clientId,
+        }),
+      );
+
+      // 1. Check if client exists
+      const client = await this.clientModel.findById(clientId);
+      if (!client) {
+        this.loggerService.warn(
+          JSON.stringify({
+            message: 'deleteClient: Client not found',
+            clientId,
+          }),
+        );
+        throw new HttpException('Client not found', HttpStatus.NOT_FOUND);
+      }
+
+      // 2. Check if client has child companies (if it's a parent company)
+      if (client.is_parent_company && client.child_companies?.length > 0) {
+        this.loggerService.warn(
+          JSON.stringify({
+            message: 'deleteClient: Cannot delete parent company with child companies',
+            clientId,
+            childCompaniesCount: client.child_companies.length,
+          }),
+        );
+        throw new HttpException(
+          'Cannot delete parent company with existing child companies. Please delete or reassign child companies first.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      // 3. Delete all orders associated with this client
+      // This will cascade to Licenses, Customizations, and AdditionalServices (they have order_id references)
+      const orderIds = client.orders || [];
+      if (orderIds.length > 0) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteClient: Deleting associated orders',
+            clientId,
+            orderCount: orderIds.length,
+          }),
+        );
+        await this.orderModel.deleteMany({ _id: { $in: orderIds } });
+      }
+
+      // 4. Delete all AMCs directly associated with this client (via client_id)
+      // Note: AMCs linked to orders will be deleted when orders are deleted
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteClient: Deleting AMCs associated with this client',
+          clientId,
+        }),
+      );
+      await this.amcModel.deleteMany({ client_id: new Types.ObjectId(clientId) });
+
+      // 5. Delete all reminders associated with this client
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteClient: Deleting associated reminders',
+          clientId,
+        }),
+      );
+      await this.reminderModel.deleteMany({ client_id: new Types.ObjectId(clientId) });
+
+      // 6. If client has a parent company, remove from parent's child_companies array
+      if (client.parent_company_id) {
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'deleteClient: Removing from parent company child_companies',
+            clientId,
+            parentCompanyId: client.parent_company_id,
+          }),
+        );
+        await this.clientModel.updateOne(
+          { _id: client.parent_company_id },
+          { $pull: { child_companies: new Types.ObjectId(clientId) } },
+        );
+      }
+
+      // 7. Finally, delete the client
+      await this.clientModel.deleteById(clientId);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteClient: Client deleted successfully',
+          clientId,
+          clientName: client.name,
+        }),
+      );
+
+      return {
+        message: 'Client deleted successfully',
+        deletedId: clientId,
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'deleteClient: Failed to delete client',
+          error: error.message,
+          stack: error.stack,
+          clientId,
+        }),
+      );
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message ?? 'Failed to delete client',
         HttpStatus.BAD_GATEWAY,
         { cause: error },
       );

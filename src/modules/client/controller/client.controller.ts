@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -205,5 +206,10 @@ export class ClientController {
     @Body() body: CreateNewClientDto,
   ) {
     return this.clientService.updateClient(dbClientId, body);
+  }
+
+  @Delete('/:id')
+  async deleteClient(@Param('id') clientId: string) {
+    return this.clientService.deleteClient(clientId);
   }
 }
