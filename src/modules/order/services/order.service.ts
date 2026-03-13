@@ -19,6 +19,7 @@ import {
 } from '@/db/schema/order/additional-service.schema';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
+import { CheckDuplicateDto } from '../dto/check-duplicate.dto';
 import {
   AMC_FILTER,
   DEFAULT_AMC_CYCLE_IN_MONTHS,
@@ -81,6 +82,225 @@ export class OrderService {
     private storageService: StorageService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {}
+
+  async checkDuplicates(body: CheckDuplicateDto) {
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'checkDuplicates: Checking for duplicate purchases',
+        data: body,
+      }),
+    );
+
+    const { clientId, purchaseType, purchaseOrderNumber, invoiceNumber, productIds, productId } = body;
+    const clientIdObj = new Types.ObjectId(clientId);
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'checkDuplicates: Checking with values',
+        clientId,
+        purchaseType,
+        purchaseOrderNumber,
+        invoiceNumber,
+        productIds,
+        productId,
+      }),
+    );
+
+    let duplicateRecords: Array<{ id: string; type: string; description: string }> = [];
+
+    switch (purchaseType) {
+      case 'order':
+        // For Orders: Check client_id + (products array OR purchase_order_number)
+        
+        // Check 1: By productIds
+        if (productIds && productIds.length > 0) {
+          const productIdsObj = productIds.map(id => new Types.ObjectId(id));
+
+          // Find orders where any of the productIds exist in the order's products array
+          const ordersWithProducts = await this.orderModel.find({
+            client_id: { $in: [clientIdObj, clientId] },
+            products: { $in: productIdsObj },
+          }).lean();
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'checkDuplicates: Found orders with same client and products',
+              count: ordersWithProducts.length,
+              productIds,
+            }),
+          );
+
+          for (const order of ordersWithProducts) {
+            const orderProducts = (order as any).products || [];
+
+            const allProductsMatch = productIds.every(pid =>
+              orderProducts.some((op: any) => op.toString() === pid)
+            );
+            const productsOverlap = productIds.some(pid =>
+              orderProducts.some((op: any) => op.toString() === pid)
+            );
+
+            if (allProductsMatch || productsOverlap) {
+              duplicateRecords.push({
+                id: order._id.toString(),
+                type: 'order',
+                description: `Order with same products already exists (existing order has ${orderProducts.length} products: [${orderProducts.map((op: any) => op.toString()).join(', ')}])`,
+              });
+            }
+          }
+        }
+
+        // Check 2: By purchaseOrderNumber
+        if (purchaseOrderNumber) {
+          const clientIdMixed = [clientIdObj, clientId];
+
+          const ordersWithPO = await this.orderModel.find({
+            client_id: { $in: clientIdMixed },
+            purchase_order_number: purchaseOrderNumber,
+          }).lean();
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'checkDuplicates: Found orders with same client and PO number',
+              count: ordersWithPO.length,
+              purchaseOrderNumber,
+            }),
+          );
+
+          for (const order of ordersWithPO) {
+            const orderProducts = (order as any).products || [];
+
+            duplicateRecords.push({
+              id: order._id.toString(),
+              type: 'order',
+              description: `Order with PO number "${purchaseOrderNumber}" already exists (existing order has ${orderProducts.length} products: [${orderProducts.map((op: any) => op.toString()).join(', ')}])`,
+            });
+          }
+        }
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'checkDuplicates: Order duplicate check complete',
+            duplicateRecords,
+          }),
+        );
+        break;
+
+      case 'license':
+        // For Licenses: Check client_id + product_id + purchase_order_number
+        if (purchaseOrderNumber && productId) {
+          const duplicateLicenses = await this.licenseModel.find({
+            client_id: clientIdObj,
+            product_id: productId,
+            purchase_order_number: purchaseOrderNumber,
+          }).lean();
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'checkDuplicates: Found licenses with same client, product, and PO',
+              count: duplicateLicenses.length,
+              search: { clientId, productId, purchaseOrderNumber },
+            }),
+          );
+
+          for (const license of duplicateLicenses) {
+            // Check if product_id matches exactly
+            if (license.product_id && license.product_id.toString() === productId) {
+              duplicateRecords.push({
+                id: license._id.toString(),
+                type: 'license',
+                description: `License with PO number "${purchaseOrderNumber}" for same product already exists`,
+              });
+            }
+          }
+        }
+        break;
+
+      case 'customization':
+        // For Customizations: Check client_id + product_id + purchase_order_number + invoice_number
+        if (purchaseOrderNumber && productId && invoiceNumber) {
+          const duplicateCustomizations = await this.customizationModel.find({
+            client_id: clientIdObj,
+            product_id: productId,
+            purchase_order_number: purchaseOrderNumber,
+            invoice_number: invoiceNumber,
+          }).lean();
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'checkDuplicates: Found customizations with same client, product, PO, and invoice',
+              count: duplicateCustomizations.length,
+              search: { clientId, productId, purchaseOrderNumber, invoiceNumber },
+            }),
+          );
+
+          for (const customization of duplicateCustomizations) {
+            // Check if product_id, purchase_order_number, and invoice_number all match exactly
+            const productMatch = customization.product_id && customization.product_id.toString() === productId;
+            const poMatch = customization.purchase_order_number === purchaseOrderNumber;
+            const invoiceMatch = customization.invoice_number === invoiceNumber;
+
+            if (productMatch && poMatch && invoiceMatch) {
+              duplicateRecords.push({
+                id: customization._id.toString(),
+                type: 'customization',
+                description: `Customization with PO number "${purchaseOrderNumber}" and invoice number "${invoiceNumber}" for same product already exists`,
+              });
+            }
+          }
+        }
+        break;
+
+      case 'additional-service':
+        // For Additional Services: Check client_id + product_id + purchase_order_number + invoice_number
+        if (purchaseOrderNumber && productId && invoiceNumber) {
+          const duplicateServices = await this.additionalServiceModel.find({
+            client_id: clientIdObj,
+            product_id: productId,
+            purchase_order_number: purchaseOrderNumber,
+            invoice_number: invoiceNumber,
+          }).lean();
+
+          this.loggerService.log(
+            JSON.stringify({
+              message: 'checkDuplicates: Found additional services with same client, product, PO, and invoice',
+              count: duplicateServices.length,
+              search: { clientId, productId, purchaseOrderNumber, invoiceNumber },
+            }),
+          );
+
+          for (const service of duplicateServices) {
+            // Check if product_id, purchase_order_number, and invoice_number all match exactly
+            const productMatch = service.product_id && service.product_id.toString() === productId;
+            const poMatch = service.purchase_order_number === purchaseOrderNumber;
+            const invoiceMatch = service.invoice_number === invoiceNumber;
+
+            if (productMatch && poMatch && invoiceMatch) {
+              duplicateRecords.push({
+                id: service._id.toString(),
+                type: 'additional-service',
+                description: `Additional service with PO number "${purchaseOrderNumber}" and invoice number "${invoiceNumber}" for same product already exists`,
+              });
+            }
+          }
+        }
+        break;
+
+      default:
+        this.loggerService.error(
+          JSON.stringify({
+            message: 'checkDuplicates: Invalid purchase type',
+            purchaseType,
+          }),
+        );
+        break;
+    }
+
+    return {
+      hasDuplicate: duplicateRecords.length > 0,
+      duplicateRecords,
+    };
+  }
 
   async createOrder(clientId: string, body: CreateOrderDto) {
     if (!clientId) {

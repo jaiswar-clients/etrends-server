@@ -17,6 +17,7 @@ import { CreateOrderDto } from '../dto/create-order.dto';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { CreateAdditionalServiceDto } from '../dto/create-additional-service.dto';
 import { CreateCustomizationDto } from '../dto/create-customization.service.dto';
+import { CheckDuplicateDto } from '../dto/check-duplicate.dto';
 import {
   AddAMCPaymentDto,
   UpdateAMCDto,
@@ -449,6 +450,17 @@ export class OrderController {
   @Get('/amc-payments-review/:id')
   async getAmcReviewByOrderId(@Param('id') orderId: string) {
     return this.orderService.getAmcReviewByOrderId(orderId);
+  }
+
+  @Post('/check-duplicates')
+  async checkDuplicates(@Body() body: CheckDuplicateDto) {
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'checkDuplicates: Controller called',
+        data: body,
+      }),
+    );
+    return this.orderService.checkDuplicates(body);
   }
 
   @Post('/:clientId')
