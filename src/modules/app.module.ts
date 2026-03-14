@@ -24,6 +24,7 @@ import { MailModule } from '@/common/mail/mail.module';
 import { ReminderModule } from './reminder/reminder.module';
 import { ReportModule } from './report/report.module';
 import { BackupModule } from './backup/backup.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 type NestModuleImport =
   | Type<any>
@@ -60,6 +61,7 @@ const appModules: NestModuleImport[] = [LoggerModule, HttpModule, ConfigModule];
     ReminderModule,
     ReportModule,
     BackupModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService, TasksService],
