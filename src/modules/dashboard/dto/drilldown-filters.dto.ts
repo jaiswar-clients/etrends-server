@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -25,6 +26,11 @@ export class DrillDownFiltersDto extends DashboardFiltersDto {
 
   @IsBoolean()
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true' || value === '1' || value === '') return true;
+    if (value === 'false' || value === '0') return false;
+    return value;
+  })
   includeDetails?: boolean;
 
   @IsNumber()

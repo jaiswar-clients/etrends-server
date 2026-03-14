@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
-import { PipelineStage } from 'mongoose';
+import { PipelineStage, Types } from 'mongoose';
 import {
   Customization,
   CustomizationDocument,
@@ -19,7 +19,10 @@ import {
   AMCDocument,
   PAYMENT_STATUS_ENUM,
 } from '@/db/schema/amc/amc.schema';
-import { FilterPreset, FilterPresetDocument } from '@/db/schema/filter-preset.schema';
+import {
+  FilterPreset,
+  FilterPresetDocument,
+} from '@/db/schema/filter-preset.schema';
 import { DashboardFiltersDto } from '../dto/dashboard-filters.dto';
 import { DashboardResponseDto } from '../dto/dashboard-response.dto';
 import {
@@ -53,7 +56,87 @@ export class DashboardService {
     private filterPresetModel: SoftDeleteModel<FilterPresetDocument>,
   ) {}
 
-  async getDashboardData(filters: DashboardFiltersDto): Promise<DashboardResponseDto> {
+  /**
+   * Converts string IDs to ObjectId for MongoDB queries
+   * Handles both string and ObjectId inputs
+   */
+  private convertToObjectId(id: string | any): Types.ObjectId | null {
+    if (!id) return null;
+    if (typeof id === 'string') {
+      try {
+        return new Types.ObjectId(id);
+      } catch (e) {
+        return null;
+      }
+    }
+    return id instanceof Types.ObjectId ? id : null;
+  }
+
+  /**
+   * Converts array of string IDs to ObjectId array
+   */
+  private convertToObjectIdArray(ids: string[]): Types.ObjectId[] {
+    return ids
+      .map((id) => this.convertToObjectId(id))
+      .filter((id): id is Types.ObjectId => id !== null);
+  }
+
+  /**
+   * Safely converts ObjectId or mixed type to string for comparisons
+   */
+  private toStringId(id: any): string {
+    if (!id) return '';
+    if (typeof id === 'string') return id;
+    if (id && typeof id.toString === 'function') return id.toString();
+    return '';
+  }
+
+  /**
+   * Formats date to period string based on filter type
+   * Supports Indian Fiscal Year (April-March)
+   */
+  private formatPeriod(date: Date, filter: string): string {
+    switch (filter) {
+      case 'monthly':
+        return date.toLocaleString('default', {
+          month: 'short',
+          year: '2-digit',
+        });
+      case 'quarterly':
+        const month = date.getMonth();
+        const year = date.getFullYear();
+        let quarter: number;
+        let fiscalYear: number;
+        if (month >= 3 && month <= 5) {
+          quarter = 1;
+          fiscalYear = year;
+        } else if (month >= 6 && month <= 8) {
+          quarter = 2;
+          fiscalYear = year;
+        } else if (month >= 9 && month <= 11) {
+          quarter = 3;
+          fiscalYear = year;
+        } else {
+          quarter = 4;
+          fiscalYear = year + 1;
+        }
+        return `Q${quarter} FY${fiscalYear.toString().slice(-2)}-${(fiscalYear + 1).toString().slice(-2)}`;
+      case 'yearly':
+        const fyMonth = date.getMonth();
+        const fyYear =
+          fyMonth < 3 ? date.getFullYear() - 1 : date.getFullYear();
+        return `FY${fyYear.toString().slice(-2)}-${(fyYear + 1).toString().slice(-2)}`;
+      default:
+        return date.toLocaleString('default', {
+          month: 'short',
+          year: '2-digit',
+        });
+    }
+  }
+
+  async getDashboardData(
+    filters: DashboardFiltersDto,
+  ): Promise<DashboardResponseDto> {
     const dateRange = this.calculateDateRange(filters.filter, {
       year: filters.fiscalYear,
       quarter: filters.quarter,
@@ -73,7 +156,12 @@ export class DashboardService {
       this.getServiceRevenue(dateRange, filters),
     ]);
 
-    const totalRevenue = orderRevenue + amcRevenue + customizationRevenue + licenseRevenue + serviceRevenue;
+    const totalRevenue =
+      orderRevenue +
+      amcRevenue +
+      customizationRevenue +
+      licenseRevenue +
+      serviceRevenue;
 
     const summary: DashboardSummaryDto = {
       totalRevenue,
@@ -82,10 +170,10 @@ export class DashboardService {
       customizationRevenue,
       licenseRevenue,
       additionalServiceRevenue: serviceRevenue,
-      pendingPayments: 0,
-      paidPayments: 0,
-      totalClients: 0,
-      totalOrders: 0,
+      pendingPayments: await this.calculatePendingPayments(dateRange, filters),
+      paidPayments: await this.calculatePaidPayments(dateRange, filters),
+      totalClients: await this.calculateTotalClients(dateRange, filters),
+      totalOrders: await this.calculateTotalOrders(dateRange, filters),
       revenueGrowth: 0,
       period: filters.fiscalYear
         ? `FY${(filters.fiscalYear % 100).toString().padStart(2, '0')}-${((filters.fiscalYear + 1) % 100).toString().padStart(2, '0')}`
@@ -100,7 +188,9 @@ export class DashboardService {
     };
   }
 
-  async getDrillDownData(filters: DrillDownFiltersDto): Promise<DrillDownResponseDto> {
+  async getDrillDownData(
+    filters: DrillDownFiltersDto,
+  ): Promise<DrillDownResponseDto> {
     const dateRange = this.calculateDateRange(filters.filter, {
       year: filters.fiscalYear,
       quarter: filters.quarter,
@@ -148,12 +238,16 @@ export class DashboardService {
       metadata,
       aggregatedData,
       details,
-      pagination: filters.includeDetails ? {
-        page: filters.page || 1,
-        limit: filters.limit || 20,
-        total: metadata.totalRecords,
-        totalPages: Math.ceil(metadata.totalRecords / (filters.limit || 20)),
-      } : undefined,
+      pagination: filters.includeDetails
+        ? {
+            page: filters.page || 1,
+            limit: filters.limit || 20,
+            total: metadata.totalRecords,
+            totalPages: Math.ceil(
+              metadata.totalRecords / (filters.limit || 20),
+            ),
+          }
+        : undefined,
     };
   }
 
@@ -180,15 +274,26 @@ export class DashboardService {
     ];
 
     const [clients, products, industries] = await Promise.all([
-      this.clientModel.find().select('_id name').lean().then(docs => 
-        docs.map((c: any) => ({ value: c._id.toString(), label: c.name }))
-      ),
-      this.productModel.find().select('_id name').lean().then(docs =>
-        docs.map((p: any) => ({ value: p._id.toString(), label: p.name }))
-      ),
-      this.clientModel.distinct('industry').lean().then(items =>
-        items.filter(Boolean).map((i: any) => ({ value: i, label: i }))
-      ),
+      this.clientModel
+        .find()
+        .select('_id name')
+        .lean()
+        .then((docs) =>
+          docs.map((c: any) => ({ value: c._id.toString(), label: c.name })),
+        ),
+      this.productModel
+        .find()
+        .select('_id name')
+        .lean()
+        .then((docs) =>
+          docs.map((p: any) => ({ value: p._id.toString(), label: p.name })),
+        ),
+      this.clientModel
+        .distinct('industry')
+        .lean()
+        .then((items) =>
+          items.filter(Boolean).map((i: any) => ({ value: i, label: i })),
+        ),
     ]);
 
     const revenueStreams = [
@@ -219,7 +324,12 @@ export class DashboardService {
 
   private calculateDateRange(
     filter: string,
-    options?: { year?: number; quarter?: string },
+    options?: {
+      year?: number;
+      quarter?: string;
+      startDate?: string;
+      endDate?: string;
+    },
   ): { startDate: Date; endDate: Date } {
     let start: Date;
     let end: Date;
@@ -279,11 +389,28 @@ export class DashboardService {
         start = new Date(0);
         end = new Date();
         break;
+      case 'custom':
+        if (options?.startDate && options?.endDate) {
+          start = new Date(options.startDate);
+          end = new Date(options.endDate);
+          end.setHours(23, 59, 59, 999);
+        } else {
+          // Fallback to current fiscal year
+          const currentDate = new Date();
+          const currentYear = currentDate.getFullYear();
+          const currentMonth = currentDate.getMonth();
+          const fiscalYearStart =
+            currentMonth < 3 ? currentYear - 1 : currentYear;
+          start = new Date(fiscalYearStart, 3, 1);
+          end = new Date(fiscalYearStart + 1, 2, 31, 23, 59, 59);
+        }
+        break;
       default:
         const currentDate = new Date();
         const currentYear = currentDate.getFullYear();
         const currentMonth = currentDate.getMonth();
-        const fiscalYearStart = currentMonth < 3 ? currentYear - 1 : currentYear;
+        const fiscalYearStart =
+          currentMonth < 3 ? currentYear - 1 : currentYear;
         start = new Date(fiscalYearStart, 3, 1);
         end = new Date(fiscalYearStart + 1, 2, 31, 23, 59, 59);
     }
@@ -293,7 +420,9 @@ export class DashboardService {
 
   private applyFiltersToQuery(query: any, filters: DashboardFiltersDto): void {
     if (filters.fiscalYear) {
-      const fyInfo = this.calculateDateRange('yearly', { year: filters.fiscalYear });
+      const fyInfo = this.calculateDateRange('yearly', {
+        year: filters.fiscalYear,
+      });
       query.purchased_date = {
         $gte: fyInfo.startDate,
         $lte: fyInfo.endDate,
@@ -316,81 +445,490 @@ export class DashboardService {
     }
   }
 
-  private async getOrderRevenue(dateRange: any, filters: DashboardFiltersDto): Promise<number> {
+  /**
+   * Calculates paid payments across all revenue streams
+   */
+  private async calculatePaidPayments(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const paidStatuses = [PAYMENT_STATUS_ENUM.PAID];
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+
+    // Orders - paid payment terms
+    const orderPaid = await this.orderModel
+      .aggregate([
+        {
+          $match: {
+            'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+          },
+        },
+        { $unwind: '$payment_terms' },
+        {
+          $match: {
+            'payment_terms.status': { $in: paidStatuses },
+            'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$payment_terms.calculated_amount' },
+          },
+        },
+      ])
+      .exec();
+
+    // AMC - paid payments
+    const amcPaid = await this.amcModel
+      .aggregate([
+        { $match: { 'payments.received_date': { $gte: start, $lte: end } } },
+        { $unwind: '$payments' },
+        {
+          $match: {
+            'payments.status': { $in: paidStatuses },
+            'payments.received_date': { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: {
+                $ifNull: ['$payments.amc_rate_amount', '$payments.total_cost'],
+              },
+            },
+          },
+        },
+      ])
+      .exec();
+
+    // Customizations - paid
+    const customizationPaid = await this.customizationModel
+      .aggregate([
+        {
+          $match: {
+            payment_status: { $in: paidStatuses },
+            payment_receive_date: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$cost' },
+          },
+        },
+      ])
+      .exec();
+
+    // Licenses - paid
+    const licensePaid = await this.licenseModel
+      .aggregate([
+        {
+          $match: {
+            payment_status: { $in: paidStatuses },
+            payment_receive_date: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $multiply: ['$rate.amount', '$total_license'] } },
+          },
+        },
+      ])
+      .exec();
+
+    // Services - paid
+    const servicePaid = await this.additionalServiceModel
+      .aggregate([
+        {
+          $match: {
+            payment_status: { $in: paidStatuses },
+            payment_receive_date: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$cost' },
+          },
+        },
+      ])
+      .exec();
+
+    return (
+      (orderPaid[0]?.total || 0) +
+      (amcPaid[0]?.total || 0) +
+      (customizationPaid[0]?.total || 0) +
+      (licensePaid[0]?.total || 0) +
+      (servicePaid[0]?.total || 0)
+    );
+  }
+
+  /**
+   * Calculates pending payments (PENDING + PROFORMA + INVOICE)
+   */
+  private async calculatePendingPayments(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const pendingStatuses = [
+      PAYMENT_STATUS_ENUM.PENDING,
+      PAYMENT_STATUS_ENUM.proforma,
+      PAYMENT_STATUS_ENUM.INVOICE,
+    ];
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+
+    // Orders - pending payment terms
+    const orderPending = await this.orderModel
+      .aggregate([
+        {
+          $match: {
+            'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+          },
+        },
+        { $unwind: '$payment_terms' },
+        {
+          $match: {
+            'payment_terms.status': { $in: pendingStatuses },
+            'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$payment_terms.calculated_amount' },
+          },
+        },
+      ])
+      .exec();
+
+    // AMC - pending payments
+    const amcPending = await this.amcModel
+      .aggregate([
+        { $match: { 'payments.from_date': { $gte: start, $lte: end } } },
+        { $unwind: '$payments' },
+        {
+          $match: {
+            'payments.status': { $in: pendingStatuses },
+            'payments.from_date': { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: {
+                $ifNull: ['$payments.total_cost', '$payments.amc_rate_amount'],
+              },
+            },
+          },
+        },
+      ])
+      .exec();
+
+    // Customizations - pending
+    const customizationPending = await this.customizationModel
+      .aggregate([
+        {
+          $match: {
+            payment_status: { $in: pendingStatuses },
+            payment_receive_date: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$cost' },
+          },
+        },
+      ])
+      .exec();
+
+    // Licenses - pending
+    const licensePending = await this.licenseModel
+      .aggregate([
+        {
+          $match: {
+            payment_status: { $in: pendingStatuses },
+            payment_receive_date: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $multiply: ['$rate.amount', '$total_license'] } },
+          },
+        },
+      ])
+      .exec();
+
+    // Services - pending
+    const servicePending = await this.additionalServiceModel
+      .aggregate([
+        {
+          $match: {
+            payment_status: { $in: pendingStatuses },
+            payment_receive_date: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$cost' },
+          },
+        },
+      ])
+      .exec();
+
+    return (
+      (orderPending[0]?.total || 0) +
+      (amcPending[0]?.total || 0) +
+      (customizationPending[0]?.total || 0) +
+      (licensePending[0]?.total || 0) +
+      (servicePending[0]?.total || 0)
+    );
+  }
+
+  /**
+   * Calculates total unique clients across all revenue streams
+   */
+  private async calculateTotalClients(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+
+    // Collect all client IDs from all revenue streams in date range
+    const [
+      orderClients,
+      amcClients,
+      customClientIds,
+      licenseClientIds,
+      serviceClientIds,
+    ] = await Promise.all([
+      this.orderModel.distinct('client_id', {
+        'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+      }),
+      this.amcModel.distinct('client_id', {
+        'payments.received_date': { $gte: start, $lte: end },
+      }),
+      this.customizationModel
+        .find({
+          payment_receive_date: { $gte: start, $lte: end },
+        })
+        .populate('order_id')
+        .lean()
+        .then((docs) =>
+          docs.map((d: any) => this.toStringId((d.order_id as any)?.client_id)),
+        ),
+      this.licenseModel
+        .find({
+          payment_receive_date: { $gte: start, $lte: end },
+        })
+        .populate('order_id')
+        .lean()
+        .then((docs) =>
+          docs.map((d: any) => this.toStringId((d.order_id as any)?.client_id)),
+        ),
+      this.additionalServiceModel
+        .find({
+          payment_receive_date: { $gte: start, $lte: end },
+        })
+        .populate('order_id')
+        .lean()
+        .then((docs) =>
+          docs.map((d: any) => this.toStringId((d.order_id as any)?.client_id)),
+        ),
+    ]);
+
+    // Combine all client IDs and deduplicate using Set
+    const allClientIds = new Set<string>(
+      [
+        ...orderClients.map((id: any) => this.toStringId(id)),
+        ...amcClients.map((id: any) => this.toStringId(id)),
+        ...customClientIds,
+        ...licenseClientIds,
+        ...serviceClientIds,
+      ].filter((id) => id !== ''),
+    );
+
+    return allClientIds.size;
+  }
+
+  /**
+   * Calculates total orders in date range
+   */
+  private async calculateTotalOrders(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+
     const query: any = {};
-    this.applyFiltersToQuery(query, filters);
     if (dateRange.startDate && dateRange.endDate) {
-      query.purchased_date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
+      query.purchased_date = { $gte: start, $lte: end };
     }
 
-    const result = await this.orderModel.aggregate([
-      { $match: query },
-      { $group: { _id: null, total: { $sum: '$base_cost' } } }
-    ]).exec();
+    // Apply client filter if provided
+    if (filters.clientIds && filters.clientIds.length > 0) {
+      query.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+
+    return this.orderModel.countDocuments(query).exec();
+  }
+
+  private async getOrderRevenue(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const paidStatuses =
+      filters.paymentStatuses && filters.paymentStatuses.length > 0
+        ? filters.paymentStatuses
+        : [PAYMENT_STATUS_ENUM.PAID];
+
+    const result = await this.orderModel
+      .aggregate([
+        {
+          $match: {
+            'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+          },
+        },
+        { $unwind: '$payment_terms' },
+        {
+          $match: {
+            'payment_terms.status': { $in: paidStatuses },
+            'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$payment_terms.calculated_amount' },
+          },
+        },
+      ])
+      .exec();
 
     return result[0]?.total || 0;
   }
 
-  private async getAMCRevenue(dateRange: any, filters: DashboardFiltersDto): Promise<number> {
-    const query: any = {};
-    if (dateRange.startDate && dateRange.endDate) {
-      query['payments.from_date'] = { $gte: dateRange.startDate, $lte: dateRange.endDate };
-    }
-    query['payments.status'] = PAYMENT_STATUS_ENUM.PAID;
+  private async getAMCRevenue(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const paidStatuses =
+      filters.paymentStatuses && filters.paymentStatuses.length > 0
+        ? filters.paymentStatuses
+        : [PAYMENT_STATUS_ENUM.PAID];
 
-    const result = await this.amcModel.aggregate([
-      { $match: query },
-      { $unwind: '$payments' },
-      { $match: { 'payments.status': PAYMENT_STATUS_ENUM.PAID } },
-      { $group: { _id: null, total: { $sum: '$payments.total_cost' } } }
-    ]).exec();
-
-    return result[0]?.total || 0;
-  }
-
-  private async getCustomizationRevenue(dateRange: any, filters: DashboardFiltersDto): Promise<number> {
-    const query: any = {};
-    if (dateRange.startDate && dateRange.endDate) {
-      query.purchased_date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
-    }
-
-    const result = await this.customizationModel.aggregate([
-      { $match: query },
-      { $group: { _id: null, total: { $sum: '$cost' } } }
-    ]).exec();
-
-    return result[0]?.total || 0;
-  }
-
-  private async getLicenseRevenue(dateRange: any, filters: DashboardFiltersDto): Promise<number> {
-    const query: any = {};
-    if (dateRange.startDate && dateRange.endDate) {
-      query.purchase_date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
-    }
-
-    const result = await this.licenseModel.aggregate([
-      { $match: query },
-      { $group: { _id: null, total: { $sum: { $multiply: ['$rate.amount', '$total_license'] } } } }
-    ]).exec();
+    const result = await this.amcModel
+      .aggregate([
+        { $match: { 'payments.received_date': { $gte: start, $lte: end } } },
+        { $unwind: '$payments' },
+        {
+          $match: {
+            'payments.status': { $in: paidStatuses },
+            'payments.received_date': { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: {
+                $ifNull: ['$payments.amc_rate_amount', '$payments.total_cost'],
+              },
+            },
+          },
+        },
+      ])
+      .exec();
 
     return result[0]?.total || 0;
   }
 
-  private async getServiceRevenue(dateRange: any, filters: DashboardFiltersDto): Promise<number> {
+  private async getCustomizationRevenue(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const paidStatuses =
+      filters.paymentStatuses && filters.paymentStatuses.length > 0
+        ? filters.paymentStatuses
+        : [PAYMENT_STATUS_ENUM.PAID];
+
     const query: any = {};
     if (dateRange.startDate && dateRange.endDate) {
-      query.purchased_date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
+      query.payment_receive_date = { $gte: start, $lte: end };
+      query.payment_status = { $in: paidStatuses };
     }
 
-    const result = await this.additionalServiceModel.aggregate([
-      { $match: query },
-      { $group: { _id: null, total: { $sum: '$cost' } } }
-    ]).exec();
+    const result = await this.customizationModel
+      .aggregate([
+        { $match: query },
+        { $group: { _id: null, total: { $sum: '$cost' } } },
+      ])
+      .exec();
 
     return result[0]?.total || 0;
   }
 
-  private async getDashboardTrends(filters: DashboardFiltersDto): Promise<DashboardTrendsDto> {
+  private async getLicenseRevenue(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const query: any = {};
+    if (dateRange.startDate && dateRange.endDate) {
+      query.purchase_date = {
+        $gte: dateRange.startDate,
+        $lte: dateRange.endDate,
+      };
+    }
+
+    const result = await this.licenseModel
+      .aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: { $multiply: ['$rate.amount', '$total_license'] } },
+          },
+        },
+      ])
+      .exec();
+
+    return result[0]?.total || 0;
+  }
+
+  private async getServiceRevenue(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const query: any = {};
+    if (dateRange.startDate && dateRange.endDate) {
+      query.purchased_date = {
+        $gte: dateRange.startDate,
+        $lte: dateRange.endDate,
+      };
+    }
+
+    const result = await this.additionalServiceModel
+      .aggregate([
+        { $match: query },
+        { $group: { _id: null, total: { $sum: '$cost' } } },
+      ])
+      .exec();
+
+    return result[0]?.total || 0;
+  }
+
+  private async getDashboardTrends(
+    filters: DashboardFiltersDto,
+  ): Promise<DashboardTrendsDto> {
     const dateRange = this.calculateDateRange(filters.filter, {
       year: filters.fiscalYear,
       quarter: filters.quarter,
@@ -401,10 +939,13 @@ export class DashboardService {
       quarter: filters.quarter,
     });
 
-    const expectedVsReceived = await this.getExpectedVsReceivedChartData(filters.filter, {
-      year: filters.fiscalYear,
-      quarter: filters.quarter,
-    });
+    const expectedVsReceived = await this.getExpectedVsReceivedChartData(
+      filters.filter,
+      {
+        year: filters.fiscalYear,
+        quarter: filters.quarter,
+      },
+    );
 
     const amcBreakdown = await this.getAMCAnnualBreakdown(filters.filter, {
       year: filters.fiscalYear,
@@ -412,17 +953,17 @@ export class DashboardService {
     });
 
     return {
-      totalBilling: totalBilling.map(item => ({
+      totalBilling: totalBilling.map((item) => ({
         period: item.period,
         newBusiness: item.total_purchase_billing || 0,
         amc: item.total_amc_billing || 0,
       })),
-      expectedVsReceived: expectedVsReceived.map(item => ({
+      expectedVsReceived: expectedVsReceived.map((item) => ({
         period: item.period,
         expected: item.expected_amount,
         received: item.received_amount,
       })),
-      amcBreakdown: amcBreakdown.map(item => ({
+      amcBreakdown: amcBreakdown.map((item) => ({
         period: item.period,
         expected: item.totalExpected,
         collected: item.totalCollected,
@@ -430,32 +971,40 @@ export class DashboardService {
     };
   }
 
-  private async getDashboardDistributions(filters: DashboardFiltersDto): Promise<DashboardDistributionsDto> {
+  private async getDashboardDistributions(
+    filters: DashboardFiltersDto,
+  ): Promise<DashboardDistributionsDto> {
     const dateRange = this.calculateDateRange(filters.filter, {
       year: filters.fiscalYear,
       quarter: filters.quarter,
     });
 
-    const productWise = await this.getProductWiseRevenueDistribution(filters.filter, {
-      startDate: dateRange.startDate,
-      endDate: dateRange.endDate,
-      year: filters.fiscalYear,
-      quarter: filters.quarter,
-    });
+    const productWise = await this.getProductWiseRevenueDistribution(
+      filters.filter,
+      {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        year: filters.fiscalYear,
+        quarter: filters.quarter,
+      },
+    );
 
-    const industryWise = await this.getIndustryWiseRevenueDistribution(filters.filter, {
-      year: filters.fiscalYear,
-      quarter: filters.quarter,
-    });
+    const industryWise = await this.getIndustryWiseRevenueDistribution(
+      filters.filter,
+      {
+        year: filters.fiscalYear,
+        quarter: filters.quarter,
+      },
+    );
 
     return {
-      productWise: productWise.map(item => ({
+      productWise: productWise.map((item) => ({
         productId: item.productId,
         productName: item.productName,
         revenue: item.revenue,
         percentage: item.percentage || 0,
       })),
-      industryWise: industryWise.map(item => ({
+      industryWise: industryWise.map((item) => ({
         industry: item.industry,
         revenue: item.total,
         percentage: 0,
@@ -464,46 +1013,58 @@ export class DashboardService {
     };
   }
 
-  private async getTopPerformers(filters: DashboardFiltersDto): Promise<TopPerformersDto> {
+  private async getTopPerformers(
+    filters: DashboardFiltersDto,
+  ): Promise<TopPerformersDto> {
     const distributions = await this.getDashboardDistributions(filters);
 
     return {
-      topProducts: distributions.productWise.slice(0, 5).map(item => ({
+      topProducts: distributions.productWise.slice(0, 5).map((item) => ({
         productId: item.productId,
         productName: item.productName,
         revenue: item.revenue,
       })),
       topClients: [],
-      topIndustries: distributions.industryWise.slice(0, 5).map(item => ({
+      topIndustries: distributions.industryWise.slice(0, 5).map((item) => ({
         industry: item.industry,
         revenue: item.revenue,
       })),
     };
   }
 
-  private async getProductDrillDown(filters: DrillDownFiltersDto, dateRange: any): Promise<any[]> {
+  private async getProductDrillDown(
+    filters: DrillDownFiltersDto,
+    dateRange: any,
+  ): Promise<any[]> {
     const query: any = {};
     if (filters.drilldownValue) {
       query.products = filters.drilldownValue;
     }
 
     if (dateRange.startDate && dateRange.endDate) {
-      query.purchased_date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
+      query.purchased_date = {
+        $gte: dateRange.startDate,
+        $lte: dateRange.endDate,
+      };
     }
 
     const aggregation: PipelineStage[] = [
       { $match: query },
       {
         $group: {
-          _id: { period: { $dateToString: { format: '%Y-%m', date: '$purchased_date' } } },
+          _id: {
+            period: {
+              $dateToString: { format: '%Y-%m', date: '$purchased_date' },
+            },
+          },
           revenue: { $sum: '$base_cost' },
-        }
+        },
       },
       { $sort: { '_id.period': 1 } },
     ];
 
     const result = await this.orderModel.aggregate(aggregation).exec();
-    return result.map(item => ({
+    return result.map((item) => ({
       period: item._id.period,
       revenue: item.revenue,
       orderRevenue: item.revenue,
@@ -514,34 +1075,58 @@ export class DashboardService {
     }));
   }
 
-  private async getClientDrillDown(filters: DrillDownFiltersDto, dateRange: any): Promise<any[]> {
+  private async getClientDrillDown(
+    filters: DrillDownFiltersDto,
+    dateRange: any,
+  ): Promise<any[]> {
     return [];
   }
 
-  private async getIndustryDrillDown(filters: DrillDownFiltersDto, dateRange: any): Promise<any[]> {
+  private async getIndustryDrillDown(
+    filters: DrillDownFiltersDto,
+    dateRange: any,
+  ): Promise<any[]> {
     return [];
   }
 
-  private async getTimeDrillDown(filters: DrillDownFiltersDto, dateRange: any): Promise<any[]> {
+  private async getTimeDrillDown(
+    filters: DrillDownFiltersDto,
+    dateRange: any,
+  ): Promise<any[]> {
     return [];
   }
 
-  private async getAMCDrillDown(filters: DrillDownFiltersDto, dateRange: any): Promise<any[]> {
+  private async getAMCDrillDown(
+    filters: DrillDownFiltersDto,
+    dateRange: any,
+  ): Promise<any[]> {
     return [];
   }
 
-  private async getTransactionDetails(filters: DrillDownFiltersDto, dateRange: any): Promise<any[]> {
+  private async getTransactionDetails(
+    filters: DrillDownFiltersDto,
+    dateRange: any,
+  ): Promise<any[]> {
     return [];
   }
 
-  private async getTotalBussinessRevenue(filter: string, options?: any): Promise<any[]> {
-    const [start, end] = [this.calculateDateRange(filter, options).startDate, this.calculateDateRange(filter, options).endDate];
+  private async getTotalBussinessRevenue(
+    filter: string,
+    options?: any,
+  ): Promise<any[]> {
+    const [start, end] = [
+      this.calculateDateRange(filter, options).startDate,
+      this.calculateDateRange(filter, options).endDate,
+    ];
 
     const groupByPeriod = (date: Date) => {
       const dateObj = new Date(date);
       switch (filter) {
         case 'monthly':
-          return dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+          return dateObj.toLocaleString('default', {
+            month: 'long',
+            year: 'numeric',
+          });
         case 'yearly':
           const dateYear = dateObj.getFullYear();
           const dateMonth = dateObj.getMonth();
@@ -552,9 +1137,15 @@ export class DashboardService {
       }
     };
 
-    const billingMap = new Map<string, { totalPurchaseBilling: number; totalAMCBilling: number }>();
+    const billingMap = new Map<
+      string,
+      { totalPurchaseBilling: number; totalAMCBilling: number }
+    >();
 
-    const addBilling = (date: Date, billing: { purchase?: number; amc?: number }) => {
+    const addBilling = (
+      date: Date,
+      billing: { purchase?: number; amc?: number },
+    ) => {
       if (date < start || date > end) return;
       const period = groupByPeriod(date);
       if (!billingMap.has(period)) {
@@ -565,10 +1156,14 @@ export class DashboardService {
       if (billing.amc) entry.totalAMCBilling += billing.amc;
     };
 
-    const orders = await this.orderModel.find({ payment_terms: { $exists: true } }).lean();
+    const orders = await this.orderModel
+      .find({ payment_terms: { $exists: true } })
+      .lean();
     for (const order of orders) {
       for (const term of order.payment_terms || []) {
-        addBilling(term.payment_receive_date, { purchase: term.calculated_amount || 0 });
+        addBilling(term.payment_receive_date, {
+          purchase: term.calculated_amount || 0,
+        });
       }
     }
 
@@ -591,7 +1186,9 @@ export class DashboardService {
     const amcs = await this.amcModel.find().lean();
     for (const amc of amcs) {
       for (const payment of amc.payments || []) {
-        addBilling(payment.from_date, { amc: payment.total_cost || amc.amount || 0 });
+        addBilling(payment.from_date, {
+          amc: payment.total_cost || amc.amount || 0,
+        });
       }
     }
 
@@ -602,15 +1199,27 @@ export class DashboardService {
     }));
   }
 
-  private async getExpectedVsReceivedChartData(filter: string, options?: any): Promise<any[]> {
-    const [start, end] = [this.calculateDateRange(filter, options).startDate, this.calculateDateRange(filter, options).endDate];
+  private async getExpectedVsReceivedChartData(
+    filter: string,
+    options?: any,
+  ): Promise<any[]> {
+    const [start, end] = [
+      this.calculateDateRange(filter, options).startDate,
+      this.calculateDateRange(filter, options).endDate,
+    ];
 
-    const billingMap = new Map<string, { expected: number; received: number }>();
+    const billingMap = new Map<
+      string,
+      { expected: number; received: number }
+    >();
 
     const addBilling = (date: Date, expected: number, received: number) => {
       if (date < start || date > end) return;
       const dateObj = new Date(date);
-      const period = dateObj.toLocaleString('default', { month: 'short', year: '2-digit' });
+      const period = dateObj.toLocaleString('default', {
+        month: 'short',
+        year: '2-digit',
+      });
       if (!billingMap.has(period)) {
         billingMap.set(period, { expected: 0, received: 0 });
       }
@@ -619,10 +1228,16 @@ export class DashboardService {
       entry.received += received;
     };
 
-    const orders = await this.orderModel.find({ payment_terms: { $exists: true } }).lean();
+    const orders = await this.orderModel
+      .find({ payment_terms: { $exists: true } })
+      .lean();
     for (const order of orders) {
       for (const term of order.payment_terms || []) {
-        addBilling(term.payment_receive_date, term.calculated_amount || 0, term.calculated_amount || 0);
+        addBilling(
+          term.payment_receive_date,
+          term.calculated_amount || 0,
+          term.calculated_amount || 0,
+        );
       }
     }
 
@@ -633,17 +1248,29 @@ export class DashboardService {
     }));
   }
 
-  private async getAMCAnnualBreakdown(filter: string, options?: any): Promise<any[]> {
-    const [start, end] = [this.calculateDateRange(filter, options).startDate, this.calculateDateRange(filter, options).endDate];
+  private async getAMCAnnualBreakdown(
+    filter: string,
+    options?: any,
+  ): Promise<any[]> {
+    const [start, end] = [
+      this.calculateDateRange(filter, options).startDate,
+      this.calculateDateRange(filter, options).endDate,
+    ];
 
-    const breakdownMap = new Map<string, { totalExpected: number; totalCollected: number }>();
+    const breakdownMap = new Map<
+      string,
+      { totalExpected: number; totalCollected: number }
+    >();
 
     const amcs = await this.amcModel.find().lean();
     for (const amc of amcs) {
       for (const payment of amc.payments || []) {
         if (payment.from_date >= start && payment.from_date <= end) {
           const dateObj = new Date(payment.from_date);
-          const period = dateObj.toLocaleString('default', { month: 'short', year: '2-digit' });
+          const period = dateObj.toLocaleString('default', {
+            month: 'short',
+            year: '2-digit',
+          });
           if (!breakdownMap.has(period)) {
             breakdownMap.set(period, { totalExpected: 0, totalCollected: 0 });
           }
@@ -663,13 +1290,26 @@ export class DashboardService {
     }));
   }
 
-  private async getProductWiseRevenueDistribution(filter: string, options?: any): Promise<any[]> {
-    const [start, end] = [this.calculateDateRange(filter, options).startDate, this.calculateDateRange(filter, options).endDate];
+  private async getProductWiseRevenueDistribution(
+    filter: string,
+    options?: any,
+  ): Promise<any[]> {
+    const [start, end] = [
+      this.calculateDateRange(filter, options).startDate,
+      this.calculateDateRange(filter, options).endDate,
+    ];
 
-    const dateFilter = filter === 'all' ? {} : { purchased_date: { $gte: start, $lte: end } };
+    const dateFilter =
+      filter === 'all' ? {} : { purchased_date: { $gte: start, $lte: end } };
 
-    const orders = await this.orderModel.find(dateFilter).populate('products').lean();
-    const productsRevenueMap = new Map<string, { product: any; revenue: number }>();
+    const orders = await this.orderModel
+      .find(dateFilter)
+      .populate('products')
+      .lean();
+    const productsRevenueMap = new Map<
+      string,
+      { product: any; revenue: number }
+    >();
 
     for (const order of orders) {
       if (!order.products || order.products.length === 0) continue;
@@ -681,13 +1321,17 @@ export class DashboardService {
         const productId = productIds[0];
         productRevenues.set(productId, order.base_cost || 0);
       } else {
-        if (order.base_cost_seperation && order.base_cost_seperation.length > 0) {
+        if (
+          order.base_cost_seperation &&
+          order.base_cost_seperation.length > 0
+        ) {
           order.base_cost_seperation.forEach((sep: any) => {
             const productId = sep.product_id.toString();
             productRevenues.set(productId, sep.amount || 0);
           });
         } else {
-          const amountPerProduct = (order.base_cost || 0) / order.products.length;
+          const amountPerProduct =
+            (order.base_cost || 0) / order.products.length;
           productIds.forEach((productId: string) => {
             productRevenues.set(productId, amountPerProduct);
           });
@@ -695,7 +1339,10 @@ export class DashboardService {
       }
 
       for (const [productId, revenue] of productRevenues.entries()) {
-        const existing = productsRevenueMap.get(productId) || { product: null, revenue: 0 };
+        const existing = productsRevenueMap.get(productId) || {
+          product: null,
+          revenue: 0,
+        };
         existing.revenue += revenue;
         if (!existing.product) {
           const product = await this.productModel.findById(productId).lean();
@@ -705,8 +1352,13 @@ export class DashboardService {
       }
     }
 
-    const productsRevenueArray = Array.from(productsRevenueMap.values()).filter((pr) => pr.product);
-    const totalRevenue = productsRevenueArray.reduce((sum, pr) => sum + pr.revenue, 0);
+    const productsRevenueArray = Array.from(productsRevenueMap.values()).filter(
+      (pr) => pr.product,
+    );
+    const totalRevenue = productsRevenueArray.reduce(
+      (sum, pr) => sum + pr.revenue,
+      0,
+    );
 
     return productsRevenueArray.map((pr) => ({
       productId: pr.product._id,
@@ -716,26 +1368,40 @@ export class DashboardService {
     }));
   }
 
-  private async getIndustryWiseRevenueDistribution(filter: string, options?: any): Promise<any[]> {
-    const [start, end] = [this.calculateDateRange(filter, options).startDate, this.calculateDateRange(filter, options).endDate];
+  private async getIndustryWiseRevenueDistribution(
+    filter: string,
+    options?: any,
+  ): Promise<any[]> {
+    const [start, end] = [
+      this.calculateDateRange(filter, options).startDate,
+      this.calculateDateRange(filter, options).endDate,
+    ];
 
     const industryMap = new Map<string, number>();
 
-    const orders = await this.orderModel.find({
-      purchased_date: { $gte: start, $lte: end }
-    }).populate('client_id').lean();
+    const orders = await this.orderModel
+      .find({
+        purchased_date: { $gte: start, $lte: end },
+      })
+      .populate('client_id')
+      .lean();
 
     for (const order of orders) {
       if (order.client_id && (order.client_id as any).industry) {
         const industry = (order.client_id as any).industry;
-        industryMap.set(industry, (industryMap.get(industry) || 0) + (order.base_cost || 0));
+        industryMap.set(
+          industry,
+          (industryMap.get(industry) || 0) + (order.base_cost || 0),
+        );
       }
     }
 
-    const resultArray = Array.from(industryMap.entries()).map(([industry, total]) => ({
-      industry,
-      total,
-    }));
+    const resultArray = Array.from(industryMap.entries()).map(
+      ([industry, total]) => ({
+        industry,
+        total,
+      }),
+    );
 
     return resultArray.sort((a, b) => b.total - a.total);
   }
