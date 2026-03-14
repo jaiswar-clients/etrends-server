@@ -134,6 +134,61 @@ export class DashboardService {
     }
   }
 
+  /**
+   * Formats date to period string based on aggregation type
+   */
+  private formatAggregationPeriod(date: Date, aggregation: string): string {
+    switch (aggregation) {
+      case 'daily':
+        return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+      case 'weekly':
+        const weekStart = new Date(date);
+        weekStart.setDate(date.getDate() - date.getDay());
+        return `Week ${weekStart.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`;
+      case 'monthly':
+        return date.toLocaleString('default', { month: 'short', year: '2-digit' });
+      case 'quarterly':
+        const month = date.getMonth();
+        const year = date.getFullYear();
+        let quarter: number;
+        let fiscalYear: number;
+        if (month >= 3 && month <= 5) {
+          quarter = 1;
+          fiscalYear = year;
+        } else if (month >= 6 && month <= 8) {
+          quarter = 2;
+          fiscalYear = year;
+        } else if (month >= 9 && month <= 11) {
+          quarter = 3;
+          fiscalYear = year;
+        } else {
+          quarter = 4;
+          fiscalYear = year + 1;
+        }
+        return `Q${quarter} FY${fiscalYear.toString().slice(-2)}-${(fiscalYear + 1).toString().slice(-2)}`;
+      default:
+        return date.toLocaleString('default', { month: 'short', year: '2-digit' });
+    }
+  }
+
+  /**
+   * Converts filter type to aggregation type for period grouping
+   */
+  private getAggregationFromFilter(filter: string): string {
+    switch (filter) {
+      case 'monthly':
+        return 'monthly';
+      case 'quarterly':
+        return 'quarterly';
+      case 'yearly':
+        return 'yearly';
+      case 'all':
+        return 'yearly';
+      default:
+        return 'monthly';
+    }
+  }
+
   async getDashboardData(
     filters: DashboardFiltersDto,
   ): Promise<DashboardResponseDto> {
@@ -163,6 +218,20 @@ export class DashboardService {
       licenseRevenue +
       serviceRevenue;
 
+    const [
+      pendingPayments,
+      paidPayments,
+      totalClients,
+      totalOrders,
+      revenueGrowth,
+    ] = await Promise.all([
+      this.calculatePendingPayments(dateRange, filters),
+      this.calculatePaidPayments(dateRange, filters),
+      this.calculateTotalClients(dateRange, filters),
+      this.calculateTotalOrders(dateRange, filters),
+      this.calculateRevenueGrowth(dateRange, filters),
+    ]);
+
     const summary: DashboardSummaryDto = {
       totalRevenue,
       amcRevenue,
@@ -170,11 +239,11 @@ export class DashboardService {
       customizationRevenue,
       licenseRevenue,
       additionalServiceRevenue: serviceRevenue,
-      pendingPayments: await this.calculatePendingPayments(dateRange, filters),
-      paidPayments: await this.calculatePaidPayments(dateRange, filters),
-      totalClients: await this.calculateTotalClients(dateRange, filters),
-      totalOrders: await this.calculateTotalOrders(dateRange, filters),
-      revenueGrowth: 0,
+      pendingPayments,
+      paidPayments,
+      totalClients,
+      totalOrders,
+      revenueGrowth,
       period: filters.fiscalYear
         ? `FY${(filters.fiscalYear % 100).toString().padStart(2, '0')}-${((filters.fiscalYear + 1) % 100).toString().padStart(2, '0')}`
         : 'Custom Range',
@@ -758,6 +827,55 @@ export class DashboardService {
   }
 
   /**
+   * Calculates revenue growth compared to previous period
+   */
+  private async calculateRevenueGrowth(
+    dateRange: any,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const [currentStart, currentEnd] = [dateRange.startDate, dateRange.endDate];
+    const periodDuration = currentEnd.getTime() - currentStart.getTime();
+    
+    // Calculate previous period with same duration
+    const previousStart = new Date(currentStart.getTime() - periodDuration);
+    const previousEnd = new Date(currentEnd.getTime() - periodDuration);
+    
+    const previousDateRange = { startDate: previousStart, endDate: previousEnd };
+    
+    // Get current period revenue
+    const currentRevenue = await this.getTotalRevenueForRange(currentStart, currentEnd, filters);
+    
+    // Get previous period revenue
+    const previousRevenue = await this.getTotalRevenueForRange(previousStart, previousEnd, filters);
+    
+    if (previousRevenue === 0) {
+      return currentRevenue > 0 ? 100 : 0;
+    }
+    
+    return parseFloat(((currentRevenue - previousRevenue) / previousRevenue * 100).toFixed(2));
+  }
+  
+  /**
+   * Gets total revenue across all streams for a date range
+   */
+  private async getTotalRevenueForRange(
+    startDate: Date,
+    endDate: Date,
+    filters: DashboardFiltersDto,
+  ): Promise<number> {
+    const dateRange = { startDate, endDate };
+    const [orderRevenue, amcRevenue, customizationRevenue, licenseRevenue, serviceRevenue] = await Promise.all([
+      this.getOrderRevenue(dateRange, filters),
+      this.getAMCRevenue(dateRange, filters),
+      this.getCustomizationRevenue(dateRange, filters),
+      this.getLicenseRevenue(dateRange, filters),
+      this.getServiceRevenue(dateRange, filters),
+    ]);
+    
+    return orderRevenue + amcRevenue + customizationRevenue + licenseRevenue + serviceRevenue;
+  }
+
+  /**
    * Calculates total orders in date range
    */
   private async calculateTotalOrders(
@@ -997,6 +1115,16 @@ export class DashboardService {
       },
     );
 
+    const clientWise = await this.getClientWiseRevenueDistribution(
+      filters.filter,
+      {
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+        year: filters.fiscalYear,
+        quarter: filters.quarter,
+      },
+    );
+
     return {
       productWise: productWise.map((item) => ({
         productId: item.productId,
@@ -1009,7 +1137,7 @@ export class DashboardService {
         revenue: item.total,
         percentage: 0,
       })),
-      clientWise: [],
+      clientWise,
     };
   }
 
@@ -1024,7 +1152,11 @@ export class DashboardService {
         productName: item.productName,
         revenue: item.revenue,
       })),
-      topClients: [],
+      topClients: distributions.clientWise.slice(0, 5).map((item) => ({
+        clientId: item.clientId,
+        clientName: item.clientName,
+        revenue: item.revenue,
+      })),
       topIndustries: distributions.industryWise.slice(0, 5).map((item) => ({
         industry: item.industry,
         revenue: item.revenue,
@@ -1034,80 +1166,991 @@ export class DashboardService {
 
   private async getProductDrillDown(
     filters: DrillDownFiltersDto,
-    dateRange: any,
+    dateRange: { startDate: Date; endDate: Date },
   ): Promise<any[]> {
-    const query: any = {};
-    if (filters.drilldownValue) {
-      query.products = filters.drilldownValue;
+    const aggregation = filters.aggregation || this.getAggregationFromFilter(filters.filter);
+    const paidStatuses = filters.paymentStatuses?.length > 0
+      ? filters.paymentStatuses
+      : [PAYMENT_STATUS_ENUM.PAID];
+    const targetProductId = filters.drilldownValue;
+
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const revenueMap = new Map<string, any>();
+
+    const addRevenue = (period: string, stream: string, amount: number) => {
+      if (!revenueMap.has(period)) {
+        revenueMap.set(period, {
+          period,
+          orderRevenue: 0,
+          amcRevenue: 0,
+          customizationRevenue: 0,
+          licenseRevenue: 0,
+          serviceRevenue: 0,
+        });
+      }
+      const entry = revenueMap.get(period);
+      entry[stream] = (entry[stream] || 0) + amount;
+    };
+
+    // 1. Order Revenue - handle product breakdown
+    const orderQuery: any = {
+      'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+    };
+    if (filters.clientIds?.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
     }
 
-    if (dateRange.startDate && dateRange.endDate) {
-      query.purchased_date = {
-        $gte: dateRange.startDate,
-        $lte: dateRange.endDate,
-      };
+    const orders = await this.orderModel.find(orderQuery).lean();
+    for (const order of orders) {
+      // Filter by product if specified
+      if (targetProductId) {
+        const productIds = order.products?.map((p: any) => p.toString()) || [];
+        if (!productIds.includes(targetProductId)) continue;
+      }
+
+      for (const term of order.payment_terms || []) {
+        if (term.payment_receive_date >= start && 
+            term.payment_receive_date <= end && 
+            paidStatuses.includes(term.status)) {
+          const period = this.formatAggregationPeriod(term.payment_receive_date, aggregation);
+          
+          // Calculate product-specific amount
+          let amount = term.calculated_amount || 0;
+          if (targetProductId && order.products?.length > 1 && order.base_cost_seperation?.length > 0) {
+            // Use cost separation for accurate per-product amount
+            const sep = order.base_cost_seperation.find(
+              (s: any) => s.product_id.toString() === targetProductId
+            );
+            if (sep) {
+              amount = sep.amount;
+            } else {
+              amount = amount / order.products.length;
+            }
+          }
+          
+          addRevenue(period, 'orderRevenue', amount);
+        }
+      }
     }
 
-    const aggregation: PipelineStage[] = [
-      { $match: query },
-      {
-        $group: {
-          _id: {
-            period: {
-              $dateToString: { format: '%Y-%m', date: '$purchased_date' },
-            },
-          },
-          revenue: { $sum: '$base_cost' },
-        },
-      },
-      { $sort: { '_id.period': 1 } },
-    ];
+    // 2. AMC Revenue
+    const amcQuery: any = {};
+    if (filters.clientIds?.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (targetProductId) {
+      amcQuery.products = { $in: [new Types.ObjectId(targetProductId)] };
+    }
 
-    const result = await this.orderModel.aggregate(aggregation).exec();
-    return result.map((item) => ({
-      period: item._id.period,
-      revenue: item.revenue,
-      orderRevenue: item.revenue,
-      amcRevenue: 0,
-      customizationRevenue: 0,
-      licenseRevenue: 0,
-      serviceRevenue: 0,
+    const amcs = await this.amcModel.find(amcQuery).lean();
+    for (const amc of amcs) {
+      for (const payment of amc.payments || []) {
+        const paymentDate = payment.status === PAYMENT_STATUS_ENUM.PAID 
+          ? payment.received_date 
+          : payment.from_date;
+        if (paymentDate >= start && paymentDate <= end && paidStatuses.includes(payment.status)) {
+          const period = this.formatAggregationPeriod(paymentDate, aggregation);
+          const amount = payment.amc_rate_amount || payment.total_cost || amc.amount || 0;
+          addRevenue(period, 'amcRevenue', amount);
+        }
+      }
+    }
+
+    // 3. Customization Revenue
+    const customizationQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    if (targetProductId) {
+      customizationQuery.product_id = new Types.ObjectId(targetProductId);
+    }
+    
+    const customizations = await this.customizationModel
+      .find(customizationQuery)
+      .populate({ path: 'order_id', select: 'client_id' })
+      .lean();
+      
+    for (const cust of customizations) {
+      if (filters.clientIds?.length > 0) {
+        const orderClientId = this.toStringId((cust.order_id as any)?.client_id);
+        if (!filters.clientIds.includes(orderClientId)) continue;
+      }
+      const period = this.formatAggregationPeriod(cust.payment_receive_date, aggregation);
+      addRevenue(period, 'customizationRevenue', cust.cost || 0);
+    }
+
+    // 4. License Revenue
+    const licenseQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    if (targetProductId) {
+      licenseQuery.product_id = new Types.ObjectId(targetProductId);
+    }
+    
+    const licenses = await this.licenseModel
+      .find(licenseQuery)
+      .populate({ path: 'order_id', select: 'client_id' })
+      .lean();
+      
+    for (const license of licenses) {
+      if (filters.clientIds?.length > 0) {
+        const orderClientId = this.toStringId((license.order_id as any)?.client_id);
+        if (!filters.clientIds.includes(orderClientId)) continue;
+      }
+      const period = this.formatAggregationPeriod(license.payment_receive_date, aggregation);
+      const amount = (license.rate?.amount || 0) * (license.total_license || 0);
+      addRevenue(period, 'licenseRevenue', amount);
+    }
+
+    // 5. Additional Service Revenue
+    const serviceQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    if (targetProductId) {
+      serviceQuery.product_id = new Types.ObjectId(targetProductId);
+    }
+    
+    const services = await this.additionalServiceModel
+      .find(serviceQuery)
+      .populate({ path: 'order_id', select: 'client_id' })
+      .lean();
+      
+    for (const service of services) {
+      if (filters.clientIds?.length > 0) {
+        const orderClientId = this.toStringId((service.order_id as any)?.client_id);
+        if (!filters.clientIds.includes(orderClientId)) continue;
+      }
+      const period = this.formatAggregationPeriod(service.payment_receive_date, aggregation);
+      addRevenue(period, 'serviceRevenue', service.cost || 0);
+    }
+
+    // Convert to array and calculate totals
+    const result = Array.from(revenueMap.values()).map((item) => ({
+      ...item,
+      revenue: item.orderRevenue + item.amcRevenue + item.customizationRevenue + 
+               item.licenseRevenue + item.serviceRevenue,
     }));
+
+    return result.sort((a, b) => a.period.localeCompare(b.period));
   }
 
   private async getClientDrillDown(
     filters: DrillDownFiltersDto,
-    dateRange: any,
+    dateRange: { startDate: Date; endDate: Date },
   ): Promise<any[]> {
-    return [];
+    const aggregation = filters.aggregation || this.getAggregationFromFilter(filters.filter);
+    const paidStatuses = filters.paymentStatuses?.length > 0
+      ? filters.paymentStatuses
+      : [PAYMENT_STATUS_ENUM.PAID];
+    const targetClientIds = filters.drilldownValue
+      ? [filters.drilldownValue]
+      : filters.clientIds;
+
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const revenueMap = new Map<string, any>();
+
+    const addRevenue = (period: string, stream: string, amount: number) => {
+      if (!revenueMap.has(period)) {
+        revenueMap.set(period, {
+          period,
+          orderRevenue: 0,
+          amcRevenue: 0,
+          customizationRevenue: 0,
+          licenseRevenue: 0,
+          serviceRevenue: 0,
+        });
+      }
+      const entry = revenueMap.get(period);
+      entry[stream] = (entry[stream] || 0) + amount;
+    };
+
+    // 1. Order Revenue - filtered by client
+    const orderQuery: any = {
+      'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+    };
+    if (targetClientIds?.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray(targetClientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      orderQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const orders = await this.orderModel.find(orderQuery).lean();
+    for (const order of orders) {
+      for (const term of order.payment_terms || []) {
+        if (term.payment_receive_date >= start &&
+            term.payment_receive_date <= end &&
+            paidStatuses.includes(term.status)) {
+          const period = this.formatAggregationPeriod(term.payment_receive_date, aggregation);
+          addRevenue(period, 'orderRevenue', term.calculated_amount || 0);
+        }
+      }
+    }
+
+    // 2. AMC Revenue
+    const amcQuery: any = {};
+    if (targetClientIds?.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray(targetClientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      amcQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const amcs = await this.amcModel.find(amcQuery).lean();
+    for (const amc of amcs) {
+      for (const payment of amc.payments || []) {
+        const paymentDate = payment.status === PAYMENT_STATUS_ENUM.PAID
+          ? payment.received_date
+          : payment.from_date;
+        if (paymentDate >= start && paymentDate <= end && paidStatuses.includes(payment.status)) {
+          const period = this.formatAggregationPeriod(paymentDate, aggregation);
+          const amount = payment.amc_rate_amount || payment.total_cost || amc.amount || 0;
+          addRevenue(period, 'amcRevenue', amount);
+        }
+      }
+    }
+
+    // 3. Customization Revenue
+    const customizationQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+
+    const customizations = await this.customizationModel
+      .find(customizationQuery)
+      .populate({ path: 'order_id', select: 'client_id' })
+      .lean();
+
+    for (const cust of customizations) {
+      const orderClientId = this.toStringId((cust.order_id as any)?.client_id);
+      if (targetClientIds?.length > 0 && !targetClientIds.includes(orderClientId)) continue;
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(cust.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(cust.payment_receive_date, aggregation);
+      addRevenue(period, 'customizationRevenue', cust.cost || 0);
+    }
+
+    // 4. License Revenue
+    const licenseQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+
+    const licenses = await this.licenseModel
+      .find(licenseQuery)
+      .populate({ path: 'order_id', select: 'client_id' })
+      .lean();
+
+    for (const license of licenses) {
+      const orderClientId = this.toStringId((license.order_id as any)?.client_id);
+      if (targetClientIds?.length > 0 && !targetClientIds.includes(orderClientId)) continue;
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(license.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(license.payment_receive_date, aggregation);
+      const amount = (license.rate?.amount || 0) * (license.total_license || 0);
+      addRevenue(period, 'licenseRevenue', amount);
+    }
+
+    // 5. Additional Service Revenue
+    const serviceQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+
+    const services = await this.additionalServiceModel
+      .find(serviceQuery)
+      .populate({ path: 'order_id', select: 'client_id' })
+      .lean();
+
+    for (const service of services) {
+      const orderClientId = this.toStringId((service.order_id as any)?.client_id);
+      if (targetClientIds?.length > 0 && !targetClientIds.includes(orderClientId)) continue;
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(service.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(service.payment_receive_date, aggregation);
+      addRevenue(period, 'serviceRevenue', service.cost || 0);
+    }
+
+    // Convert to array and calculate totals
+    const result = Array.from(revenueMap.values()).map((item) => ({
+      ...item,
+      revenue: item.orderRevenue + item.amcRevenue + item.customizationRevenue +
+               item.licenseRevenue + item.serviceRevenue,
+    }));
+
+    return result.sort((a, b) => a.period.localeCompare(b.period));
   }
 
   private async getIndustryDrillDown(
     filters: DrillDownFiltersDto,
-    dateRange: any,
+    dateRange: { startDate: Date; endDate: Date },
   ): Promise<any[]> {
-    return [];
+    const aggregation = filters.aggregation || this.getAggregationFromFilter(filters.filter);
+    const paidStatuses = filters.paymentStatuses?.length > 0
+      ? filters.paymentStatuses
+      : [PAYMENT_STATUS_ENUM.PAID];
+    const targetIndustry = filters.drilldownValue;
+
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const revenueMap = new Map<string, any>();
+
+    const addRevenue = (period: string, stream: string, amount: number) => {
+      if (!revenueMap.has(period)) {
+        revenueMap.set(period, {
+          period,
+          orderRevenue: 0,
+          amcRevenue: 0,
+          customizationRevenue: 0,
+          licenseRevenue: 0,
+          serviceRevenue: 0,
+        });
+      }
+      const entry = revenueMap.get(period);
+      entry[stream] = (entry[stream] || 0) + amount;
+    };
+
+    // Get clients in target industry for filtering
+    let industryClientIds: string[] = [];
+    if (targetIndustry || filters.industries?.length > 0) {
+      const industriesToFilter = targetIndustry 
+        ? [targetIndustry] 
+        : filters.industries;
+      const clients = await this.clientModel
+        .find({ industry: { $in: industriesToFilter } })
+        .select('_id')
+        .lean();
+      industryClientIds = clients.map((c: any) => c._id.toString());
+    }
+
+    // 1. Order Revenue
+    const orderQuery: any = {
+      'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+    };
+    if (industryClientIds.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray(industryClientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      orderQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const orders = await this.orderModel
+      .find(orderQuery)
+      .populate({ path: 'client_id', select: 'industry' })
+      .lean();
+      
+    for (const order of orders) {
+      const orderIndustry = (order.client_id as any)?.industry;
+      if (targetIndustry && orderIndustry !== targetIndustry) continue;
+      
+      for (const term of order.payment_terms || []) {
+        if (term.payment_receive_date >= start && 
+            term.payment_receive_date <= end && 
+            paidStatuses.includes(term.status)) {
+          const period = this.formatAggregationPeriod(term.payment_receive_date, aggregation);
+          addRevenue(period, 'orderRevenue', term.calculated_amount || 0);
+        }
+      }
+    }
+
+    // 2. AMC Revenue
+    const amcQuery: any = {};
+    if (industryClientIds.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray(industryClientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      amcQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const amcs = await this.amcModel
+      .find(amcQuery)
+      .populate({ path: 'client_id', select: 'industry' })
+      .lean();
+      
+    for (const amc of amcs) {
+      const amcIndustry = (amc.client_id as any)?.industry;
+      if (targetIndustry && amcIndustry !== targetIndustry) continue;
+      
+      for (const payment of amc.payments || []) {
+        const paymentDate = payment.status === PAYMENT_STATUS_ENUM.PAID 
+          ? payment.received_date 
+          : payment.from_date;
+        if (paymentDate >= start && paymentDate <= end && paidStatuses.includes(payment.status)) {
+          const period = this.formatAggregationPeriod(paymentDate, aggregation);
+          const amount = payment.amc_rate_amount || payment.total_cost || amc.amount || 0;
+          addRevenue(period, 'amcRevenue', amount);
+        }
+      }
+    }
+
+    // 3. Customization Revenue
+    const customizationQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    
+    const customizations = await this.customizationModel
+      .find(customizationQuery)
+      .populate({ 
+        path: 'order_id', 
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'industry' }
+      })
+      .lean();
+      
+    for (const cust of customizations) {
+      const order = cust.order_id as any;
+      const orderIndustry = order?.client_id?.industry;
+      if (targetIndustry && orderIndustry !== targetIndustry) continue;
+      if (industryClientIds.length > 0) {
+        const orderClientId = this.toStringId(order?.client_id?._id);
+        if (!industryClientIds.includes(orderClientId)) continue;
+      }
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(cust.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(cust.payment_receive_date, aggregation);
+      addRevenue(period, 'customizationRevenue', cust.cost || 0);
+    }
+
+    // 4. License Revenue
+    const licenseQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    
+    const licenses = await this.licenseModel
+      .find(licenseQuery)
+      .populate({ 
+        path: 'order_id', 
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'industry' }
+      })
+      .lean();
+      
+    for (const license of licenses) {
+      const order = license.order_id as any;
+      const orderIndustry = order?.client_id?.industry;
+      if (targetIndustry && orderIndustry !== targetIndustry) continue;
+      if (industryClientIds.length > 0) {
+        const orderClientId = this.toStringId(order?.client_id?._id);
+        if (!industryClientIds.includes(orderClientId)) continue;
+      }
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(license.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(license.payment_receive_date, aggregation);
+      const amount = (license.rate?.amount || 0) * (license.total_license || 0);
+      addRevenue(period, 'licenseRevenue', amount);
+    }
+
+    // 5. Additional Service Revenue
+    const serviceQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    
+    const services = await this.additionalServiceModel
+      .find(serviceQuery)
+      .populate({ 
+        path: 'order_id', 
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'industry' }
+      })
+      .lean();
+      
+    for (const service of services) {
+      const order = service.order_id as any;
+      const orderIndustry = order?.client_id?.industry;
+      if (targetIndustry && orderIndustry !== targetIndustry) continue;
+      if (industryClientIds.length > 0) {
+        const orderClientId = this.toStringId(order?.client_id?._id);
+        if (!industryClientIds.includes(orderClientId)) continue;
+      }
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(service.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(service.payment_receive_date, aggregation);
+      addRevenue(period, 'serviceRevenue', service.cost || 0);
+    }
+
+    // Convert to array and calculate totals
+    const result = Array.from(revenueMap.values()).map((item) => ({
+      ...item,
+      revenue: item.orderRevenue + item.amcRevenue + item.customizationRevenue + 
+               item.licenseRevenue + item.serviceRevenue,
+    }));
+
+    return result.sort((a, b) => a.period.localeCompare(b.period));
   }
 
   private async getTimeDrillDown(
     filters: DrillDownFiltersDto,
-    dateRange: any,
+    dateRange: { startDate: Date; endDate: Date },
   ): Promise<any[]> {
-    return [];
+    const aggregation = filters.aggregation || this.getAggregationFromFilter(filters.filter);
+    const paidStatuses = filters.paymentStatuses?.length > 0
+      ? filters.paymentStatuses
+      : [PAYMENT_STATUS_ENUM.PAID];
+
+    // Revenue map: period -> { orderRevenue, amcRevenue, customizationRevenue, licenseRevenue, serviceRevenue }
+    const revenueMap = new Map<string, any>();
+
+    const addRevenue = (period: string, stream: string, amount: number) => {
+      if (!revenueMap.has(period)) {
+        revenueMap.set(period, {
+          period,
+          orderRevenue: 0,
+          amcRevenue: 0,
+          customizationRevenue: 0,
+          licenseRevenue: 0,
+          serviceRevenue: 0,
+        });
+      }
+      const entry = revenueMap.get(period);
+      entry[stream] = (entry[stream] || 0) + amount;
+    };
+
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+
+    // 1. Order Revenue
+    const orderQuery: any = {
+      'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+    };
+    if (filters.clientIds?.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      orderQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const orders = await this.orderModel.find(orderQuery).lean();
+    for (const order of orders) {
+      for (const term of order.payment_terms || []) {
+        if (term.payment_receive_date >= start && 
+            term.payment_receive_date <= end && 
+            paidStatuses.includes(term.status)) {
+          const period = this.formatAggregationPeriod(term.payment_receive_date, aggregation);
+          addRevenue(period, 'orderRevenue', term.calculated_amount || 0);
+        }
+      }
+    }
+
+    // 2. AMC Revenue
+    const amcQuery: any = {};
+    if (filters.clientIds?.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      amcQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const amcs = await this.amcModel.find(amcQuery).lean();
+    for (const amc of amcs) {
+      for (const payment of amc.payments || []) {
+        const paymentDate = payment.status === PAYMENT_STATUS_ENUM.PAID 
+          ? payment.received_date 
+          : payment.from_date;
+        if (paymentDate >= start && paymentDate <= end && paidStatuses.includes(payment.status)) {
+          const period = this.formatAggregationPeriod(paymentDate, aggregation);
+          const amount = payment.amc_rate_amount || payment.total_cost || amc.amount || 0;
+          addRevenue(period, 'amcRevenue', amount);
+        }
+      }
+    }
+
+    // 3. Customization Revenue
+    const customizationQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    
+    const customizations = await this.customizationModel
+      .find(customizationQuery)
+      .populate('order_id')
+      .lean();
+      
+    for (const cust of customizations) {
+      if (filters.clientIds?.length > 0) {
+        const orderClientId = this.toStringId((cust.order_id as any)?.client_id);
+        if (!filters.clientIds.includes(orderClientId)) continue;
+      }
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(cust.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(cust.payment_receive_date, aggregation);
+      addRevenue(period, 'customizationRevenue', cust.cost || 0);
+    }
+
+    // 4. License Revenue
+    const licenseQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    
+    const licenses = await this.licenseModel
+      .find(licenseQuery)
+      .populate('order_id')
+      .lean();
+      
+    for (const license of licenses) {
+      if (filters.clientIds?.length > 0) {
+        const orderClientId = this.toStringId((license.order_id as any)?.client_id);
+        if (!filters.clientIds.includes(orderClientId)) continue;
+      }
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(license.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(license.payment_receive_date, aggregation);
+      const amount = (license.rate?.amount || 0) * (license.total_license || 0);
+      addRevenue(period, 'licenseRevenue', amount);
+    }
+
+    // 5. Additional Service Revenue
+    const serviceQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    
+    const services = await this.additionalServiceModel
+      .find(serviceQuery)
+      .populate('order_id')
+      .lean();
+      
+    for (const service of services) {
+      if (filters.clientIds?.length > 0) {
+        const orderClientId = this.toStringId((service.order_id as any)?.client_id);
+        if (!filters.clientIds.includes(orderClientId)) continue;
+      }
+      if (filters.productIds?.length > 0) {
+        const prodId = this.toStringId(service.product_id);
+        if (!filters.productIds.includes(prodId)) continue;
+      }
+      const period = this.formatAggregationPeriod(service.payment_receive_date, aggregation);
+      addRevenue(period, 'serviceRevenue', service.cost || 0);
+    }
+
+    // Convert map to array and calculate total revenue
+    const result = Array.from(revenueMap.values()).map((item) => ({
+      ...item,
+      revenue: item.orderRevenue + item.amcRevenue + item.customizationRevenue + 
+               item.licenseRevenue + item.serviceRevenue,
+    }));
+
+    // Sort by period
+    return result.sort((a, b) => a.period.localeCompare(b.period));
   }
 
   private async getAMCDrillDown(
     filters: DrillDownFiltersDto,
-    dateRange: any,
+    dateRange: { startDate: Date; endDate: Date },
   ): Promise<any[]> {
-    return [];
+    // AMC drilldown shows Expected (Orders) vs Collected (AMC)
+    // Expected = Order Revenue + AMC Expected
+    // Collected = AMC Collected
+
+    const aggregation = filters.aggregation || this.getAggregationFromFilter(filters.filter);
+    const paidStatuses = filters.paymentStatuses?.length > 0
+      ? filters.paymentStatuses
+      : [PAYMENT_STATUS_ENUM.PAID];
+
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const revenueMap = new Map<string, any>();
+
+    const addRevenue = (period: string, stream: string, amount: number) => {
+      if (!revenueMap.has(period)) {
+        revenueMap.set(period, {
+          period,
+          orderRevenue: 0,  // This represents "Expected" in AMC context
+          amcRevenue: 0,    // This represents "Collected" in AMC context
+          customizationRevenue: 0,
+          licenseRevenue: 0,
+          serviceRevenue: 0,
+        });
+      }
+      const entry = revenueMap.get(period);
+      entry[stream] = (entry[stream] || 0) + amount;
+    };
+
+    // 1. Order Revenue (Expected component)
+    const orderQuery: any = {
+      'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+    };
+    if (filters.clientIds?.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      orderQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const orders = await this.orderModel.find(orderQuery).lean();
+    for (const order of orders) {
+      for (const term of order.payment_terms || []) {
+        if (term.payment_receive_date >= start && 
+            term.payment_receive_date <= end && 
+            paidStatuses.includes(term.status)) {
+          const period = this.formatAggregationPeriod(term.payment_receive_date, aggregation);
+          addRevenue(period, 'orderRevenue', term.calculated_amount || 0);
+        }
+      }
+    }
+
+    // 2. AMC Revenue (Collected component)
+    const amcQuery: any = {};
+    if (filters.clientIds?.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (filters.productIds?.length > 0) {
+      amcQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const amcs = await this.amcModel.find(amcQuery).lean();
+    for (const amc of amcs) {
+      for (const payment of amc.payments || []) {
+        const paymentDate = payment.status === PAYMENT_STATUS_ENUM.PAID 
+          ? payment.received_date 
+          : payment.from_date;
+        if (paymentDate >= start && paymentDate <= end && paidStatuses.includes(payment.status)) {
+          const period = this.formatAggregationPeriod(paymentDate, aggregation);
+          const amount = payment.amc_rate_amount || payment.total_cost || amc.amount || 0;
+          addRevenue(period, 'amcRevenue', amount);
+        }
+      }
+    }
+
+    // Convert to array - for AMC drilldown, we primarily care about orderRevenue (Expected) and amcRevenue (Collected)
+    const result = Array.from(revenueMap.values()).map((item) => ({
+      ...item,
+      revenue: item.orderRevenue + item.amcRevenue, // Total = Expected + Collected for context
+    }));
+
+    return result.sort((a, b) => a.period.localeCompare(b.period));
   }
 
   private async getTransactionDetails(
     filters: DrillDownFiltersDto,
-    dateRange: any,
+    dateRange: { startDate: Date; endDate: Date },
   ): Promise<any[]> {
-    return [];
+    const paidStatuses = filters.paymentStatuses?.length > 0
+      ? filters.paymentStatuses
+      : [PAYMENT_STATUS_ENUM.PAID];
+    const [start, end] = [dateRange.startDate, dateRange.endDate];
+    const transactions: any[] = [];
+
+    // Get clients in target industry for filtering
+    let industryClientIds: string[] = [];
+    if (filters.industries?.length > 0) {
+      const clients = await this.clientModel
+        .find({ industry: { $in: filters.industries } })
+        .select('_id')
+        .lean();
+      industryClientIds = clients.map((c: any) => c._id.toString());
+    }
+
+    // 1. Order Transactions
+    const orderQuery: any = {
+      'payment_terms.payment_receive_date': { $gte: start, $lte: end },
+    };
+    if (filters.clientIds?.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (industryClientIds.length > 0) {
+      orderQuery.client_id = { $in: this.convertToObjectIdArray([...(filters.clientIds || []), ...industryClientIds]) };
+    }
+    if (filters.productIds?.length > 0) {
+      orderQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const orders = await this.orderModel
+      .find(orderQuery)
+      .populate({ path: 'client_id', select: 'name industry' })
+      .populate({ path: 'products', select: 'name' })
+      .lean();
+
+    for (const order of orders) {
+      for (const term of order.payment_terms || []) {
+        if (term.payment_receive_date >= start && 
+            term.payment_receive_date <= end && 
+            paidStatuses.includes(term.status)) {
+          const products = (order.products as any[])?.map((p: any) => p.name).join(', ') || '';
+          transactions.push({
+            id: order._id.toString(),
+            type: 'order',
+            date: term.payment_receive_date,
+            client: (order.client_id as any)?.name || '',
+            product: products,
+            amount: term.calculated_amount || 0,
+            status: term.status,
+            industry: (order.client_id as any)?.industry || '',
+          });
+        }
+      }
+    }
+
+    // 2. AMC Transactions
+    const amcQuery: any = {};
+    if (filters.clientIds?.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray(filters.clientIds) };
+    }
+    if (industryClientIds.length > 0) {
+      amcQuery.client_id = { $in: this.convertToObjectIdArray([...(filters.clientIds || []), ...industryClientIds]) };
+    }
+    if (filters.productIds?.length > 0) {
+      amcQuery.products = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const amcs = await this.amcModel
+      .find(amcQuery)
+      .populate({ path: 'client_id', select: 'name industry' })
+      .populate({ path: 'products', select: 'name' })
+      .lean();
+
+    for (const amc of amcs) {
+      for (const payment of amc.payments || []) {
+        const paymentDate = payment.status === PAYMENT_STATUS_ENUM.PAID 
+          ? payment.received_date 
+          : payment.from_date;
+        if (paymentDate >= start && paymentDate <= end && paidStatuses.includes(payment.status)) {
+          const products = (amc.products as any[])?.map((p: any) => p.name).join(', ') || '';
+          transactions.push({
+            id: amc._id.toString(),
+            type: 'amc',
+            date: paymentDate,
+            client: (amc.client_id as any)?.name || '',
+            product: products,
+            amount: payment.amc_rate_amount || payment.total_cost || amc.amount || 0,
+            status: payment.status,
+            industry: (amc.client_id as any)?.industry || '',
+          });
+        }
+      }
+    }
+
+    // 3. Customization Transactions
+    const customizationQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    if (filters.productIds?.length > 0) {
+      customizationQuery.product_id = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const customizations = await this.customizationModel
+      .find(customizationQuery)
+      .populate({ path: 'product_id', select: 'name' })
+      .populate({ 
+        path: 'order_id', 
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'name industry' }
+      })
+      .lean();
+
+    for (const cust of customizations) {
+      const order = cust.order_id as any;
+      const clientId = this.toStringId(order?.client_id?._id);
+      if (filters.clientIds?.length > 0 && !filters.clientIds.includes(clientId)) continue;
+      if (industryClientIds.length > 0 && !industryClientIds.includes(clientId)) continue;
+      
+      transactions.push({
+        id: cust._id.toString(),
+        type: 'customization',
+        date: cust.payment_receive_date,
+        client: order?.client_id?.name || '',
+        product: (cust.product_id as any)?.name || '',
+        amount: cust.cost || 0,
+        status: cust.payment_status,
+        industry: order?.client_id?.industry || '',
+      });
+    }
+
+    // 4. License Transactions
+    const licenseQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    if (filters.productIds?.length > 0) {
+      licenseQuery.product_id = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const licenses = await this.licenseModel
+      .find(licenseQuery)
+      .populate({ path: 'product_id', select: 'name' })
+      .populate({ 
+        path: 'order_id', 
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'name industry' }
+      })
+      .lean();
+
+    for (const license of licenses) {
+      const order = license.order_id as any;
+      const clientId = this.toStringId(order?.client_id?._id);
+      if (filters.clientIds?.length > 0 && !filters.clientIds.includes(clientId)) continue;
+      if (industryClientIds.length > 0 && !industryClientIds.includes(clientId)) continue;
+      
+      transactions.push({
+        id: license._id.toString(),
+        type: 'license',
+        date: license.payment_receive_date,
+        client: order?.client_id?.name || '',
+        product: (license.product_id as any)?.name || '',
+        amount: (license.rate?.amount || 0) * (license.total_license || 0),
+        status: license.payment_status,
+        industry: order?.client_id?.industry || '',
+      });
+    }
+
+    // 5. Additional Service Transactions
+    const serviceQuery: any = {
+      payment_receive_date: { $gte: start, $lte: end },
+      payment_status: { $in: paidStatuses },
+    };
+    if (filters.productIds?.length > 0) {
+      serviceQuery.product_id = { $in: this.convertToObjectIdArray(filters.productIds) };
+    }
+
+    const services = await this.additionalServiceModel
+      .find(serviceQuery)
+      .populate({ path: 'product_id', select: 'name' })
+      .populate({ 
+        path: 'order_id', 
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'name industry' }
+      })
+      .lean();
+
+    for (const service of services) {
+      const order = service.order_id as any;
+      const clientId = this.toStringId(order?.client_id?._id);
+      if (filters.clientIds?.length > 0 && !filters.clientIds.includes(clientId)) continue;
+      if (industryClientIds.length > 0 && !industryClientIds.includes(clientId)) continue;
+      
+      transactions.push({
+        id: service._id.toString(),
+        type: 'service',
+        date: service.payment_receive_date,
+        client: order?.client_id?.name || '',
+        product: (service.product_id as any)?.name || '',
+        amount: service.cost || 0,
+        status: service.payment_status,
+        industry: order?.client_id?.industry || '',
+      });
+    }
+
+    // Sort by date descending
+    return transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
   private async getTotalBussinessRevenue(
@@ -1404,5 +2447,131 @@ export class DashboardService {
     );
 
     return resultArray.sort((a, b) => b.total - a.total);
+  }
+
+  private async getClientWiseRevenueDistribution(
+    filter: string,
+    options?: any,
+  ): Promise<{ clientId: string; clientName: string; revenue: number }[]> {
+    const [start, end] = [
+      this.calculateDateRange(filter, options).startDate,
+      this.calculateDateRange(filter, options).endDate,
+    ];
+
+    const clientRevenueMap = new Map<
+      string,
+      { clientId: string; clientName: string; revenue: number }
+    >();
+
+    const addRevenue = (clientId: string, clientName: string, amount: number) => {
+      const existing = clientRevenueMap.get(clientId);
+      if (existing) {
+        existing.revenue += amount;
+      } else {
+        clientRevenueMap.set(clientId, { clientId, clientName, revenue: amount });
+      }
+    };
+
+    // 1. Order Revenue
+    const orders = await this.orderModel
+      .find({
+        purchased_date: { $gte: start, $lte: end },
+      })
+      .populate('client_id', 'name')
+      .lean();
+
+    for (const order of orders) {
+      const clientId = this.toStringId((order.client_id as any)?._id);
+      const clientName = (order.client_id as any)?.name || 'Unknown';
+      if (clientId) {
+        addRevenue(clientId, clientName, order.base_cost || 0);
+      }
+    }
+
+    // 2. AMC Revenue
+    const amcs = await this.amcModel
+      .find({
+        'payments.from_date': { $gte: start, $lte: end },
+      })
+      .populate('client_id', 'name')
+      .lean();
+
+    for (const amc of amcs) {
+      const clientId = this.toStringId((amc.client_id as any)?._id);
+      const clientName = (amc.client_id as any)?.name || 'Unknown';
+      if (!clientId) continue;
+
+      for (const payment of amc.payments || []) {
+        const amount = payment.amc_rate_amount || payment.total_cost || amc.amount || 0;
+        addRevenue(clientId, clientName, amount);
+      }
+    }
+
+    // 3. Customization Revenue
+    const customizations = await this.customizationModel
+      .find({
+        payment_receive_date: { $gte: start, $lte: end },
+      })
+      .populate({
+        path: 'order_id',
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'name' },
+      })
+      .lean();
+
+    for (const cust of customizations) {
+      const order = cust.order_id as any;
+      const clientId = this.toStringId(order?.client_id?._id);
+      const clientName = order?.client_id?.name || 'Unknown';
+      if (clientId) {
+        addRevenue(clientId, clientName, cust.cost || 0);
+      }
+    }
+
+    // 4. License Revenue
+    const licenses = await this.licenseModel
+      .find({
+        payment_receive_date: { $gte: start, $lte: end },
+      })
+      .populate({
+        path: 'order_id',
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'name' },
+      })
+      .lean();
+
+    for (const license of licenses) {
+      const order = license.order_id as any;
+      const clientId = this.toStringId(order?.client_id?._id);
+      const clientName = order?.client_id?.name || 'Unknown';
+      if (clientId) {
+        const amount = (license.rate?.amount || 0) * (license.total_license || 0);
+        addRevenue(clientId, clientName, amount);
+      }
+    }
+
+    // 5. Additional Service Revenue
+    const services = await this.additionalServiceModel
+      .find({
+        payment_receive_date: { $gte: start, $lte: end },
+      })
+      .populate({
+        path: 'order_id',
+        select: 'client_id',
+        populate: { path: 'client_id', select: 'name' },
+      })
+      .lean();
+
+    for (const service of services) {
+      const order = service.order_id as any;
+      const clientId = this.toStringId(order?.client_id?._id);
+      const clientName = order?.client_id?.name || 'Unknown';
+      if (clientId) {
+        addRevenue(clientId, clientName, service.cost || 0);
+      }
+    }
+
+    // Convert to array and sort by revenue descending
+    return Array.from(clientRevenueMap.values()).sort((a, b) => b.revenue - a.revenue);
   }
 }
