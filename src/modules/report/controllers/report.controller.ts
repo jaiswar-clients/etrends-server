@@ -1,12 +1,17 @@
 import { AuthGuard } from '@/common/guards/auth.guard';
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
 import { ReportService } from '../services/report.service';
+import { RevenueCalculatorService } from '../services/revenue-calculator.service';
 import { ReportFilterType } from '@/common/types/enums/report';
+import { Response } from 'express';
 
 @Controller('reports')
 @UseGuards(AuthGuard)
 export class ReportController {
-  constructor(private readonly reportService: ReportService) {}
+  constructor(
+    private readonly reportService: ReportService,
+    private readonly revenueCalculatorService: RevenueCalculatorService,
+  ) {}
 
   @Get('total-billing')
   async getTotalBilling(
@@ -87,5 +92,72 @@ export class ReportController {
       quarter: year === 'undefined' ? undefined : quarter,
       month: month === 'undefined' ? undefined : Number(month),
     });
+  }
+
+  // ==================== NEW REVENUE DASHBOARD ENDPOINTS ====================
+
+  @Get('revenue-dashboard')
+  async getRevenueDashboard(
+    @Query('filter') filter: 'monthly' | 'quarterly' | 'yearly' | 'all',
+    @Query('year') year: string,
+    @Query('quarter') quarter: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+  ) {
+    return await this.revenueCalculatorService.getRevenueDashboard({
+      filter: filter || 'monthly',
+      year: year === 'undefined' || !year ? undefined : Number(year),
+      quarter: quarter === 'undefined' || !quarter ? undefined : quarter,
+      startDate:
+        startDate === 'undefined' || !startDate ? undefined : new Date(startDate),
+      endDate:
+        endDate === 'undefined' || !endDate ? undefined : new Date(endDate),
+    });
+  }
+
+  @Get('expected-vs-collected')
+  async getExpectedVsCollected(
+    @Query('fiscalYear') fiscalYear: string,
+    @Query('filter') filter: 'monthly' | 'quarterly' | 'yearly',
+  ) {
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const defaultFiscalYear = currentMonth >= 3 ? currentYear : currentYear - 1;
+
+    return await this.revenueCalculatorService.getExpectedVsCollected({
+      fiscalYear: fiscalYear === 'undefined' || !fiscalYear
+        ? defaultFiscalYear
+        : Number(fiscalYear),
+      filter: filter || 'monthly',
+    });
+  }
+
+  @Get('monthly-revenue-breakdown')
+  async getMonthlyRevenueBreakdown(
+    @Query('year') year: string,
+    @Query('month') month: string,
+  ) {
+    const now = new Date();
+    return await this.revenueCalculatorService.getMonthlyBreakdown({
+      year: year === 'undefined' || !year ? now.getFullYear() : Number(year),
+      month: month === 'undefined' || !month ? now.getMonth() + 1 : Number(month),
+    });
+  }
+
+  // ==================== CLIENT HEALTH & RETENTION DASHBOARD ENDPOINT ====================
+
+  @Get('client-health-dashboard')
+  async getClientHealthDashboard(
+    @Query('fiscalYear') fiscalYear: string,
+  ) {
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const defaultFiscalYear = currentMonth >= 3 ? currentYear : currentYear - 1;
+
+    return await this.revenueCalculatorService.getClientHealthDashboard(
+      fiscalYear === 'undefined' || !fiscalYear
+        ? defaultFiscalYear
+        : Number(fiscalYear),
+    );
   }
 }

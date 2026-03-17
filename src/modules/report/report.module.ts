@@ -1,6 +1,7 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { ReportController } from './controllers/report.controller';
 import { ReportService } from './services/report.service';
+import { RevenueCalculatorService } from './services/revenue-calculator.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Order, OrderSchema } from '@/db/schema/order/product-order.schema';
 import { License, LicenseSchema } from '@/db/schema/order/license.schema';
@@ -29,7 +30,7 @@ import {
     ]),
   ],
   controllers: [ReportController],
-  providers: [ReportService],
+  providers: [ReportService, RevenueCalculatorService],
 })
 export class ReportModule implements OnModuleInit {
   constructor(private readonly reportService: ReportService) {}
