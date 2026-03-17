@@ -83,3 +83,60 @@ export interface IMonthlyBreakdownQuery {
   year: number;
   month: number; // 1-12
 }
+
+// ==================== CLIENT HEALTH & RETENTION DASHBOARD TYPES ====================
+
+export interface IClientHealthMetrics {
+  totalClients: number;
+  activeClients: number;
+  inactiveClients: number;
+  activePercentage: number;
+  overdueClients: {
+    over30Days: number;
+    over60Days: number;
+    over90Days: number;
+  };
+  amcRenewalRate: number;
+}
+
+export interface IClientRevenueData {
+  clientId: string;
+  clientName: string;
+  industry: string;
+  totalRevenue: number;
+  newSalesRevenue: number;
+  amcRevenue: number;
+  orderCount: number;
+  trend: 'up' | 'down' | 'stable';
+  trendPercentage: number;
+  isAtRisk: boolean;
+  riskFactors: string[];
+}
+
+export interface ITopPerformersResponse {
+  topClients: IClientRevenueData[];
+  atRiskClients: IClientRevenueData[];
+}
+
+export interface IIndustryBreakdown {
+  industry: string;
+  clientCount: number;
+  totalRevenue: number;
+  percentage: number;
+}
+
+export interface IClientConcentrationRisk {
+  totalRevenue: number;
+  top10ClientsRevenue: number;
+  top10Percentage: number;
+  herfindahlIndex: number;
+  riskLevel: 'low' | 'medium' | 'high';
+  industryDiversification: IIndustryBreakdown[];
+}
+
+export interface IClientHealthDashboardResponse {
+  healthMetrics: IClientHealthMetrics;
+  topPerformers: ITopPerformersResponse;
+  concentrationRisk: IClientConcentrationRisk;
+  fiscalYear: string;
+}

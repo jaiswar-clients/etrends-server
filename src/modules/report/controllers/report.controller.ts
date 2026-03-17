@@ -141,4 +141,21 @@ export class ReportController {
       month: month === 'undefined' || !month ? now.getMonth() + 1 : Number(month),
     });
   }
+
+  // ==================== CLIENT HEALTH & RETENTION DASHBOARD ENDPOINT ====================
+
+  @Get('client-health-dashboard')
+  async getClientHealthDashboard(
+    @Query('fiscalYear') fiscalYear: string,
+  ) {
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const defaultFiscalYear = currentMonth >= 3 ? currentYear : currentYear - 1;
+
+    return await this.revenueCalculatorService.getClientHealthDashboard(
+      fiscalYear === 'undefined' || !fiscalYear
+        ? defaultFiscalYear
+        : Number(fiscalYear),
+    );
+  }
 }

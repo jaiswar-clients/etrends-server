@@ -17,6 +17,12 @@ import {
   IRevenueDashboardQuery,
   IExpectedVsCollectedQuery,
   IMonthlyBreakdownQuery,
+  IClientHealthMetrics,
+  IClientRevenueData,
+  ITopPerformersResponse,
+  IIndustryBreakdown,
+  IClientConcentrationRisk,
+  IClientHealthDashboardResponse,
 } from '../dto/revenue-report.dto';
 
 @Injectable()
@@ -519,6 +525,487 @@ export class RevenueCalculatorService {
         total: amcTotal,
         details: amcDetails,
       },
+    };
+  }
+
+  // ==================== CLIENT HEALTH & RETENTION DASHBOARD METHODS ====================
+
+  /**
+   * Get Client Health Metrics
+   */
+  async getClientHealthMetrics(fiscalYear: number): Promise<IClientHealthMetrics> {
+    const { start, end } = this.getFiscalYearRange(fiscalYear);
+
+    // Get all non-deleted clients
+    const allClients = await this.clientModel.find({ deleted: { $ne: true } }).lean();
+    const totalClients = allClients.length;
+
+    // Get clients with activity in current FY (orders or AMC payments)
+    const ordersInFY = await this.orderModel
+      .find({
+        purchased_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    const clientIdsWithOrders = new Set(ordersInFY.map((o) => o.client_id?.toString()));
+
+    // Get AMC payments in FY
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    const clientIdsWithAMCPayments = new Set<string>();
+
+    for (const amc of amcs) {
+      const paidPayments = (amc.payments || []).slice(1);
+      for (const payment of paidPayments) {
+        const paymentDate = new Date(payment.from_date);
+        if (paymentDate >= start && paymentDate <= end) {
+          clientIdsWithAMCPayments.add(amc.client_id?.toString());
+        }
+      }
+    }
+
+    // Active clients have either orders or AMC payments in FY
+    const activeClientIds = new Set([...clientIdsWithOrders, ...clientIdsWithAMCPayments]);
+    const activeClients = activeClientIds.size;
+    const inactiveClients = totalClients - activeClients;
+    const activePercentage = totalClients > 0 ? (activeClients / totalClients) * 100 : 0;
+
+    // Calculate overdue payments from orders (payment_terms with status 'pending')
+    const allOrders = await this.orderModel.find({ deleted: { $ne: true } }).lean();
+    const now = new Date();
+    const overdue30Days: Set<string> = new Set();
+    const overdue60Days: Set<string> = new Set();
+    const overdue90Days: Set<string> = new Set();
+
+    for (const order of allOrders) {
+      const clientId = order.client_id?.toString();
+      if (!clientId) continue;
+
+      for (const term of order.payment_terms || []) {
+        if (term.status !== 'paid' && term.invoice_date) {
+          const invoiceDate = new Date(term.invoice_date);
+          const daysOverdue = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
+
+          if (daysOverdue > 90) {
+            overdue90Days.add(clientId);
+          } else if (daysOverdue > 60) {
+            overdue60Days.add(clientId);
+          } else if (daysOverdue > 30) {
+            overdue30Days.add(clientId);
+          }
+        }
+      }
+    }
+
+    // AMC overdue payments
+    for (const amc of amcs) {
+      const clientId = amc.client_id?.toString();
+      if (!clientId) continue;
+
+      const paidPayments = (amc.payments || []).slice(1);
+      for (const payment of paidPayments) {
+        if (payment.status !== 'paid' && payment.invoice_date) {
+          const invoiceDate = new Date(payment.invoice_date);
+          const daysOverdue = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
+
+          if (daysOverdue > 90) {
+            overdue90Days.add(clientId);
+          } else if (daysOverdue > 60) {
+            overdue60Days.add(clientId);
+          } else if (daysOverdue > 30) {
+            overdue30Days.add(clientId);
+          }
+        }
+      }
+    }
+
+    // Calculate AMC renewal rate
+    // AMCs with subsequent payments after period end (renewed)
+    let totalAMCsDue = 0;
+    let renewedAMCs = 0;
+
+    for (const amc of amcs) {
+      const payments = amc.payments || [];
+      if (payments.length <= 1) continue; // Skip if only free period
+
+      // Find payments that ended before or during the FY
+      const paidPayments = payments.slice(1);
+      for (let i = 0; i < paidPayments.length; i++) {
+        const payment = paidPayments[i];
+        const paymentEndDate = new Date(payment.to_date);
+
+        // If this payment period ended within the FY
+        if (paymentEndDate >= start && paymentEndDate <= end) {
+          totalAMCsDue++;
+          // Check if there's a subsequent payment (renewal)
+          if (i + 1 < paidPayments.length) {
+            renewedAMCs++;
+          }
+        }
+      }
+    }
+
+    const amcRenewalRate = totalAMCsDue > 0 ? (renewedAMCs / totalAMCsDue) * 100 : 100;
+
+    return {
+      totalClients,
+      activeClients,
+      inactiveClients,
+      activePercentage,
+      overdueClients: {
+        over30Days: overdue30Days.size - overdue60Days.size,
+        over60Days: overdue60Days.size - overdue90Days.size,
+        over90Days: overdue90Days.size,
+      },
+      amcRenewalRate,
+    };
+  }
+
+  /**
+   * Get Top and At-Risk Performers
+   */
+  async getTopPerformers(fiscalYear: number, limit: number = 5): Promise<ITopPerformersResponse> {
+    const { start, end } = this.getFiscalYearRange(fiscalYear);
+    const prevFYStart = fiscalYear - 1;
+    const { start: prevStart, end: prevEnd } = this.getFiscalYearRange(prevFYStart);
+
+    // Get all clients
+    const clients = await this.clientModel.find({ deleted: { $ne: true } }).lean();
+    const clientMap = new Map(clients.map((c) => [c._id.toString(), c]));
+
+    // Calculate current FY revenue by client
+    const currentFYRevenue = new Map<string, { newSales: number; amc: number; orderCount: number }>();
+
+    // New sales revenue
+    const orders = await this.orderModel
+      .find({
+        purchased_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    for (const order of orders) {
+      const clientId = order.client_id?.toString();
+      if (!clientId) continue;
+
+      if (this.isNewSaleOrder(order)) {
+        const revenue = await this.calculateNewSaleOrderRevenue(order);
+        const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
+        existing.newSales += revenue;
+        existing.orderCount++;
+        currentFYRevenue.set(clientId, existing);
+      }
+    }
+
+    // AMC revenue
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    for (const amc of amcs) {
+      const clientId = amc.client_id?.toString();
+      if (!clientId) continue;
+
+      const paidPayments = (amc.payments || []).slice(1);
+      for (const payment of paidPayments) {
+        const paymentDate = new Date(payment.from_date);
+        if (paymentDate >= start && paymentDate <= end) {
+          const revenue = payment.amc_rate_amount || 0;
+          const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
+          existing.amc += revenue;
+          currentFYRevenue.set(clientId, existing);
+        }
+      }
+    }
+
+    // Calculate previous FY revenue by client
+    const prevFYRevenue = new Map<string, number>();
+
+    const prevOrders = await this.orderModel
+      .find({
+        purchased_date: { $gte: prevStart, $lte: prevEnd },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    for (const order of prevOrders) {
+      const clientId = order.client_id?.toString();
+      if (!clientId) continue;
+
+      if (this.isNewSaleOrder(order)) {
+        const revenue = await this.calculateNewSaleOrderRevenue(order);
+        prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+      }
+    }
+
+    for (const amc of amcs) {
+      const clientId = amc.client_id?.toString();
+      if (!clientId) continue;
+
+      const paidPayments = (amc.payments || []).slice(1);
+      for (const payment of paidPayments) {
+        const paymentDate = new Date(payment.from_date);
+        if (paymentDate >= prevStart && paymentDate <= prevEnd) {
+          const revenue = payment.amc_rate_amount || 0;
+          prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+        }
+      }
+    }
+
+    // Build client revenue data
+    const clientRevenueData: IClientRevenueData[] = [];
+
+    for (const [clientId, revenue] of currentFYRevenue) {
+      const client = clientMap.get(clientId);
+      if (!client) continue;
+
+      const totalRevenue = revenue.newSales + revenue.amc;
+      const prevRevenue = prevFYRevenue.get(clientId) || 0;
+
+      let trend: 'up' | 'down' | 'stable' = 'stable';
+      let trendPercentage = 0;
+
+      if (prevRevenue > 0) {
+        trendPercentage = ((totalRevenue - prevRevenue) / prevRevenue) * 100;
+        if (trendPercentage > 5) trend = 'up';
+        else if (trendPercentage < -5) trend = 'down';
+      } else if (totalRevenue > 0) {
+        trend = 'up';
+        trendPercentage = 100;
+      }
+
+      // Determine if at-risk
+      const riskFactors: string[] = [];
+
+      if (trend === 'down' && trendPercentage < -20) {
+        riskFactors.push('Revenue declining >20%');
+      }
+
+      // Check for late payments (overdue > 60 days)
+      const clientOrders = await this.orderModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
+      const now = new Date();
+      let hasLatePayment = false;
+
+      for (const order of clientOrders) {
+        for (const term of order.payment_terms || []) {
+          if (term.status !== 'paid' && term.invoice_date) {
+            const invoiceDate = new Date(term.invoice_date);
+            const daysOverdue = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysOverdue > 60) {
+              hasLatePayment = true;
+              break;
+            }
+          }
+        }
+        if (hasLatePayment) break;
+      }
+
+      // Check AMC late payments
+      if (!hasLatePayment) {
+        const clientAMCs = await this.amcModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
+        for (const amc of clientAMCs) {
+          const paidPayments = (amc.payments || []).slice(1);
+          for (const payment of paidPayments) {
+            if (payment.status !== 'paid' && payment.invoice_date) {
+              const invoiceDate = new Date(payment.invoice_date);
+              const daysOverdue = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysOverdue > 60) {
+                hasLatePayment = true;
+                break;
+              }
+            }
+          }
+          if (hasLatePayment) break;
+        }
+      }
+
+      if (hasLatePayment) {
+        riskFactors.push('Late payments >60 days');
+      }
+
+      // Check inactivity (no orders/payments in 6+ months)
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+      let hasRecentActivity = false;
+
+      for (const order of clientOrders) {
+        if (new Date(order.purchased_date) >= sixMonthsAgo) {
+          hasRecentActivity = true;
+          break;
+        }
+      }
+
+      if (!hasRecentActivity) {
+        const clientAMCs = await this.amcModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
+        for (const amc of clientAMCs) {
+          const paidPayments = (amc.payments || []).slice(1);
+          for (const payment of paidPayments) {
+            if (new Date(payment.from_date) >= sixMonthsAgo) {
+              hasRecentActivity = true;
+              break;
+            }
+          }
+          if (hasRecentActivity) break;
+        }
+      }
+
+      if (!hasRecentActivity) {
+        riskFactors.push('No activity in 6+ months');
+      }
+
+      clientRevenueData.push({
+        clientId,
+        clientName: client.name || 'Unknown',
+        industry: client.industry || 'Unknown',
+        totalRevenue,
+        newSalesRevenue: revenue.newSales,
+        amcRevenue: revenue.amc,
+        orderCount: revenue.orderCount,
+        trend,
+        trendPercentage,
+        isAtRisk: riskFactors.length > 0,
+        riskFactors,
+      });
+    }
+
+    // Sort by revenue for top performers
+    const topClients = [...clientRevenueData]
+      .sort((a, b) => b.totalRevenue - a.totalRevenue)
+      .slice(0, limit);
+
+    // Get at-risk clients
+    const atRiskClients = clientRevenueData
+      .filter((c) => c.isAtRisk)
+      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    return {
+      topClients,
+      atRiskClients,
+    };
+  }
+
+  /**
+   * Get Client Concentration Risk
+   */
+  async getClientConcentrationRisk(fiscalYear: number): Promise<IClientConcentrationRisk> {
+    const { start, end } = this.getFiscalYearRange(fiscalYear);
+
+    // Get all clients
+    const clients = await this.clientModel.find({ deleted: { $ne: true } }).lean();
+    const clientMap = new Map(clients.map((c) => [c._id.toString(), c]));
+
+    // Calculate revenue by client
+    const clientRevenue = new Map<string, number>();
+
+    // New sales
+    const orders = await this.orderModel
+      .find({
+        purchased_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    for (const order of orders) {
+      const clientId = order.client_id?.toString();
+      if (!clientId) continue;
+
+      if (this.isNewSaleOrder(order)) {
+        const revenue = await this.calculateNewSaleOrderRevenue(order);
+        clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
+      }
+    }
+
+    // AMC
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    for (const amc of amcs) {
+      const clientId = amc.client_id?.toString();
+      if (!clientId) continue;
+
+      const paidPayments = (amc.payments || []).slice(1);
+      for (const payment of paidPayments) {
+        const paymentDate = new Date(payment.from_date);
+        if (paymentDate >= start && paymentDate <= end) {
+          const revenue = payment.amc_rate_amount || 0;
+          clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
+        }
+      }
+    }
+
+    // Calculate total revenue
+    const totalRevenue = Array.from(clientRevenue.values()).reduce((sum, r) => sum + r, 0);
+
+    // Sort clients by revenue
+    const sortedClients = Array.from(clientRevenue.entries())
+      .sort((a, b) => b[1] - a[1]);
+
+    // Top 10 revenue
+    const top10ClientsRevenue = sortedClients
+      .slice(0, 10)
+      .reduce((sum, [, r]) => sum + r, 0);
+
+    const top10Percentage = totalRevenue > 0 ? (top10ClientsRevenue / totalRevenue) * 100 : 0;
+
+    // Calculate Herfindahl-Hirschman Index (HHI)
+    let hhi = 0;
+    for (const [, revenue] of sortedClients) {
+      const marketShare = totalRevenue > 0 ? (revenue / totalRevenue) * 100 : 0;
+      hhi += marketShare * marketShare;
+    }
+
+    // Determine risk level based on HHI
+    let riskLevel: 'low' | 'medium' | 'high' = 'low';
+    if (hhi > 2500) {
+      riskLevel = 'high';
+    } else if (hhi > 1500) {
+      riskLevel = 'medium';
+    }
+
+    // Calculate industry diversification
+    const industryRevenue = new Map<string, number>();
+    const industryClientCount = new Map<string, number>();
+
+    for (const [clientId, revenue] of clientRevenue) {
+      const client = clientMap.get(clientId);
+      const industry = client?.industry || 'Unknown';
+
+      industryRevenue.set(industry, (industryRevenue.get(industry) || 0) + revenue);
+      industryClientCount.set(industry, (industryClientCount.get(industry) || 0) + 1);
+    }
+
+    const industryDiversification: IIndustryBreakdown[] = Array.from(industryRevenue.entries())
+      .map(([industry, revenue]) => ({
+        industry,
+        clientCount: industryClientCount.get(industry) || 0,
+        totalRevenue: revenue,
+        percentage: totalRevenue > 0 ? (revenue / totalRevenue) * 100 : 0,
+      }))
+      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+
+    return {
+      totalRevenue,
+      top10ClientsRevenue,
+      top10Percentage,
+      herfindahlIndex: hhi,
+      riskLevel,
+      industryDiversification,
+    };
+  }
+
+  /**
+   * Get Client Health Dashboard (combined)
+   */
+  async getClientHealthDashboard(fiscalYear: number): Promise<IClientHealthDashboardResponse> {
+    const fyLabel = `FY${(fiscalYear % 100).toString().padStart(2, '0')}-${((fiscalYear + 1) % 100).toString().padStart(2, '0')}`;
+
+    const [healthMetrics, topPerformers, concentrationRisk] = await Promise.all([
+      this.getClientHealthMetrics(fiscalYear),
+      this.getTopPerformers(fiscalYear),
+      this.getClientConcentrationRisk(fiscalYear),
+    ]);
+
+    return {
+      healthMetrics,
+      topPerformers,
+      concentrationRisk,
+      fiscalYear: fyLabel,
     };
   }
 }
