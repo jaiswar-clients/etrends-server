@@ -17,8 +17,10 @@ export interface IAMCRate {
 }
 
 export enum PAYMENT_STATUS_ENUM {
-  PAID = 'paid',
   PENDING = 'pending',
+  proforma = 'proforma',
+  INVOICE = 'invoice',
+  PAID = 'paid',
 }
 
 class PaymentTerms {

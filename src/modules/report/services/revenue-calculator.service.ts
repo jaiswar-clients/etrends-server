@@ -55,34 +55,19 @@ export class RevenueCalculatorService {
 
   /**
    * Calculate total revenue for a new sale order
-   * Includes: base_cost + training_and_implementation_cost + licenses + customizations (purchased with order)
+   * Uses payment_terms with status 'paid' or 'invoice' instead of base_cost
    */
   async calculateNewSaleOrderRevenue(order: any): Promise<number> {
     let totalRevenue = 0;
 
-    // Base cost
-    totalRevenue += order.base_cost || 0;
-
-    // Training and implementation cost
-    totalRevenue += order.training_and_implementation_cost || 0;
-
-    // Licenses purchased with order
-    if (order.is_purchased_with_order?.license && order.licenses?.length > 0) {
-      const licenses = await this.licenseModel.find({
-        _id: { $in: order.licenses },
-        deleted: { $ne: true },
-      });
-      totalRevenue += licenses.reduce((sum, license) => sum + (license.rate?.amount || 0), 0);
-    }
-
-    // Customizations purchased with order
-    if (order.is_purchased_with_order?.customization && order.customizations?.length > 0) {
-      const customizations = await this.customizationModel.find({
-        _id: { $in: order.customizations },
-        deleted: { $ne: true },
-      });
-      totalRevenue += customizations.reduce((sum, customization) => sum + (customization.cost || 0), 0);
-    }
+    // Sum payment_terms where status is 'paid' or 'invoice'
+    const revenuePaymentTerms = (order.payment_terms || []).filter(
+      (term: any) => term.status === 'paid' || term.status === 'invoice'
+    );
+    totalRevenue += revenuePaymentTerms.reduce(
+      (sum: number, term: any) => sum + (term.calculated_amount || 0),
+      0
+    );
 
     return totalRevenue;
   }
@@ -178,10 +163,10 @@ export class RevenueCalculatorService {
     const revenueByPeriod = new Map<string, number>();
 
     for (const amc of amcs) {
-      // Skip first payment (index 0) - it's the free maintenance period
-      const paidPayments = (amc.payments || []).slice(1);
+      // Include all payments (first payment is now paid AMC, not free period)
+      const allPayments = amc.payments || [];
 
-      for (const payment of paidPayments) {
+      for (const payment of allPayments) {
         const paymentDate = new Date(payment.from_date);
 
         // Check if payment falls within date range
@@ -376,10 +361,10 @@ export class RevenueCalculatorService {
     const amcByPeriod = new Map<string, { expected: number; collected: number }>();
 
     for (const amc of amcs) {
-      // Skip first payment (free period) - start from index 1
-      const paidPayments = (amc.payments || []).slice(1);
+      // Include all payments (first payment is now paid AMC, not free period)
+      const allPayments = amc.payments || [];
 
-      for (const payment of paidPayments) {
+      for (const payment of allPayments) {
         const paymentDate = new Date(payment.from_date);
 
         if (paymentDate >= start && paymentDate <= end) {
@@ -432,10 +417,11 @@ export class RevenueCalculatorService {
 
   /**
    * Calculate collected amount from payment terms
+   * Includes both 'paid' and 'invoice' status
    */
   private calculateCollectedFromPaymentTerms(paymentTerms: any[]): number {
     return paymentTerms
-      .filter((term) => term.status === 'paid')
+      .filter((term) => term.status === 'paid' || term.status === 'invoice')
       .reduce((sum, term) => sum + (term.calculated_amount || 0), 0);
   }
 
@@ -509,9 +495,10 @@ export class RevenueCalculatorService {
     let amcTotal = 0;
 
     for (const amc of amcs) {
-      const paidPayments = (amc.payments || []).slice(1);
+      // Include all payments (first payment is now paid AMC, not free period)
+      const allPayments = amc.payments || [];
 
-      for (const payment of paidPayments) {
+      for (const payment of allPayments) {
         const paymentDate = new Date(payment.from_date);
 
         if (paymentDate >= start && paymentDate <= end) {
