@@ -319,7 +319,7 @@ export class RevenueCalculatorService {
    * Expected vs Collected Revenue Report
    */
   async getExpectedVsCollected(query: IExpectedVsCollectedQuery): Promise<IExpectedVsCollectedResponse> {
-    const { fiscalYear } = query;
+    const { fiscalYear, filter = 'monthly' } = query;
     const { start, end } = this.getFiscalYearRange(fiscalYear);
     const fyLabel = `FY${(fiscalYear % 100).toString().padStart(2, '0')}-${((fiscalYear + 1) % 100).toString().padStart(2, '0')}`;
 
@@ -347,7 +347,7 @@ export class RevenueCalculatorService {
         newSalesCollected += orderCollected;
 
         // Add to period breakdown
-        const period = this.getPeriodLabel(new Date(order.purchased_date), 'monthly');
+        const period = this.getPeriodLabel(new Date(order.purchased_date), filter);
         const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
         existing.expected += orderExpected;
         existing.collected += orderCollected;
@@ -391,7 +391,7 @@ export class RevenueCalculatorService {
           amcExpected += expected;
           amcCollected += collected;
 
-          const period = this.getPeriodLabel(paymentDate, 'monthly');
+          const period = this.getPeriodLabel(paymentDate, filter);
           const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
           existing.expected += expected;
           existing.collected += collected;

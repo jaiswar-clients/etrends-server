@@ -118,6 +118,7 @@ export class ReportController {
   @Get('expected-vs-collected')
   async getExpectedVsCollected(
     @Query('fiscalYear') fiscalYear: string,
+    @Query('filter') filter: 'monthly' | 'quarterly' | 'yearly',
   ) {
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
@@ -127,6 +128,7 @@ export class ReportController {
       fiscalYear: fiscalYear === 'undefined' || !fiscalYear
         ? defaultFiscalYear
         : Number(fiscalYear),
+      filter: filter || 'monthly',
     });
   }
 
