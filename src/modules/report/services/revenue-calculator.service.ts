@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { Types } from 'mongoose';
 import { SoftDeleteModel } from 'mongoose-delete';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { License, LicenseDocument } from '@/db/schema/order/license.schema';
@@ -472,7 +473,23 @@ export class RevenueCalculatorService {
         newSalesTotal += revenue;
 
         const client = order.client_id as any;
-        const products = order.products as any[];
+        let products = order.products as any[];
+
+        // Handle case where products might be stored as strings instead of ObjectIds
+        // If populate didn't work (products are still IDs), fetch them manually
+        if (products && products.length > 0 && typeof products[0] === 'string') {
+          const productIds = products.map((id: string) => {
+            try {
+              return new Types.ObjectId(id);
+            } catch {
+              return id;
+            }
+          });
+          products = await this.productModel.find({
+            _id: { $in: productIds },
+            deleted: { $ne: true },
+          }).lean();
+        }
 
         newSalesDetails.push({
           orderId: order._id.toString(),
