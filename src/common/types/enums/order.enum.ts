@@ -17,4 +17,11 @@ export enum AMC_FILTER {
   INVOICE = 'invoice',
 }
 
+export enum PAYMENT_STATUS_ENUM {
+  PENDING = 'pending',
+  PROFORMA = 'proforma',
+  INVOICE = 'invoice',
+  PAID = 'paid',
+}
+
 export const DEFAULT_AMC_CYCLE_IN_MONTHS = 12;

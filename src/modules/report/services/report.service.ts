@@ -175,29 +175,50 @@ export class ReportService {
       for (const order of orders) {
         if (!order.products || order.products.length === 0) continue;
 
+        // Only count revenue from payment_terms with status 'paid' or 'invoice' (exclude proforma)
+        let orderRevenue = 0;
+        if (order.payment_terms && order.payment_terms.length > 0) {
+          for (const term of order.payment_terms) {
+            if (!term.invoice_date) continue;
+            if (
+              term.status === 'paid' ||
+              term.status === 'invoice'
+            ) {
+              orderRevenue += term.calculated_amount || 0;
+            }
+          }
+        } else {
+          orderRevenue = order.base_cost || 0;
+        }
+
+        if (orderRevenue === 0) continue;
+
         const productIds = order.products.map((p: any) => p.toString());
         const productRevenues = new Map<string, number>();
 
         if (order.products.length === 1) {
           // Single product, assign all revenues to this product
           const productId = productIds[0];
-          productRevenues.set(productId, order.base_cost || 0);
+          productRevenues.set(productId, orderRevenue);
         } else {
           // Multiple products
           if (
             order.base_cost_seperation &&
             order.base_cost_seperation.length > 0
           ) {
-            // Use base_cost_seperation to distribute revenue
+            // Use base_cost_seperation ratios to distribute revenue
+            const totalSep = order.base_cost_seperation.reduce(
+              (sum: number, sep: any) => sum + (sep.amount || 0),
+              0,
+            );
             order.base_cost_seperation.forEach((sep: any) => {
               const productId = sep.product_id.toString();
-              const amount = sep.amount || 0;
-              productRevenues.set(productId, amount);
+              const ratio = totalSep > 0 ? (sep.amount || 0) / totalSep : 1 / order.products.length;
+              productRevenues.set(productId, ratio * orderRevenue);
             });
           } else {
-            // Divide base_cost equally among products
-            const amountPerProduct =
-              (order.base_cost || 0) / order.products.length;
+            // Divide equally among products
+            const amountPerProduct = orderRevenue / order.products.length;
             productIds.forEach((productId: string) => {
               productRevenues.set(productId, amountPerProduct);
             });
@@ -222,7 +243,8 @@ export class ReportService {
       // Process customizations
       const customizations = await this.customizationModel
         .find({
-          purchased_date: { $gte: start, $lte: end },
+          invoice_date: { $gte: start, $lte: end, $ne: null },
+          payment_status: { $in: ['paid', 'invoice'] },
         })
         .lean();
 
@@ -243,7 +265,8 @@ export class ReportService {
       // Process licenses
       const licenses = await this.licenseModel
         .find({
-          purchase_date: { $gte: start, $lte: end },
+          invoice_date: { $gte: start, $lte: end, $ne: null },
+          payment_status: { $in: ['paid', 'invoice'] },
         })
         .lean();
 
@@ -266,7 +289,8 @@ export class ReportService {
       // Process additional services
       const additionalServices = await this.additionalServiceModel
         .find({
-          'date.start': { $gte: start, $lte: end },
+          invoice_date: { $gte: start, $lte: end, $ne: null },
+          payment_status: { $in: ['paid', 'invoice'] },
         })
         .lean();
 
@@ -539,8 +563,9 @@ export class ReportService {
             .lean(),
           this.customizationModel
             .find({
-              purchased_date:
-                filter === 'all' ? undefined : { $gte: start, $lte: end },
+              invoice_date:
+                filter === 'all' ? { $ne: null } : { $gte: start, $lte: end, $ne: null },
+              payment_status: { $in: ['paid', 'invoice'] },
             })
             .populate({
               path: 'order_id',
@@ -550,8 +575,9 @@ export class ReportService {
             .lean(),
           this.licenseModel
             .find({
-              purchase_date:
-                filter === 'all' ? undefined : { $gte: start, $lte: end },
+              invoice_date:
+                filter === 'all' ? { $ne: null } : { $gte: start, $lte: end, $ne: null },
+              payment_status: { $in: ['paid', 'invoice'] },
             })
             .populate({
               path: 'order_id',
@@ -561,8 +587,9 @@ export class ReportService {
             .lean(),
           this.additionalServiceModel
             .find({
-              'date.start':
-                filter === 'all' ? undefined : { $gte: start, $lte: end },
+              invoice_date:
+                filter === 'all' ? { $ne: null } : { $gte: start, $lte: end, $ne: null },
+              payment_status: { $in: ['paid', 'invoice'] },
             })
             .populate({
               path: 'order_id',
@@ -570,7 +597,7 @@ export class ReportService {
               populate: { path: 'client_id' },
             })
             .lean(),
-          this.amcModel.find().lean(),
+          this.amcModel.find().populate('order_id').lean(),
         ]);
 
       const groupByPeriod = (date: Date) => {
@@ -640,16 +667,22 @@ export class ReportService {
       // Process orders
       for (const order of orders) {
         if (!order.client_id) continue;
-        const period = groupByPeriod(new Date(order.purchased_date));
         const industry =
           (order.client_id as unknown as ClientDocument).industry || 'Unknown';
-        const amount = order.base_cost || 0;
-        addRevenue(industry, period, amount);
+        for (const term of order.payment_terms || []) {
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+          if (!term.invoice_date) continue;
+          const period = groupByPeriod(new Date(term.invoice_date));
+          const amount = term.calculated_amount || 0;
+          addRevenue(industry, period, amount);
+        }
       }
 
       // Process customizations
       for (const customization of customizations) {
-        const period = groupByPeriod(new Date(customization.purchased_date));
+        if (customization.payment_status !== 'paid' && customization.payment_status !== 'invoice') continue;
+        if (!customization.invoice_date) continue;
+        const period = groupByPeriod(new Date(customization.invoice_date));
         const order = customization.order_id as unknown as OrderDocument;
         if (!order || !order.client_id) continue;
         const industry =
@@ -660,7 +693,9 @@ export class ReportService {
 
       // Process licenses
       for (const license of licenses) {
-        const period = groupByPeriod(new Date(license.purchase_date));
+        if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+        if (!license.invoice_date) continue;
+        const period = groupByPeriod(new Date(license.invoice_date));
         const order = license.order_id as unknown as OrderDocument;
         if (!order || !order.client_id) continue;
         const industry =
@@ -672,7 +707,9 @@ export class ReportService {
 
       // Process additional services
       for (const service of additionalServices) {
-        const period = groupByPeriod(new Date(service.date.start));
+        if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+        if (!service.invoice_date) continue;
+        const period = groupByPeriod(new Date(service.invoice_date));
         const order = service.order_id as unknown as OrderDocument;
         if (!order || !order.client_id) continue;
         const industry =
@@ -683,21 +720,22 @@ export class ReportService {
 
       // Process AMCs
       for (const amc of amcs) {
-        if (amc.payments.length > 1) {
-          for (const payment of amc.payments.slice(1)) {
-            if (
-              payment.status === PAYMENT_STATUS_ENUM.PAID &&
-              payment.from_date >= start &&
-              payment.from_date <= end
-            ) {
-              const period = groupByPeriod(new Date(payment.from_date));
-              const client = await this.clientModel
-                .findById(amc.client_id)
-                .lean();
-              const industry = client?.industry || 'Unknown';
-              const amount = amc.amount || 0;
-              addRevenue(industry, period, amount);
-            }
+        const order = amc.order_id as any;
+        if (!order || !order.amc_start_date) continue;
+        const client = await this.clientModel
+          .findById(amc.client_id)
+          .lean();
+        const industry = client?.industry || 'Unknown';
+        for (const payment of amc.payments || []) {
+          if (payment.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
+          if (
+            payment.from_date &&
+            new Date(payment.from_date) >= start &&
+            new Date(payment.from_date) <= end
+          ) {
+            const period = groupByPeriod(new Date(order.amc_start_date));
+            const amount = payment.amc_rate_amount || 0;
+            addRevenue(industry, period, amount);
           }
         }
       }
@@ -960,7 +998,9 @@ export class ReportService {
     });
     for (const order of orders) {
       for (const term of order.payment_terms || []) {
-        addBilling(term.payment_receive_date, {
+        if (term.status !== 'paid' && term.status !== 'invoice') continue;
+        if (!term.invoice_date) continue;
+        addBilling(new Date(term.invoice_date), {
           purchase: term.calculated_amount || 0,
         });
       }
@@ -968,25 +1008,39 @@ export class ReportService {
 
     const customizations = await this.customizationModel.find();
     for (const item of customizations) {
-      addBilling(item.purchased_date, { purchase: item.cost || 0 });
+      if (item.payment_status !== 'paid' && item.payment_status !== 'invoice') continue;
+      if (!item.invoice_date) continue;
+      addBilling(new Date(item.invoice_date), { purchase: item.cost || 0 });
     }
 
     const licenses = await this.licenseModel.find();
     for (const lic of licenses) {
+      if (lic.payment_status !== 'paid' && lic.payment_status !== 'invoice') continue;
+      if (!lic.invoice_date) continue;
       const licenseBilling = (lic.rate?.amount || 0) * (lic.total_license || 0);
-      addBilling(lic.purchase_date, { purchase: licenseBilling });
+      addBilling(new Date(lic.invoice_date), { purchase: licenseBilling });
     }
 
     const services = await this.additionalServiceModel.find();
     for (const service of services) {
-      addBilling(service.purchased_date, { purchase: service.cost || 0 });
+      if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+      if (!service.invoice_date) continue;
+      addBilling(new Date(service.invoice_date), { purchase: service.cost || 0 });
     }
 
-    const amcs = await this.amcModel.find();
+    const amcs = await this.amcModel.find().populate('order_id').lean();
     for (const amc of amcs) {
+      const order = amc.order_id as any;
       for (const payment of amc.payments || []) {
-        addBilling(payment.from_date, {
-          amc: payment.total_cost || amc.amount || 0,
+        if (payment.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
+        // Range check using payment.from_date
+        if (!payment.from_date) continue;
+        const paymentFromDate = new Date(payment.from_date);
+        if (paymentFromDate < start || paymentFromDate > end) continue;
+        // Group by order.amc_start_date
+        if (!order || !order.amc_start_date) continue;
+        addBilling(new Date(order.amc_start_date), {
+          amc: payment.amc_rate_amount || 0,
         });
       }
     }
@@ -1199,7 +1253,7 @@ export class ReportService {
         amcQuery = { order_id: { $in: orderIds } };
       }
 
-      const amcs = await this.amcModel.find(amcQuery).lean();
+      const amcs = await this.amcModel.find(amcQuery).populate('order_id').lean();
 
       const breakdownMap = new Map<
         string,
@@ -1210,19 +1264,24 @@ export class ReportService {
       >();
 
       for (const amc of amcs) {
-        const payments = amc.payments.slice(1);
+        const order = amc.order_id as any;
 
-        for (const payment of payments) {
+        for (const payment of amc.payments || []) {
+          if (payment.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
+          // Range check using payment.from_date
+          if (!payment.from_date) continue;
           const paymentDate = new Date(payment.from_date);
           if (paymentDate >= start && paymentDate <= end) {
-            const period = groupByPeriod(paymentDate);
+            // Group by order.amc_start_date
+            if (!order || !order.amc_start_date) continue;
+            const period = groupByPeriod(new Date(order.amc_start_date));
             const existing = breakdownMap.get(period) || {
               totalExpected: 0,
               totalCollected: 0,
             };
-            existing.totalExpected += amc.amount || 0;
+            existing.totalExpected += payment.amc_rate_amount || 0;
             if (payment.status === PAYMENT_STATUS_ENUM.PAID) {
-              existing.totalCollected += amc.amount || 0;
+              existing.totalCollected += payment.amc_rate_amount || 0;
             }
             breakdownMap.set(period, existing);
           }
@@ -1352,11 +1411,13 @@ export class ReportService {
     });
     for (const ord of allOrders) {
       for (const t of ord.payment_terms || []) {
-        // Expected on term.date, Received on term.payment_receive_date if any
-        if (t.payment_receive_date)
-          addData(t.payment_receive_date, t.calculated_amount || 0, 0);
-        if (t.payment_receive_date && t.status === PAYMENT_STATUS_ENUM.PAID) {
-          addData(t.payment_receive_date, 0, t.calculated_amount || 0);
+        if (t.status !== 'paid' && t.status !== 'invoice') continue;
+        if (!t.invoice_date) continue;
+        // Expected on term.invoice_date
+        addData(new Date(t.invoice_date), t.calculated_amount || 0, 0);
+        // Received if status is paid
+        if (t.status === 'paid') {
+          addData(new Date(t.invoice_date), 0, t.calculated_amount || 0);
         }
       }
     }
@@ -1364,57 +1425,61 @@ export class ReportService {
     // 2) Customizations
     const allCustom = await this.customizationModel.find();
     for (const c of allCustom) {
-      // Expected on purchased_date, Received on payment_receive_date if paid
-      if (c.purchased_date) addData(c.purchased_date, c.cost || 0, 0);
-      if (
-        c.payment_receive_date &&
-        c.payment_status === PAYMENT_STATUS_ENUM.PAID
-      ) {
-        addData(c.payment_receive_date, 0, c.cost || 0);
+      if (c.payment_status !== 'paid' && c.payment_status !== 'invoice') continue;
+      if (!c.invoice_date) continue;
+      // Expected on invoice_date
+      addData(new Date(c.invoice_date), c.cost || 0, 0);
+      // Received if paid
+      if (c.payment_status === 'paid') {
+        addData(new Date(c.invoice_date), 0, c.cost || 0);
       }
     }
 
     // 3) Licenses
     const allLicenses = await this.licenseModel.find();
     for (const l of allLicenses) {
+      if (l.payment_status !== 'paid' && l.payment_status !== 'invoice') continue;
+      if (!l.invoice_date) continue;
       const cost = (l.rate?.amount || 0) * (l.total_license || 0);
-      if (l.purchase_date) addData(l.purchase_date, cost, 0);
-      if (
-        l.payment_receive_date &&
-        l.payment_status === PAYMENT_STATUS_ENUM.PAID
-      ) {
-        addData(l.payment_receive_date, 0, cost);
+      // Expected on invoice_date
+      addData(new Date(l.invoice_date), cost, 0);
+      // Received if paid
+      if (l.payment_status === 'paid') {
+        addData(new Date(l.invoice_date), 0, cost);
       }
     }
 
     // 4) Additional Services
     const allServices = await this.additionalServiceModel.find();
     for (const s of allServices) {
-      if (s.purchased_date) addData(s.purchased_date, s.cost || 0, 0);
-      if (
-        s.payment_receive_date &&
-        s.payment_status === PAYMENT_STATUS_ENUM.PAID
-      ) {
-        addData(s.payment_receive_date, 0, s.cost || 0);
+      if (s.payment_status !== 'paid' && s.payment_status !== 'invoice') continue;
+      if (!s.invoice_date) continue;
+      // Expected on invoice_date
+      addData(new Date(s.invoice_date), s.cost || 0, 0);
+      // Received if paid
+      if (s.payment_status === 'paid') {
+        addData(new Date(s.invoice_date), 0, s.cost || 0);
       }
     }
 
     // 5) AMCs
-    const allAmcs = await this.amcModel.find();
+    const allAmcs = await this.amcModel.find().populate('order_id').lean();
     for (const a of allAmcs) {
-      // First payment is free, so skip index 0
-      for (const pay of a.payments.slice(1)) {
-        if (pay.from_date >= start && pay.from_date <= end) {
-          // Expected amount is the total_cost or amc_rate_amount for the period
-          const expectedAmount =
-            pay.total_cost || pay.amc_rate_amount || a.amount || 0;
-          addData(new Date(pay.from_date), expectedAmount, 0);
+      const amcOrder = a.order_id as any;
+      if (!amcOrder || !amcOrder.amc_start_date) continue;
+      for (const pay of a.payments || []) {
+        if (pay.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
+        // Range check using pay.from_date
+        if (!pay.from_date) continue;
+        const fromDate = new Date(pay.from_date);
+        if (fromDate < start || fromDate > end) continue;
+        // Expected amount grouped by order.amc_start_date
+        const expectedAmount = pay.amc_rate_amount || 0;
+        addData(new Date(amcOrder.amc_start_date), expectedAmount, 0);
 
-          // If paid, add to received based on actual payment_amount
-          if (pay.status === PAYMENT_STATUS_ENUM.PAID && pay.received_date) {
-            const receivedAmount = pay.total_cost || expectedAmount;
-            addData(new Date(pay.received_date), 0, receivedAmount);
-          }
+        // If paid, add to received
+        if (pay.status === PAYMENT_STATUS_ENUM.PAID) {
+          addData(new Date(amcOrder.amc_start_date), 0, expectedAmount);
         }
       }
     }
@@ -1566,24 +1631,23 @@ export class ReportService {
         ? (order.products as any[])
         : [];
       for (const term of order.payment_terms || []) {
-        // Expected on term.date
+        if (term.status !== 'paid' && term.status !== 'invoice') continue;
+        if (!term.invoice_date) continue;
+        // Expected on term.invoice_date
         for (const p of prods) {
           addData(
-            term.payment_receive_date,
+            new Date(term.invoice_date),
             ind,
             p.name,
             term.calculated_amount || 0,
             0,
           );
         }
-        // Received on term.payment_receive_date if status is paid
-        if (
-          term.payment_receive_date &&
-          term.status === PAYMENT_STATUS_ENUM.PAID
-        ) {
+        // Received if status is paid
+        if (term.status === 'paid') {
           for (const p of prods) {
             addData(
-              term.payment_receive_date,
+              new Date(term.invoice_date),
               ind,
               p.name,
               0,
@@ -1609,21 +1673,20 @@ export class ReportService {
       ],
     });
     for (const c of customizations) {
+      if (c.payment_status !== 'paid' && c.payment_status !== 'invoice') continue;
+      if (!c.invoice_date) continue;
       const order = c.order_id as any;
       if (!order) continue;
       const ind = (order.client_id?.industry as string) || 'Unknown';
       const prods = Array.isArray(order.products) ? order.products : [];
-      // Expected on purchased_date
+      // Expected on invoice_date
       for (const p of prods) {
-        addData(c.purchased_date, ind, p.name, c.cost || 0, 0);
+        addData(new Date(c.invoice_date), ind, p.name, c.cost || 0, 0);
       }
-      // Received on payment_receive_date if paid
-      if (
-        c.payment_receive_date &&
-        c.payment_status === PAYMENT_STATUS_ENUM.PAID
-      ) {
+      // Received if paid
+      if (c.payment_status === 'paid') {
         for (const p of prods) {
-          addData(c.payment_receive_date, ind, p.name, 0, c.cost || 0);
+          addData(new Date(c.invoice_date), ind, p.name, 0, c.cost || 0);
         }
       }
     }
@@ -1643,22 +1706,21 @@ export class ReportService {
       ],
     });
     for (const lic of licenses) {
+      if (lic.payment_status !== 'paid' && lic.payment_status !== 'invoice') continue;
+      if (!lic.invoice_date) continue;
       const order = lic.order_id as any;
       if (!order) continue;
       const ind = (order.client_id?.industry as string) || 'Unknown';
       const prods = Array.isArray(order.products) ? order.products : [];
       const cost = (lic.rate?.amount || 0) * (lic.total_license || 0);
-      // Expected on purchase_date
+      // Expected on invoice_date
       for (const p of prods) {
-        addData(lic.purchase_date, ind, p.name, cost, 0);
+        addData(new Date(lic.invoice_date), ind, p.name, cost, 0);
       }
-      // Received on payment_receive_date if paid
-      if (
-        lic.payment_receive_date &&
-        lic.payment_status === PAYMENT_STATUS_ENUM.PAID
-      ) {
+      // Received if paid
+      if (lic.payment_status === 'paid') {
         for (const p of prods) {
-          addData(lic.payment_receive_date, ind, p.name, 0, cost);
+          addData(new Date(lic.invoice_date), ind, p.name, 0, cost);
         }
       }
     }
@@ -1678,27 +1740,25 @@ export class ReportService {
       ],
     });
     for (const s of services) {
+      if (s.payment_status !== 'paid' && s.payment_status !== 'invoice') continue;
+      if (!s.invoice_date) continue;
       const order = s.order_id as any;
       if (!order) continue;
       const ind = (order.client_id?.industry as string) || 'Unknown';
       const prods = Array.isArray(order.products) ? order.products : [];
-      // Expected on purchased_date
+      // Expected on invoice_date
       for (const p of prods) {
-        addData(s.purchased_date, ind, p.name, s.cost || 0, 0);
+        addData(new Date(s.invoice_date), ind, p.name, s.cost || 0, 0);
       }
-      // Received on payment_receive_date if paid
-      if (
-        s.payment_receive_date &&
-        s.payment_status === PAYMENT_STATUS_ENUM.PAID
-      ) {
+      // Received if paid
+      if (s.payment_status === 'paid') {
         for (const p of prods) {
-          addData(s.payment_receive_date, ind, p.name, 0, s.cost || 0);
+          addData(new Date(s.invoice_date), ind, p.name, 0, s.cost || 0);
         }
       }
     }
 
     // 5) AMCs
-    // First payment is free for AMC, skip index 0
     const amcs = await this.amcModel
       .find()
       .populate('client_id')
@@ -1709,19 +1769,22 @@ export class ReportService {
     for (const a of amcs) {
       const ind = (a.client_id as any)?.industry || 'Unknown';
       const order = a.order_id as any;
-      if (!order || !order.products) continue;
+      if (!order || !order.products || !order.amc_start_date) continue;
       const prods = Array.isArray(order.products) ? order.products : [];
-      for (const pay of a.payments.slice(1)) {
-        // Entire amount is expected at from_date
-        if (pay.from_date >= start && pay.from_date <= end) {
+      for (const pay of a.payments || []) {
+        if (pay.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
+        // Range check using pay.from_date
+        if (!pay.from_date) continue;
+        const fromDate = new Date(pay.from_date);
+        if (fromDate < start || fromDate > end) continue;
+        // Group by order.amc_start_date
+        const groupDate = new Date(order.amc_start_date);
+        for (const p of prods) {
+          addData(groupDate, ind, p.name, pay.amc_rate_amount || 0, 0);
+        }
+        if (pay.status === PAYMENT_STATUS_ENUM.PAID) {
           for (const p of prods) {
-            addData(pay.from_date, ind, p.name, a.amount || 0, 0);
-          }
-          if (pay.status === PAYMENT_STATUS_ENUM.PAID) {
-            for (const p of prods) {
-              // For AMC, consider same date as paid
-              addData(pay.from_date, ind, p.name, 0, a.amount || 0);
-            }
+            addData(groupDate, ind, p.name, 0, pay.amc_rate_amount || 0);
           }
         }
       }

@@ -1,4 +1,6 @@
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
+export { PAYMENT_STATUS_ENUM } from '@/common/types/enums/order.enum';
+import { PAYMENT_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import {
   Document,
@@ -16,12 +18,6 @@ export interface IAMCRate {
   amount: number;
 }
 
-export enum PAYMENT_STATUS_ENUM {
-  PENDING = 'pending',
-  proforma = 'proforma',
-  INVOICE = 'invoice',
-  PAID = 'paid',
-}
 
 class PaymentTerms {
   @Prop({ type: String })

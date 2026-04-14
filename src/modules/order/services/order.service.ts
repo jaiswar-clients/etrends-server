@@ -91,7 +91,14 @@ export class OrderService {
       }),
     );
 
-    const { clientId, purchaseType, purchaseOrderNumber, invoiceNumber, productIds, productId } = body;
+    const {
+      clientId,
+      purchaseType,
+      purchaseOrderNumber,
+      invoiceNumber,
+      productIds,
+      productId,
+    } = body;
     const clientIdObj = new Types.ObjectId(clientId);
 
     this.loggerService.log(
@@ -106,25 +113,32 @@ export class OrderService {
       }),
     );
 
-    let duplicateRecords: Array<{ id: string; type: string; description: string }> = [];
+    let duplicateRecords: Array<{
+      id: string;
+      type: string;
+      description: string;
+    }> = [];
 
     switch (purchaseType) {
       case 'order':
         // For Orders: Check client_id + (products array OR purchase_order_number)
-        
+
         // Check 1: By productIds
         if (productIds && productIds.length > 0) {
-          const productIdsObj = productIds.map(id => new Types.ObjectId(id));
+          const productIdsObj = productIds.map((id) => new Types.ObjectId(id));
 
           // Find orders where any of the productIds exist in the order's products array
-          const ordersWithProducts = await this.orderModel.find({
-            client_id: { $in: [clientIdObj, clientId] },
-            products: { $in: productIdsObj },
-          }).lean();
+          const ordersWithProducts = await this.orderModel
+            .find({
+              client_id: { $in: [clientIdObj, clientId] },
+              products: { $in: productIdsObj },
+            })
+            .lean();
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'checkDuplicates: Found orders with same client and products',
+              message:
+                'checkDuplicates: Found orders with same client and products',
               count: ordersWithProducts.length,
               productIds,
             }),
@@ -133,11 +147,11 @@ export class OrderService {
           for (const order of ordersWithProducts) {
             const orderProducts = (order as any).products || [];
 
-            const allProductsMatch = productIds.every(pid =>
-              orderProducts.some((op: any) => op.toString() === pid)
+            const allProductsMatch = productIds.every((pid) =>
+              orderProducts.some((op: any) => op.toString() === pid),
             );
-            const productsOverlap = productIds.some(pid =>
-              orderProducts.some((op: any) => op.toString() === pid)
+            const productsOverlap = productIds.some((pid) =>
+              orderProducts.some((op: any) => op.toString() === pid),
             );
 
             if (allProductsMatch || productsOverlap) {
@@ -154,14 +168,17 @@ export class OrderService {
         if (purchaseOrderNumber) {
           const clientIdMixed = [clientIdObj, clientId];
 
-          const ordersWithPO = await this.orderModel.find({
-            client_id: { $in: clientIdMixed },
-            purchase_order_number: purchaseOrderNumber,
-          }).lean();
+          const ordersWithPO = await this.orderModel
+            .find({
+              client_id: { $in: clientIdMixed },
+              purchase_order_number: purchaseOrderNumber,
+            })
+            .lean();
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'checkDuplicates: Found orders with same client and PO number',
+              message:
+                'checkDuplicates: Found orders with same client and PO number',
               count: ordersWithPO.length,
               purchaseOrderNumber,
             }),
@@ -189,15 +206,18 @@ export class OrderService {
       case 'license':
         // For Licenses: Check client_id + product_id + purchase_order_number
         if (purchaseOrderNumber && productId) {
-          const duplicateLicenses = await this.licenseModel.find({
-            client_id: clientIdObj,
-            product_id: productId,
-            purchase_order_number: purchaseOrderNumber,
-          }).lean();
+          const duplicateLicenses = await this.licenseModel
+            .find({
+              client_id: clientIdObj,
+              product_id: productId,
+              purchase_order_number: purchaseOrderNumber,
+            })
+            .lean();
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'checkDuplicates: Found licenses with same client, product, and PO',
+              message:
+                'checkDuplicates: Found licenses with same client, product, and PO',
               count: duplicateLicenses.length,
               search: { clientId, productId, purchaseOrderNumber },
             }),
@@ -205,7 +225,10 @@ export class OrderService {
 
           for (const license of duplicateLicenses) {
             // Check if product_id matches exactly
-            if (license.product_id && license.product_id.toString() === productId) {
+            if (
+              license.product_id &&
+              license.product_id.toString() === productId
+            ) {
               duplicateRecords.push({
                 id: license._id.toString(),
                 type: 'license',
@@ -219,25 +242,36 @@ export class OrderService {
       case 'customization':
         // For Customizations: Check client_id + product_id + purchase_order_number + invoice_number
         if (purchaseOrderNumber && productId && invoiceNumber) {
-          const duplicateCustomizations = await this.customizationModel.find({
-            client_id: clientIdObj,
-            product_id: productId,
-            purchase_order_number: purchaseOrderNumber,
-            invoice_number: invoiceNumber,
-          }).lean();
+          const duplicateCustomizations = await this.customizationModel
+            .find({
+              client_id: clientIdObj,
+              product_id: productId,
+              purchase_order_number: purchaseOrderNumber,
+              invoice_number: invoiceNumber,
+            })
+            .lean();
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'checkDuplicates: Found customizations with same client, product, PO, and invoice',
+              message:
+                'checkDuplicates: Found customizations with same client, product, PO, and invoice',
               count: duplicateCustomizations.length,
-              search: { clientId, productId, purchaseOrderNumber, invoiceNumber },
+              search: {
+                clientId,
+                productId,
+                purchaseOrderNumber,
+                invoiceNumber,
+              },
             }),
           );
 
           for (const customization of duplicateCustomizations) {
             // Check if product_id, purchase_order_number, and invoice_number all match exactly
-            const productMatch = customization.product_id && customization.product_id.toString() === productId;
-            const poMatch = customization.purchase_order_number === purchaseOrderNumber;
+            const productMatch =
+              customization.product_id &&
+              customization.product_id.toString() === productId;
+            const poMatch =
+              customization.purchase_order_number === purchaseOrderNumber;
             const invoiceMatch = customization.invoice_number === invoiceNumber;
 
             if (productMatch && poMatch && invoiceMatch) {
@@ -254,25 +288,35 @@ export class OrderService {
       case 'additional-service':
         // For Additional Services: Check client_id + product_id + purchase_order_number + invoice_number
         if (purchaseOrderNumber && productId && invoiceNumber) {
-          const duplicateServices = await this.additionalServiceModel.find({
-            client_id: clientIdObj,
-            product_id: productId,
-            purchase_order_number: purchaseOrderNumber,
-            invoice_number: invoiceNumber,
-          }).lean();
+          const duplicateServices = await this.additionalServiceModel
+            .find({
+              client_id: clientIdObj,
+              product_id: productId,
+              purchase_order_number: purchaseOrderNumber,
+              invoice_number: invoiceNumber,
+            })
+            .lean();
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'checkDuplicates: Found additional services with same client, product, PO, and invoice',
+              message:
+                'checkDuplicates: Found additional services with same client, product, PO, and invoice',
               count: duplicateServices.length,
-              search: { clientId, productId, purchaseOrderNumber, invoiceNumber },
+              search: {
+                clientId,
+                productId,
+                purchaseOrderNumber,
+                invoiceNumber,
+              },
             }),
           );
 
           for (const service of duplicateServices) {
             // Check if product_id, purchase_order_number, and invoice_number all match exactly
-            const productMatch = service.product_id && service.product_id.toString() === productId;
-            const poMatch = service.purchase_order_number === purchaseOrderNumber;
+            const productMatch =
+              service.product_id && service.product_id.toString() === productId;
+            const poMatch =
+              service.purchase_order_number === purchaseOrderNumber;
             const invoiceMatch = service.invoice_number === invoiceNumber;
 
             if (productMatch && poMatch && invoiceMatch) {
@@ -511,27 +555,31 @@ export class OrderService {
         body.amc_rate &&
         body.amc_rate.percentage !== existingOrder.amc_rate.percentage
       ) {
-        const amc = await this.amcModel.findById(existingOrder.amc_id).populate({
-          path: 'order_id',
-          model: Order.name,
-          populate: [
-            {
-              path: 'client_id',
-              model: Client.name,
-              select: 'amc_frequency_in_months',
-            },
-          ],
-        });
-        
+        const amc = await this.amcModel
+          .findById(existingOrder.amc_id)
+          .populate({
+            path: 'order_id',
+            model: Order.name,
+            populate: [
+              {
+                path: 'client_id',
+                model: Client.name,
+                select: 'amc_frequency_in_months',
+              },
+            ],
+          });
+
         if (amc) {
           const order = amc.order_id as any;
-          const amc_frequency_in_months = 
+          const amc_frequency_in_months =
             order?.client_id?.amc_frequency_in_months || 12;
-          
+
           const today = new Date();
           const currentCycleEndDate = new Date();
-          currentCycleEndDate.setMonth(currentCycleEndDate.getMonth() + amc_frequency_in_months);
-          
+          currentCycleEndDate.setMonth(
+            currentCycleEndDate.getMonth() + amc_frequency_in_months,
+          );
+
           // Find payments that start after the current cycle ends
           const nextCyclePaymentIndex = amc.payments.findIndex(
             (p) => new Date(p.from_date) >= currentCycleEndDate,
@@ -546,11 +594,11 @@ export class OrderService {
               amc.payments[i].amc_rate_applied = body.amc_rate.percentage;
               amc.payments[i].amc_rate_amount = newAmcAmount;
             }
-            
+
             await this.amcModel.findByIdAndUpdate(amc._id, {
               payments: amc.payments,
             });
-            
+
             this.loggerService.log(
               JSON.stringify({
                 message: 'updateOrder: AMC rate updated for future cycles',
@@ -559,7 +607,8 @@ export class OrderService {
                 newRate: body.amc_rate.percentage,
                 amcFrequencyInMonths: amc_frequency_in_months,
                 nextCycleStartIndex: nextCyclePaymentIndex,
-                updatedPaymentsCount: amc.payments.length - nextCyclePaymentIndex,
+                updatedPaymentsCount:
+                  amc.payments.length - nextCyclePaymentIndex,
               }),
             );
           }
@@ -609,7 +658,8 @@ export class OrderService {
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'updateAMC: Start date has changed, recalculating pending payments',
+              message:
+                'updateAMC: Start date has changed, recalculating pending payments',
               previousStartDate: existingOrder.amc_start_date,
               newStartDate,
               firstPendingIndex,
@@ -629,7 +679,11 @@ export class OrderService {
               );
             }
 
-            for (let index = firstPendingIndex; index < recalculatedPayments.length; index++) {
+            for (
+              let index = firstPendingIndex;
+              index < recalculatedPayments.length;
+              index++
+            ) {
               const payment = recalculatedPayments[index];
               const normalizedFrom = new Date(cursorDate);
               const normalizedTo = this.getNextDate(
@@ -638,14 +692,13 @@ export class OrderService {
               );
 
               const effectiveTotalCost =
-                typeof payment.total_cost === 'number' && !Number.isNaN(payment.total_cost)
+                typeof payment.total_cost === 'number' &&
+                !Number.isNaN(payment.total_cost)
                   ? payment.total_cost
-                  : amc.total_cost ?? amcTotalCost;
+                  : (amc.total_cost ?? amcTotalCost);
 
               const effectiveRate =
-                payment.amc_rate_applied ??
-                amc.amc_percentage ??
-                amcPercentage;
+                payment.amc_rate_applied ?? amc.amc_percentage ?? amcPercentage;
 
               payment.from_date = normalizedFrom;
               payment.to_date = normalizedTo;
@@ -653,7 +706,8 @@ export class OrderService {
                 effectiveTotalCost ?? amcTotalCost ?? updatedOrder.base_cost;
               payment.amc_rate_applied = effectiveRate ?? 0;
               payment.amc_rate_amount =
-                ((payment.total_cost || 0) / 100) * (payment.amc_rate_applied || 0);
+                ((payment.total_cost || 0) / 100) *
+                (payment.amc_rate_applied || 0);
 
               cursorDate = normalizedTo;
             }
@@ -1365,11 +1419,11 @@ export class OrderService {
 
       // 4. Filter by Product ID or short_name
       if (filters.productId && filters.productId.trim() !== '') {
-        const identifiers = filters.productId.split(',').map(id => id.trim());
+        const identifiers = filters.productId.split(',').map((id) => id.trim());
         const objectIds: (Types.ObjectId | string)[] = [];
         const shortNames: string[] = [];
-        
-        identifiers.forEach(identifier => {
+
+        identifiers.forEach((identifier) => {
           if (Types.ObjectId.isValid(identifier)) {
             // Add both ObjectId and string format to handle mixed storage
             objectIds.push(new Types.ObjectId(identifier));
@@ -1378,21 +1432,22 @@ export class OrderService {
             shortNames.push(identifier);
           }
         });
-        
+
         if (shortNames.length > 0) {
           const products = await this.productModel
             .find({ short_name: { $in: shortNames } })
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
-          
-          products.forEach(product => {
+
+          products.forEach((product) => {
             objectIds.push(product._id);
             objectIds.push(product._id.toString()); // Add string version too
           });
         }
-        
-        filterQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
-        
+
+        filterQuery.products =
+          objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+
         this.loggerService.log(
           JSON.stringify({
             message: 'loadAllOrdersWithAttributes: Product filter applied',
@@ -1400,7 +1455,7 @@ export class OrderService {
               originalProductId: filters.productId,
               identifiers,
               shortNames,
-              objectIds: objectIds.map(id => id.toString()),
+              objectIds: objectIds.map((id) => id.toString()),
               filterQuery: filterQuery.products,
             },
           }),
@@ -2174,7 +2229,9 @@ export class OrderService {
         invoice_date: invoice_date ? new Date(invoice_date) : undefined,
         invoice_document,
         payment_status,
-        payment_receive_date: payment_receive_date ? new Date(payment_receive_date) : undefined,
+        payment_receive_date: payment_receive_date
+          ? new Date(payment_receive_date)
+          : undefined,
       };
       if (licenses_with_base_price !== undefined) {
         updateObj.licenses_with_base_price = licenses_with_base_price;
@@ -2282,10 +2339,10 @@ export class OrderService {
 
       // Add product_id filter if provided
       if (options.productId) {
-        const identifiers = options.productId.split(',').map(id => id.trim());
+        const identifiers = options.productId.split(',').map((id) => id.trim());
         const objectIds: (Types.ObjectId | string)[] = [];
         const shortNames: string[] = [];
-        identifiers.forEach(identifier => {
+        identifiers.forEach((identifier) => {
           if (Types.ObjectId.isValid(identifier)) {
             objectIds.push(new Types.ObjectId(identifier));
             objectIds.push(identifier); // Add string version too
@@ -2298,12 +2355,13 @@ export class OrderService {
             .find({ short_name: { $in: shortNames } })
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
-          products.forEach(product => {
+          products.forEach((product) => {
             objectIds.push(product._id);
             objectIds.push(product._id.toString());
           });
         }
-        amcQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+        amcQuery.products =
+          objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
         this.loggerService.log(
           JSON.stringify({
             message: 'loadAllAMC: Product filter applied',
@@ -2311,7 +2369,7 @@ export class OrderService {
               originalProductId: options.productId,
               identifiers,
               shortNames,
-              objectIds: objectIds.map(id => id.toString()),
+              objectIds: objectIds.map((id) => id.toString()),
               filterQuery: amcQuery.products,
             },
           }),
@@ -2419,7 +2477,7 @@ export class OrderService {
                   (!endDate || paymentDate <= endDate);
 
                 return (
-                  payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                  payment.status === PAYMENT_STATUS_ENUM.PROFORMA &&
                   ((!startDate && !endDate) || dateInRange)
                 );
               });
@@ -2518,7 +2576,7 @@ export class OrderService {
                     (!startDate || paymentDate >= startDate) &&
                     (!endDate || paymentDate <= endDate);
                   return (
-                    payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                    payment.status === PAYMENT_STATUS_ENUM.PROFORMA &&
                     ((!startDate && !endDate) || dateInRange)
                   );
                 })
@@ -3193,10 +3251,7 @@ export class OrderService {
       }
 
       // 4. Helper to build date filter part for queries
-      const buildDateFilter = (
-        startDate?: Date,
-        endDate?: Date,
-      ): any => {
+      const buildDateFilter = (startDate?: Date, endDate?: Date): any => {
         const filter: any = {};
         if (startDate && endDate) {
           filter.$gte = startDate;
@@ -3349,11 +3404,12 @@ export class OrderService {
           if (dateFilter) {
             this.loggerService.log(
               JSON.stringify({
-                message: 'getAllPendingPayments: Adding date filter to order pipeline',
+                message:
+                  'getAllPendingPayments: Adding date filter to order pipeline',
                 dateFilter,
               }),
             );
-            
+
             orderPipeline.push({
               $match: {
                 'payment_terms.invoice_date': dateFilter,
@@ -3374,11 +3430,16 @@ export class OrderService {
                     $expr: {
                       $or: [
                         { $eq: ['$_id', '$$clientId'] },
-                        { $eq: [{ $toString: '$_id' }, { $toString: '$$clientId' }] }
-                      ]
-                    }
-                  }
-                }
+                        {
+                          $eq: [
+                            { $toString: '$_id' },
+                            { $toString: '$$clientId' },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
               ],
               as: 'client',
             },
@@ -3398,12 +3459,12 @@ export class OrderService {
               termIndex: 1,
               client_id: 1,
               client: 1,
-              client_name: { 
+              client_name: {
                 $cond: {
                   if: { $gt: [{ $size: '$client' }, 0] },
                   then: { $arrayElemAt: ['$client.name', 0] },
-                  else: 'N/A'
-                }
+                  else: 'N/A',
+                },
               },
               product_names: '$productDetails.short_name',
             },
@@ -3420,8 +3481,12 @@ export class OrderService {
           {
             $project: {
               _id: 1,
-              payment_terms_count: { $size: { $ifNull: ['$payment_terms', []] } },
-              has_payment_terms: { $gt: [{ $size: { $ifNull: ['$payment_terms', []] } }, 0] },
+              payment_terms_count: {
+                $size: { $ifNull: ['$payment_terms', []] },
+              },
+              has_payment_terms: {
+                $gt: [{ $size: { $ifNull: ['$payment_terms', []] } }, 0],
+              },
             },
           },
         ]);
@@ -3465,7 +3530,8 @@ export class OrderService {
 
         this.loggerService.log(
           JSON.stringify({
-            message: 'getAllPendingPayments: Debug - Pending payment terms without date filter',
+            message:
+              'getAllPendingPayments: Debug - Pending payment terms without date filter',
             debugPendingTerms,
           }),
         );
@@ -3502,7 +3568,8 @@ export class OrderService {
 
           this.loggerService.log(
             JSON.stringify({
-              message: 'getAllPendingPayments: Debug - All payment terms with invoice dates',
+              message:
+                'getAllPendingPayments: Debug - All payment terms with invoice dates',
               debugDateRangeTerms,
               dateRange: { parsedStartDate, parsedEndDate },
             }),
@@ -3535,8 +3602,11 @@ export class OrderService {
         // Debug: Check if client exists
         if (debugClientLookup.length > 0 && debugClientLookup[0].client_id) {
           const clientId = debugClientLookup[0].client_id;
-          const clientExists = await this.clientModel.findById(clientId).select('name').lean();
-          
+          const clientExists = await this.clientModel
+            .findById(clientId)
+            .select('name')
+            .lean();
+
           this.loggerService.log(
             JSON.stringify({
               message: 'getAllPendingPayments: Debug - Client lookup test',
@@ -3563,10 +3633,11 @@ export class OrderService {
         if (totalOrderPayments === 0 && (parsedStartDate || parsedEndDate)) {
           this.loggerService.log(
             JSON.stringify({
-              message: 'getAllPendingPayments: No results with date filter, trying without date filter',
+              message:
+                'getAllPendingPayments: No results with date filter, trying without date filter',
             }),
           );
-          
+
           const fallbackPipeline: any[] = [
             {
               $match: {
@@ -3599,11 +3670,16 @@ export class OrderService {
                       $expr: {
                         $or: [
                           { $eq: ['$_id', '$$clientId'] },
-                          { $eq: [{ $toString: '$_id' }, { $toString: '$$clientId' }] }
-                        ]
-                      }
-                    }
-                  }
+                          {
+                            $eq: [
+                              { $toString: '$_id' },
+                              { $toString: '$$clientId' },
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  },
                 ],
                 as: 'client',
               },
@@ -3623,20 +3699,25 @@ export class OrderService {
                 termIndex: 1,
                 client_id: 1,
                 client: 1,
-                client_name: { 
+                client_name: {
                   $cond: {
                     if: { $gt: [{ $size: '$client' }, 0] },
                     then: { $arrayElemAt: ['$client.name', 0] },
-                    else: 'N/A'
-                  }
+                    else: 'N/A',
+                  },
                 },
                 product_names: '$productDetails.short_name',
               },
             },
           );
 
-          const fallbackCountPipeline = [...fallbackPipeline, { $count: 'total' }];
-          const fallbackCountResult = await this.orderModel.aggregate(fallbackCountPipeline);
+          const fallbackCountPipeline = [
+            ...fallbackPipeline,
+            { $count: 'total' },
+          ];
+          const fallbackCountResult = await this.orderModel.aggregate(
+            fallbackCountPipeline,
+          );
           const fallbackTotal = fallbackCountResult[0]?.total || 0;
 
           this.loggerService.log(
@@ -3649,16 +3730,22 @@ export class OrderService {
 
           if (fallbackTotal > 0) {
             // Use fallback pipeline for data
-            const fallbackRemainingLimit = Math.max(0, limit - pendingAMCs.length);
-            const fallbackOrderSkip = shouldFetchAMC ? Math.max(0, skipAmount - totalAMCPayments) : skipAmount;
-            
+            const fallbackRemainingLimit = Math.max(
+              0,
+              limit - pendingAMCs.length,
+            );
+            const fallbackOrderSkip = shouldFetchAMC
+              ? Math.max(0, skipAmount - totalAMCPayments)
+              : skipAmount;
+
             if (fallbackRemainingLimit > 0) {
               const fallbackDataPipeline = [
                 ...fallbackPipeline,
                 { $skip: fallbackOrderSkip },
                 { $limit: fallbackRemainingLimit },
               ];
-              pendingOrders = await this.orderModel.aggregate(fallbackDataPipeline);
+              pendingOrders =
+                await this.orderModel.aggregate(fallbackDataPipeline);
               totalOrderPayments = fallbackTotal;
             }
           }
@@ -3667,8 +3754,10 @@ export class OrderService {
         // Get paginated results (only if AMC didn't fill the limit and we haven't used fallback)
         if (pendingOrders.length === 0) {
           const remainingLimit = Math.max(0, limit - pendingAMCs.length);
-          const orderSkip = shouldFetchAMC ? Math.max(0, skipAmount - totalAMCPayments) : skipAmount;
-          
+          const orderSkip = shouldFetchAMC
+            ? Math.max(0, skipAmount - totalAMCPayments)
+            : skipAmount;
+
           if (remainingLimit > 0) {
             const dataPipeline = [
               ...orderPipeline,
@@ -3700,7 +3789,10 @@ export class OrderService {
       if (shouldFetchOtherTypes) {
         const currentResults = pendingAMCs.length + pendingOrders.length;
         const remainingLimit = Math.max(0, limit - currentResults);
-        const otherSkip = Math.max(0, skipAmount - totalAMCPayments - totalOrderPayments);
+        const otherSkip = Math.max(
+          0,
+          skipAmount - totalAMCPayments - totalOrderPayments,
+        );
 
         if (remainingLimit > 0) {
           // Build date filters for other types
@@ -3727,43 +3819,45 @@ export class OrderService {
           }
 
           // Get counts
-          [totalLicenses, totalCustomizations, totalServices] = await Promise.all([
-            this.licenseModel.countDocuments(licenseDateFilter),
-            this.customizationModel.countDocuments(customizationDateFilter),
-            this.additionalServiceModel.countDocuments(serviceeDateFilter),
-          ]);
+          [totalLicenses, totalCustomizations, totalServices] =
+            await Promise.all([
+              this.licenseModel.countDocuments(licenseDateFilter),
+              this.customizationModel.countDocuments(customizationDateFilter),
+              this.additionalServiceModel.countDocuments(serviceeDateFilter),
+            ]);
 
           // Fetch data with remaining limit distributed among the three types
           const limitPerType = Math.ceil(remainingLimit / 3);
-          
-          [pendingLicenses, pendingCustomizations, pendingServices] = await Promise.all([
-            this.licenseModel
-              .find(licenseDateFilter)
-              .populate({
-                path: 'order_id',
-                populate: { path: 'client_id', select: 'name' },
-              })
-              .populate({ path: 'product_id', select: 'short_name' })
-              .skip(Math.floor(otherSkip / 3))
-              .limit(limitPerType),
-            this.customizationModel
-              .find(customizationDateFilter)
-              .populate({
-                path: 'order_id',
-                populate: { path: 'client_id', select: 'name' },
-              })
-              .populate('product_id', 'short_name')
-              .skip(Math.floor(otherSkip / 3))
-              .limit(limitPerType),
-            this.additionalServiceModel
-              .find(serviceeDateFilter)
-              .populate({
-                path: 'order_id',
-                populate: { path: 'client_id', select: 'name' },
-              })
-              .skip(Math.floor(otherSkip / 3))
-              .limit(limitPerType),
-          ]);
+
+          [pendingLicenses, pendingCustomizations, pendingServices] =
+            await Promise.all([
+              this.licenseModel
+                .find(licenseDateFilter)
+                .populate({
+                  path: 'order_id',
+                  populate: { path: 'client_id', select: 'name' },
+                })
+                .populate({ path: 'product_id', select: 'short_name' })
+                .skip(Math.floor(otherSkip / 3))
+                .limit(limitPerType),
+              this.customizationModel
+                .find(customizationDateFilter)
+                .populate({
+                  path: 'order_id',
+                  populate: { path: 'client_id', select: 'name' },
+                })
+                .populate('product_id', 'short_name')
+                .skip(Math.floor(otherSkip / 3))
+                .limit(limitPerType),
+              this.additionalServiceModel
+                .find(serviceeDateFilter)
+                .populate({
+                  path: 'order_id',
+                  populate: { path: 'client_id', select: 'name' },
+                })
+                .skip(Math.floor(otherSkip / 3))
+                .limit(limitPerType),
+            ]);
         }
 
         this.loggerService.log(
@@ -3832,7 +3926,8 @@ export class OrderService {
 
       // Transform other types
       for (const license of pendingLicenses) {
-        const licenseCost = (license.rate?.amount || 0) * (license.total_license || 0);
+        const licenseCost =
+          (license.rate?.amount || 0) * (license.total_license || 0);
         const order = license.order_id as any;
         pendingPayments.push({
           _id: license._id.toString(),
@@ -3841,9 +3936,13 @@ export class OrderService {
           pending_amount: licenseCost,
           payment_identifier: license._id.toString(),
           payment_date: license.purchase_date,
-          name: (license?.product_id as unknown as ProductDocument)?.short_name ?? '',
+          name:
+            (license?.product_id as unknown as ProductDocument)?.short_name ??
+            '',
           client_name: order?.client_id?.name || 'N/A',
-          product_name: (license?.product_id as unknown as ProductDocument)?.short_name ?? 'N/A',
+          product_name:
+            (license?.product_id as unknown as ProductDocument)?.short_name ??
+            'N/A',
         });
       }
 
@@ -3858,7 +3957,9 @@ export class OrderService {
           payment_date: customization.purchased_date,
           name: customization?.title ?? '',
           client_name: order?.client_id?.name || 'N/A',
-          product_name: (customization?.product_id as unknown as ProductDocument)?.short_name ?? 'N/A',
+          product_name:
+            (customization?.product_id as unknown as ProductDocument)
+              ?.short_name ?? 'N/A',
         });
       }
 
@@ -3878,12 +3979,18 @@ export class OrderService {
       }
 
       // Calculate total count
-      const totalCount = totalAMCPayments + totalOrderPayments + totalLicenses + totalCustomizations + totalServices;
+      const totalCount =
+        totalAMCPayments +
+        totalOrderPayments +
+        totalLicenses +
+        totalCustomizations +
+        totalServices;
       const totalPages = Math.ceil(totalCount / limit);
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'getAllPendingPayments: Successfully fetched pending payments with proper date filtering',
+          message:
+            'getAllPendingPayments: Successfully fetched pending payments with proper date filtering',
           data: {
             returnedCount: pendingPayments.length,
             totalFilteredCount: totalCount,
@@ -4515,15 +4622,19 @@ export class OrderService {
         JSON.stringify({
           message: 'getAmcReviewByOrderId: Debugging Customizations',
           count: customizations?.length,
-          customizations: customizations?.map(c => ({ id: c._id, date: c.purchased_date, cost: c.cost }))
-        })
+          customizations: customizations?.map((c) => ({
+            id: c._id,
+            date: c.purchased_date,
+            cost: c.cost,
+          })),
+        }),
       );
 
       for (const customization of customizations) {
         let purchaseDate = customization.purchased_date
           ? new Date(customization.purchased_date)
           : new Date(order.purchased_date);
-        
+
         // Normalize to start of day
         purchaseDate.setHours(0, 0, 0, 0);
 
@@ -4536,7 +4647,7 @@ export class OrderService {
               purchaseDate: purchaseDate.toISOString(),
               customizationCost: customization.cost,
               usingOrderDate: !customization.purchased_date,
-              orderPurchasedDate: order.purchased_date
+              orderPurchasedDate: order.purchased_date,
             },
           }),
         );
@@ -4546,15 +4657,16 @@ export class OrderService {
           paymentDate.setHours(0, 0, 0, 0);
 
           const shouldAdd = purchaseDate <= paymentDate;
-          
+
           this.loggerService.log(
-              JSON.stringify({
-                  message: 'getAmcReviewByOrderId: Checking payment for customization',
-                  paymentDate: paymentDate.toISOString(),
-                  purchaseDate: purchaseDate.toISOString(),
-                  shouldAdd,
-                  currentTotal: payment.total_cost
-              })
+            JSON.stringify({
+              message:
+                'getAmcReviewByOrderId: Checking payment for customization',
+              paymentDate: paymentDate.toISOString(),
+              purchaseDate: purchaseDate.toISOString(),
+              shouldAdd,
+              currentTotal: payment.total_cost,
+            }),
           );
 
           // If purchased on or before the payment date, include the cost
@@ -4574,15 +4686,19 @@ export class OrderService {
         JSON.stringify({
           message: 'getAmcReviewByOrderId: Debugging Licenses',
           count: licenses?.length,
-          licenses: licenses?.map(l => ({ id: l._id, date: l.purchase_date, total: l.total_license }))
-        })
+          licenses: licenses?.map((l) => ({
+            id: l._id,
+            date: l.purchase_date,
+            total: l.total_license,
+          })),
+        }),
       );
 
       for (const license of licenses) {
         let purchaseDate = license.purchase_date
           ? new Date(license.purchase_date)
           : new Date(order.purchased_date);
-          
+
         // Normalize to start of day
         purchaseDate.setHours(0, 0, 0, 0);
 
@@ -5275,10 +5391,10 @@ export class OrderService {
 
       // Add product_id filter if provided
       if (options.productId) {
-        const identifiers = options.productId.split(',').map(id => id.trim());
+        const identifiers = options.productId.split(',').map((id) => id.trim());
         const objectIds: (Types.ObjectId | string)[] = [];
         const shortNames: string[] = [];
-        identifiers.forEach(identifier => {
+        identifiers.forEach((identifier) => {
           if (Types.ObjectId.isValid(identifier)) {
             objectIds.push(new Types.ObjectId(identifier));
             objectIds.push(identifier); // Add string version too
@@ -5291,12 +5407,13 @@ export class OrderService {
             .find({ short_name: { $in: shortNames } })
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
-          products.forEach(product => {
+          products.forEach((product) => {
             objectIds.push(product._id);
             objectIds.push(product._id.toString());
           });
         }
-        amcQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+        amcQuery.products =
+          objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
         this.loggerService.log(
           JSON.stringify({
             message: 'loadAllAMC: Product filter applied',
@@ -5304,7 +5421,7 @@ export class OrderService {
               originalProductId: options.productId,
               identifiers,
               shortNames,
-              objectIds: objectIds.map(id => id.toString()),
+              objectIds: objectIds.map((id) => id.toString()),
               filterQuery: amcQuery.products,
             },
           }),
@@ -5423,7 +5540,7 @@ export class OrderService {
                   (!endDate || paymentDate <= endDate);
 
                 return (
-                  payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                  payment.status === PAYMENT_STATUS_ENUM.PROFORMA &&
                   ((!startDate && !endDate) || dateInRange)
                 );
               });
@@ -5653,7 +5770,7 @@ export class OrderService {
                 break;
               case AMC_FILTER.PROFORMA:
                 currentFilterLogicMatch =
-                  payment.status === PAYMENT_STATUS_ENUM.proforma &&
+                  payment.status === PAYMENT_STATUS_ENUM.PROFORMA &&
                   ((!startDate && !endDate) || dateInRange);
                 break;
               case AMC_FILTER.INVOICE:
@@ -5738,7 +5855,7 @@ export class OrderService {
               fgColor: { argb: 'EF4444' },
             } as ExcelJS.FillPattern; // Tailwind red-600 (approx)
             break;
-          case PAYMENT_STATUS_ENUM.proforma:
+          case PAYMENT_STATUS_ENUM.PROFORMA:
             statusCellStyle.font = { color: { argb: '000000' } }; // Black text
             statusCellStyle.fill = {
               type: 'pattern',
@@ -6340,8 +6457,16 @@ export class OrderService {
         { header: 'Purchase Date', key: 'purchaseDate', width: 15 },
         { header: 'AMC Start Date', key: 'amcStartDate', width: 15 },
         { header: 'Licenses Count', key: 'licensesCount', width: 12 },
-        { header: 'Customizations Count', key: 'customizationsCount', width: 18 },
-        { header: 'Additional Services Count', key: 'additionalServicesCount', width: 20 },
+        {
+          header: 'Customizations Count',
+          key: 'customizationsCount',
+          width: 18,
+        },
+        {
+          header: 'Additional Services Count',
+          key: 'additionalServicesCount',
+          width: 20,
+        },
         { header: 'Training Cost', key: 'trainingCost', width: 15 },
         { header: 'Purchase Order', key: 'purchaseOrderNumber', width: 20 },
       ];
@@ -6393,7 +6518,8 @@ export class OrderService {
         if (isNaN(parsedStartDate.getTime())) {
           this.loggerService.error(
             JSON.stringify({
-              message: 'exportPurchasesToExcel: Invalid start date format, ignoring',
+              message:
+                'exportPurchasesToExcel: Invalid start date format, ignoring',
               startDate: filters.startDate,
             }),
           );
@@ -6406,7 +6532,8 @@ export class OrderService {
         if (isNaN(parsedEndDate.getTime())) {
           this.loggerService.error(
             JSON.stringify({
-              message: 'exportPurchasesToExcel: Invalid end date format, ignoring',
+              message:
+                'exportPurchasesToExcel: Invalid end date format, ignoring',
               endDate: filters.endDate,
             }),
           );
@@ -6418,7 +6545,8 @@ export class OrderService {
       if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
         this.loggerService.warn(
           JSON.stringify({
-            message: 'exportPurchasesToExcel: Start date is after end date, date filter will be ignored',
+            message:
+              'exportPurchasesToExcel: Start date is after end date, date filter will be ignored',
             startDate: parsedStartDate,
             endDate: parsedEndDate,
           }),
@@ -6451,12 +6579,13 @@ export class OrderService {
           .select('_id')
           .lean<{ _id: Types.ObjectId }[]>();
         clientIdsForFilter = clientsByName.map((c) => c._id);
-        
+
         if (clientIdsForFilter.length === 0) {
           // No matching clients found
           this.loggerService.log(
             JSON.stringify({
-              message: 'exportPurchasesToExcel: No clients found with name filter',
+              message:
+                'exportPurchasesToExcel: No clients found with name filter',
               clientName: filters.clientName,
             }),
           );
@@ -6468,7 +6597,9 @@ export class OrderService {
       // Filter by Parent Company
       if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
         try {
-          const parentCompanyObjectId = new Types.ObjectId(filters.parentCompanyId);
+          const parentCompanyObjectId = new Types.ObjectId(
+            filters.parentCompanyId,
+          );
           const childClients = await this.clientModel
             .find({
               parent_company_id: parentCompanyObjectId,
@@ -6476,7 +6607,9 @@ export class OrderService {
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
 
-          const childClientIds: Types.ObjectId[] = childClients.map((c) => c._id);
+          const childClientIds: Types.ObjectId[] = childClients.map(
+            (c) => c._id,
+          );
 
           if (
             filterQuery.client_id &&
@@ -6509,7 +6642,8 @@ export class OrderService {
         } catch (error: any) {
           this.loggerService.error(
             JSON.stringify({
-              message: 'exportPurchasesToExcel: Invalid parent company ID, skipping filter',
+              message:
+                'exportPurchasesToExcel: Invalid parent company ID, skipping filter',
               error: error.message,
               parentCompanyId: filters.parentCompanyId,
             }),
@@ -6526,15 +6660,16 @@ export class OrderService {
             filterQuery.client_id.$in &&
             Array.isArray(filterQuery.client_id.$in)
           ) {
-            const currentFilteredIds: Types.ObjectId[] = filterQuery.client_id.$in
-              .map((id) =>
-                id instanceof Types.ObjectId
-                  ? id
-                  : Types.ObjectId.isValid(id)
-                    ? new Types.ObjectId(id)
-                    : null,
-              )
-              .filter((id) => id !== null);
+            const currentFilteredIds: Types.ObjectId[] =
+              filterQuery.client_id.$in
+                .map((id) =>
+                  id instanceof Types.ObjectId
+                    ? id
+                    : Types.ObjectId.isValid(id)
+                      ? new Types.ObjectId(id)
+                      : null,
+                )
+                .filter((id) => id !== null);
 
             if (currentFilteredIds.some((id) => id.equals(specificClientId))) {
               filterQuery.client_id = specificClientId;
@@ -6547,7 +6682,8 @@ export class OrderService {
         } catch (error: any) {
           this.loggerService.error(
             JSON.stringify({
-              message: 'exportPurchasesToExcel: Invalid client ID, skipping filter',
+              message:
+                'exportPurchasesToExcel: Invalid client ID, skipping filter',
               error: error.message,
               clientId: filters.clientId,
             }),
@@ -6557,11 +6693,11 @@ export class OrderService {
 
       // Filter by Product ID or short_name
       if (filters.productId && filters.productId.trim() !== '') {
-        const identifiers = filters.productId.split(',').map(id => id.trim());
+        const identifiers = filters.productId.split(',').map((id) => id.trim());
         const objectIds: (Types.ObjectId | string)[] = [];
         const shortNames: string[] = [];
-        
-        identifiers.forEach(identifier => {
+
+        identifiers.forEach((identifier) => {
           if (Types.ObjectId.isValid(identifier)) {
             objectIds.push(new Types.ObjectId(identifier));
             objectIds.push(identifier);
@@ -6569,20 +6705,21 @@ export class OrderService {
             shortNames.push(identifier);
           }
         });
-        
+
         if (shortNames.length > 0) {
           const products = await this.productModel
             .find({ short_name: { $in: shortNames } })
             .select('_id')
             .lean<{ _id: Types.ObjectId }[]>();
-          
-          products.forEach(product => {
+
+          products.forEach((product) => {
             objectIds.push(product._id);
             objectIds.push(product._id.toString());
           });
         }
-        
-        filterQuery.products = objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+
+        filterQuery.products =
+          objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
       }
 
       // Filter by Status
@@ -6592,7 +6729,9 @@ export class OrderService {
 
       // Convert client_id to string for consistency
       if (filterQuery.client_id?.$in) {
-        filterQuery.client_id.$in = filterQuery.client_id.$in.map((id) => String(id));
+        filterQuery.client_id.$in = filterQuery.client_id.$in.map((id) =>
+          String(id),
+        );
       } else if (filterQuery.client_id) {
         filterQuery.client_id = String(filterQuery.client_id);
       }
@@ -6627,7 +6766,7 @@ export class OrderService {
       const processedOrders = await Promise.all(
         orders.map(async (order: any) => {
           const orderObj: any = order.toObject();
-          
+
           // Process Client and Parent Company Info
           if (order.client_id && orderObj.client_id) {
             try {
@@ -6644,22 +6783,33 @@ export class OrderService {
             } catch (error) {
               this.loggerService.warn(
                 JSON.stringify({
-                  message: 'exportPurchasesToExcel: Error processing parent company',
+                  message:
+                    'exportPurchasesToExcel: Error processing parent company',
                   orderId: order._id?.toString(),
-                  error: error instanceof Error ? error.message : 'Unknown error',
+                  error:
+                    error instanceof Error ? error.message : 'Unknown error',
                 }),
               );
             }
           }
-          
+
           return orderObj;
         }),
       );
 
       // Calculate totals
-      const totalBaseCost = processedOrders.reduce((sum, order) => sum + (order.base_cost || 0), 0);
-      const totalAmcAmount = processedOrders.reduce((sum, order) => sum + (order.amc_rate?.amount || 0), 0);
-      const totalTrainingCost = processedOrders.reduce((sum, order) => sum + (order.training_and_implementation_cost || 0), 0);
+      const totalBaseCost = processedOrders.reduce(
+        (sum, order) => sum + (order.base_cost || 0),
+        0,
+      );
+      const totalAmcAmount = processedOrders.reduce(
+        (sum, order) => sum + (order.amc_rate?.amount || 0),
+        0,
+      );
+      const totalTrainingCost = processedOrders.reduce(
+        (sum, order) => sum + (order.training_and_implementation_cost || 0),
+        0,
+      );
 
       // Define Excel styles
       const headerStyle: Partial<ExcelJS.Style> = {
@@ -6728,26 +6878,36 @@ export class OrderService {
       };
 
       // Add report header
-      worksheet.addRow(['Purchases Export Report']).font = { size: 16, bold: true };
-      worksheet.addRow(['Generated on:', new Date()]).getCell(2).style = dateStyle;
-      
+      worksheet.addRow(['Purchases Export Report']).font = {
+        size: 16,
+        bold: true,
+      };
+      worksheet.addRow(['Generated on:', new Date()]).getCell(2).style =
+        dateStyle;
+
       // Add applied filters info
       const appliedFilters = [];
-      if (filters.clientName) appliedFilters.push(`Client: ${filters.clientName}`);
+      if (filters.clientName)
+        appliedFilters.push(`Client: ${filters.clientName}`);
       if (filters.status) appliedFilters.push(`Status: ${filters.status}`);
-      if (filters.productId) appliedFilters.push(`Product: ${filters.productId}`);
+      if (filters.productId)
+        appliedFilters.push(`Product: ${filters.productId}`);
       if (parsedStartDate || parsedEndDate) {
-        const dateRange = parsedStartDate && parsedEndDate
-          ? `${parsedStartDate.toISOString().split('T')[0]} to ${parsedEndDate.toISOString().split('T')[0]}`
-          : parsedStartDate
-            ? `From ${parsedStartDate.toISOString().split('T')[0]}`
-            : `Until ${parsedEndDate.toISOString().split('T')[0]}`;
+        const dateRange =
+          parsedStartDate && parsedEndDate
+            ? `${parsedStartDate.toISOString().split('T')[0]} to ${parsedEndDate.toISOString().split('T')[0]}`
+            : parsedStartDate
+              ? `From ${parsedStartDate.toISOString().split('T')[0]}`
+              : `Until ${parsedEndDate.toISOString().split('T')[0]}`;
         appliedFilters.push(`Date Range: ${dateRange}`);
       }
-      
-      const filtersRow = worksheet.addRow(['Applied Filters:', appliedFilters.join(', ') || 'None']);
+
+      const filtersRow = worksheet.addRow([
+        'Applied Filters:',
+        appliedFilters.join(', ') || 'None',
+      ]);
       filtersRow.getCell(1).font = { bold: true };
-      
+
       worksheet.addRow(['Total Records:', processedOrders.length]);
       worksheet.addRow([]);
 
@@ -6769,8 +6929,10 @@ export class OrderService {
 
       summaryData.forEach(([metric, amount], index) => {
         const row = worksheet.addRow([metric, amount]);
-        row.getCell(1).style = index === summaryData.length - 1 ? totalRowStyle : dataStyle;
-        row.getCell(2).style = index === summaryData.length - 1 ? totalAmountStyle : amountStyle;
+        row.getCell(1).style =
+          index === summaryData.length - 1 ? totalRowStyle : dataStyle;
+        row.getCell(2).style =
+          index === summaryData.length - 1 ? totalAmountStyle : amountStyle;
       });
 
       worksheet.addRow([]);
@@ -6793,10 +6955,14 @@ export class OrderService {
         const row = worksheet.addRow({
           client: order.client_id?.name || 'Unknown Client',
           parentCompany: order.client_id?.parent_company?.name || 'N/A',
-          products: order.products?.map((p) => p.short_name || p.name).join(', ') || 'Unknown Product',
+          products:
+            order.products?.map((p) => p.short_name || p.name).join(', ') ||
+            'Unknown Product',
           status: order.status || 'Unknown',
           baseCost: order.base_cost || 0,
-          amcRatePercentage: Number(Number(order.amc_rate?.percentage || 0).toFixed(2)),
+          amcRatePercentage: Number(
+            Number(order.amc_rate?.percentage || 0).toFixed(2),
+          ),
           amcAmount: order.amc_rate?.amount || 0,
           purchaseDate: order.purchased_date,
           amcStartDate: order.amc_start_date,
@@ -6811,7 +6977,7 @@ export class OrderService {
         row.getCell('client').style = dataStyle;
         row.getCell('parentCompany').style = dataStyle;
         row.getCell('products').style = dataStyle;
-        
+
         // Status cell with color coding
         let statusCellStyle: Partial<ExcelJS.Style> = {
           ...statusStyle,
@@ -6853,13 +7019,25 @@ export class OrderService {
 
         // Apply amount and date styles
         row.getCell('baseCost').style = amountStyle;
-        row.getCell('amcRatePercentage').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
+        row.getCell('amcRatePercentage').style = {
+          ...dataStyle,
+          alignment: { horizontal: 'center', vertical: 'middle' },
+        };
         row.getCell('amcAmount').style = amountStyle;
         row.getCell('purchaseDate').style = dateStyle;
         row.getCell('amcStartDate').style = dateStyle;
-        row.getCell('licensesCount').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
-        row.getCell('customizationsCount').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
-        row.getCell('additionalServicesCount').style = { ...dataStyle, alignment: { horizontal: 'center', vertical: 'middle' } };
+        row.getCell('licensesCount').style = {
+          ...dataStyle,
+          alignment: { horizontal: 'center', vertical: 'middle' },
+        };
+        row.getCell('customizationsCount').style = {
+          ...dataStyle,
+          alignment: { horizontal: 'center', vertical: 'middle' },
+        };
+        row.getCell('additionalServicesCount').style = {
+          ...dataStyle,
+          alignment: { horizontal: 'center', vertical: 'middle' },
+        };
         row.getCell('trainingCost').style = amountStyle;
         row.getCell('purchaseOrderNumber').style = dataStyle;
       });
@@ -6904,7 +7082,8 @@ export class OrderService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'exportPurchasesToExcel: Excel export generated successfully',
+          message:
+            'exportPurchasesToExcel: Excel export generated successfully',
           rowCount: worksheet.rowCount,
           orderCount: processedOrders.length,
           totalBaseCost,
@@ -6931,7 +7110,11 @@ export class OrderService {
   }
 
   // Helper method to generate empty Excel buffer when no data found
-  private async generateEmptyExcelBuffer(workbook: any, worksheet: any, columns: any[]): Promise<Buffer> {
+  private async generateEmptyExcelBuffer(
+    workbook: any,
+    worksheet: any,
+    columns: any[],
+  ): Promise<Buffer> {
     // Set columns
     worksheet.columns = columns.map((col) => ({
       key: col.key,
@@ -6939,7 +7122,10 @@ export class OrderService {
     }));
 
     // Add header
-    worksheet.addRow(['No data found matching the specified filters']).font = { size: 14, bold: true };
+    worksheet.addRow(['No data found matching the specified filters']).font = {
+      size: 14,
+      bold: true,
+    };
     worksheet.addRow(['Generated on:', new Date()]);
     worksheet.addRow([]);
 

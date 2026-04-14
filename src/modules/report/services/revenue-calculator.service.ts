@@ -133,11 +133,18 @@ export class RevenueCalculatorService {
 
     const revenueByPeriod = new Map<string, number>();
 
+    // FIX 1: Iterate payment_terms directly and group by term.invoice_date
     for (const order of orders) {
       if (this.isNewSaleOrder(order)) {
-        const revenue = await this.calculateNewSaleOrderRevenue(order);
-        const period = this.getPeriodLabel(new Date(order.purchased_date), filter);
-        revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+
+          const revenue = term.calculated_amount || 0;
+          const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
+          revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+        }
       }
     }
 
@@ -157,23 +164,30 @@ export class RevenueCalculatorService {
       .find({
         deleted: { $ne: true },
       })
-      .populate('order_id')
+      .populate({ path: 'order_id', model: 'Order' })
       .lean();
 
     const revenueByPeriod = new Map<string, number>();
 
     for (const amc of amcs) {
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) continue;
+
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
-        const paymentDate = new Date(payment.from_date);
+        // Skip proforma payments
+        if (payment.status === 'proforma') continue;
 
-        // Check if payment falls within date range
-        if (paymentDate >= startDate && paymentDate <= endDate) {
+        const paymentFromDate = new Date(payment.from_date);
+
+        // Check if payment falls within date range (range eligibility check)
+        if (paymentFromDate >= startDate && paymentFromDate <= endDate) {
           // Use amc_rate_amount from payment record
           const revenue = payment.amc_rate_amount || 0;
-          const period = this.getPeriodLabel(paymentDate, filter);
+          // Group by order.amc_start_date instead of payment.from_date
+          const period = this.getPeriodLabel(new Date(order.amc_start_date), filter);
           revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
         }
       }
@@ -323,20 +337,33 @@ export class RevenueCalculatorService {
     // Group by month for breakdown
     const newSalesByPeriod = new Map<string, { expected: number; collected: number }>();
 
+    // FIX 2: Iterate payment_terms directly and group by term.invoice_date
     for (const order of newSalesOrders) {
       if (this.isNewSaleOrder(order)) {
-        const orderExpected = await this.calculateNewSaleOrderRevenue(order);
-        const orderCollected = this.calculateCollectedFromPaymentTerms(order.payment_terms || []);
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
-        newSalesExpected += orderExpected;
-        newSalesCollected += orderCollected;
+          const termAmount = term.calculated_amount || 0;
+          const isPaid = term.status === 'paid';
 
-        // Add to period breakdown
-        const period = this.getPeriodLabel(new Date(order.purchased_date), filter);
-        const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
-        existing.expected += orderExpected;
-        existing.collected += orderCollected;
-        newSalesByPeriod.set(period, existing);
+          // Expected: all terms with status 'paid' or 'invoice'
+          newSalesExpected += termAmount;
+          // Collected: only terms with status 'paid'
+          if (isPaid) {
+            newSalesCollected += termAmount;
+          }
+
+          // Add to period breakdown grouped by invoice_date
+          const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
+          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
+          existing.expected += termAmount;
+          if (isPaid) {
+            existing.collected += termAmount;
+          }
+          newSalesByPeriod.set(period, existing);
+        }
       }
     }
 
@@ -352,7 +379,9 @@ export class RevenueCalculatorService {
     }
 
     // AMC: Expected vs Collected
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+      .populate({ path: 'order_id', model: 'Order' })
+      .lean();
 
     const amcBreakdown: IPeriodBreakdown[] = [];
     let amcExpected = 0;
@@ -361,13 +390,20 @@ export class RevenueCalculatorService {
     const amcByPeriod = new Map<string, { expected: number; collected: number }>();
 
     for (const amc of amcs) {
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) continue;
+
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
-        const paymentDate = new Date(payment.from_date);
+        // Skip proforma payments
+        if (payment.status === 'proforma') continue;
 
-        if (paymentDate >= start && paymentDate <= end) {
+        const paymentFromDate = new Date(payment.from_date);
+
+        // Check if payment falls within date range (range eligibility check)
+        if (paymentFromDate >= start && paymentFromDate <= end) {
           // Expected: calculated_amount (amc_rate_amount)
           const expected = payment.amc_rate_amount || 0;
           // Collected: only if status is PAID
@@ -376,7 +412,8 @@ export class RevenueCalculatorService {
           amcExpected += expected;
           amcCollected += collected;
 
-          const period = this.getPeriodLabel(paymentDate, filter);
+          // Group by order.amc_start_date instead of payment.from_date
+          const period = this.getPeriodLabel(new Date(order.amc_start_date), filter);
           const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
           existing.expected += expected;
           existing.collected += collected;
@@ -441,6 +478,8 @@ export class RevenueCalculatorService {
     const period = `${monthNames[month - 1]} ${fyLabel}`;
 
     // New Sales Details
+    // FIX 3: The initial query filter on purchased_date can stay (it gets orders in range),
+    // but after fetching, iterate payment_terms for revenue grouping
     const orders = await this.orderModel
       .find({
         purchased_date: { $gte: start, $lte: end },
@@ -455,9 +494,6 @@ export class RevenueCalculatorService {
 
     for (const order of orders) {
       if (this.isNewSaleOrder(order)) {
-        const revenue = await this.calculateNewSaleOrderRevenue(order);
-        newSalesTotal += revenue;
-
         const client = order.client_id as any;
         let products = order.products as any[];
 
@@ -477,31 +513,51 @@ export class RevenueCalculatorService {
           }).lean();
         }
 
-        newSalesDetails.push({
-          orderId: order._id.toString(),
-          clientName: client?.name || 'Unknown',
-          productName: products?.map((p) => p?.name).filter(Boolean).join(', ') || 'N/A',
-          amount: revenue,
-          status: order.status || 'unknown',
-          date: order.purchased_date,
-        });
+        // Iterate payment_terms directly instead of calculateNewSaleOrderRevenue
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+
+          const revenue = term.calculated_amount || 0;
+          newSalesTotal += revenue;
+
+          newSalesDetails.push({
+            orderId: order._id.toString(),
+            clientName: client?.name || 'Unknown',
+            productName: products?.map((p) => p?.name).filter(Boolean).join(', ') || 'N/A',
+            amount: revenue,
+            status: term.status || 'unknown',
+            date: term.invoice_date,
+          });
+        }
       }
     }
 
     // AMC Details
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).populate('client_id').lean();
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+      .populate('client_id')
+      .populate({ path: 'order_id', model: 'Order' })
+      .lean();
 
     const amcDetails: IMonthlyBreakdownDetail[] = [];
     let amcTotal = 0;
 
     for (const amc of amcs) {
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) continue;
+
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
-        const paymentDate = new Date(payment.from_date);
+        // Skip proforma payments
+        if (payment.status === 'proforma') continue;
 
-        if (paymentDate >= start && paymentDate <= end) {
+        const paymentFromDate = new Date(payment.from_date);
+
+        // Check if payment falls within date range (range eligibility check)
+        if (paymentFromDate >= start && paymentFromDate <= end) {
           const revenue = payment.amc_rate_amount || 0;
           amcTotal += revenue;
 
@@ -513,7 +569,7 @@ export class RevenueCalculatorService {
             productName: 'AMC',
             amount: revenue,
             status: payment.status || 'unknown',
-            date: payment.from_date,
+            date: order.amc_start_date,
           });
         }
       }
@@ -559,8 +615,9 @@ export class RevenueCalculatorService {
     const clientIdsWithAMCPayments = new Set<string>();
 
     for (const amc of amcs) {
-      const paidPayments = (amc.payments || []).slice(1);
-      for (const payment of paidPayments) {
+      const allPayments = amc.payments || [];
+      for (const payment of allPayments) {
+        if (payment.status === 'proforma') continue;
         const paymentDate = new Date(payment.from_date);
         if (paymentDate >= start && paymentDate <= end) {
           clientIdsWithAMCPayments.add(amc.client_id?.toString());
@@ -606,8 +663,9 @@ export class RevenueCalculatorService {
       const clientId = amc.client_id?.toString();
       if (!clientId) continue;
 
-      const paidPayments = (amc.payments || []).slice(1);
-      for (const payment of paidPayments) {
+      const allPayments = amc.payments || [];
+      for (const payment of allPayments) {
+        if (payment.status === 'proforma') continue;
         if (payment.status !== 'paid' && payment.invoice_date) {
           const invoiceDate = new Date(payment.invoice_date);
           const daysOverdue = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -630,19 +688,20 @@ export class RevenueCalculatorService {
 
     for (const amc of amcs) {
       const payments = amc.payments || [];
-      if (payments.length <= 1) continue; // Skip if only free period
+      if (payments.length <= 0) continue;
 
       // Find payments that ended before or during the FY
-      const paidPayments = payments.slice(1);
-      for (let i = 0; i < paidPayments.length; i++) {
-        const payment = paidPayments[i];
+      const allPayments = payments;
+      for (let i = 0; i < allPayments.length; i++) {
+        const payment = allPayments[i];
+        if (payment.status === 'proforma') continue;
         const paymentEndDate = new Date(payment.to_date);
 
         // If this payment period ended within the FY
         if (paymentEndDate >= start && paymentEndDate <= end) {
           totalAMCsDue++;
           // Check if there's a subsequent payment (renewal)
-          if (i + 1 < paidPayments.length) {
+          if (i + 1 < allPayments.length) {
             renewedAMCs++;
           }
         }
@@ -680,7 +739,7 @@ export class RevenueCalculatorService {
     // Calculate current FY revenue by client
     const currentFYRevenue = new Map<string, { newSales: number; amc: number; orderCount: number }>();
 
-    // New sales revenue
+    // FIX 4: New sales revenue - iterate payment_terms directly instead of calculateNewSaleOrderRevenue
     const orders = await this.orderModel
       .find({
         purchased_date: { $gte: start, $lte: end },
@@ -693,24 +752,38 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       if (this.isNewSaleOrder(order)) {
-        const revenue = await this.calculateNewSaleOrderRevenue(order);
-        const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
-        existing.newSales += revenue;
-        existing.orderCount++;
-        currentFYRevenue.set(clientId, existing);
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+
+          const revenue = term.calculated_amount || 0;
+          const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
+          existing.newSales += revenue;
+          existing.orderCount++;
+          currentFYRevenue.set(clientId, existing);
+        }
       }
     }
 
     // AMC revenue
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+      .populate({ path: 'order_id', model: 'Order' })
+      .lean();
     for (const amc of amcs) {
       const clientId = amc.client_id?.toString();
       if (!clientId) continue;
 
-      const paidPayments = (amc.payments || []).slice(1);
-      for (const payment of paidPayments) {
-        const paymentDate = new Date(payment.from_date);
-        if (paymentDate >= start && paymentDate <= end) {
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) continue;
+
+      const allPayments = amc.payments || [];
+      for (const payment of allPayments) {
+        // Skip proforma payments
+        if (payment.status === 'proforma') continue;
+
+        const paymentFromDate = new Date(payment.from_date);
+        if (paymentFromDate >= start && paymentFromDate <= end) {
           const revenue = payment.amc_rate_amount || 0;
           const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
           existing.amc += revenue;
@@ -729,13 +802,20 @@ export class RevenueCalculatorService {
       })
       .lean();
 
+    // FIX 4 continued: Previous FY new sales - iterate payment_terms directly
     for (const order of prevOrders) {
       const clientId = order.client_id?.toString();
       if (!clientId) continue;
 
       if (this.isNewSaleOrder(order)) {
-        const revenue = await this.calculateNewSaleOrderRevenue(order);
-        prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+
+          const revenue = term.calculated_amount || 0;
+          prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+        }
       }
     }
 
@@ -743,10 +823,16 @@ export class RevenueCalculatorService {
       const clientId = amc.client_id?.toString();
       if (!clientId) continue;
 
-      const paidPayments = (amc.payments || []).slice(1);
-      for (const payment of paidPayments) {
-        const paymentDate = new Date(payment.from_date);
-        if (paymentDate >= prevStart && paymentDate <= prevEnd) {
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) continue;
+
+      const allPayments = amc.payments || [];
+      for (const payment of allPayments) {
+        // Skip proforma payments
+        if (payment.status === 'proforma') continue;
+
+        const paymentFromDate = new Date(payment.from_date);
+        if (paymentFromDate >= prevStart && paymentFromDate <= prevEnd) {
           const revenue = payment.amc_rate_amount || 0;
           prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
         }
@@ -805,8 +891,9 @@ export class RevenueCalculatorService {
       if (!hasLatePayment) {
         const clientAMCs = await this.amcModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
         for (const amc of clientAMCs) {
-          const paidPayments = (amc.payments || []).slice(1);
-          for (const payment of paidPayments) {
+          const allPayments = amc.payments || [];
+          for (const payment of allPayments) {
+            if (payment.status === 'proforma') continue;
             if (payment.status !== 'paid' && payment.invoice_date) {
               const invoiceDate = new Date(payment.invoice_date);
               const daysOverdue = Math.floor((now.getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -840,8 +927,9 @@ export class RevenueCalculatorService {
       if (!hasRecentActivity) {
         const clientAMCs = await this.amcModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
         for (const amc of clientAMCs) {
-          const paidPayments = (amc.payments || []).slice(1);
-          for (const payment of paidPayments) {
+          const allPayments = amc.payments || [];
+          for (const payment of allPayments) {
+            if (payment.status === 'proforma') continue;
             if (new Date(payment.from_date) >= sixMonthsAgo) {
               hasRecentActivity = true;
               break;
@@ -899,7 +987,7 @@ export class RevenueCalculatorService {
     // Calculate revenue by client
     const clientRevenue = new Map<string, number>();
 
-    // New sales
+    // FIX 5: New sales - iterate payment_terms directly instead of calculateNewSaleOrderRevenue
     const orders = await this.orderModel
       .find({
         purchased_date: { $gte: start, $lte: end },
@@ -912,19 +1000,32 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       if (this.isNewSaleOrder(order)) {
-        const revenue = await this.calculateNewSaleOrderRevenue(order);
-        clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+
+          const revenue = term.calculated_amount || 0;
+          clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
+        }
       }
     }
 
     // AMC
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+      .populate({ path: 'order_id', model: 'Order' })
+      .lean();
     for (const amc of amcs) {
       const clientId = amc.client_id?.toString();
       if (!clientId) continue;
 
-      const paidPayments = (amc.payments || []).slice(1);
-      for (const payment of paidPayments) {
+      const order = amc.order_id as any;
+      if (!order || !order.amc_start_date) continue;
+
+      const allPayments = amc.payments || [];
+      for (const payment of allPayments) {
+        if (payment.status === 'proforma') continue;
+
         const paymentDate = new Date(payment.from_date);
         if (paymentDate >= start && paymentDate <= end) {
           const revenue = payment.amc_rate_amount || 0;

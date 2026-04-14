@@ -1,16 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Schema as MongooseSchema } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
+export { PAYMENT_STATUS_ENUM } from '@/common/types/enums/order.enum';
+import { PAYMENT_STATUS_ENUM } from '@/common/types/enums/order.enum';
 
 // Define the document type for TypeScript
 export type AMCDocument = HydratedDocument<AMC>;
-
-export enum PAYMENT_STATUS_ENUM {
-  PENDING = 'pending',
-  proforma = 'proforma',
-  INVOICE = 'invoice',
-  PAID = 'paid',
-}
 
 export interface IAMCPayment {
   _id?: any;
