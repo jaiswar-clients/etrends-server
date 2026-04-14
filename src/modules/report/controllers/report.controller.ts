@@ -2,6 +2,7 @@ import { AuthGuard } from '@/common/guards/auth.guard';
 import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
 import { ReportService } from '../services/report.service';
 import { RevenueCalculatorService } from '../services/revenue-calculator.service';
+import { ExcelExportService } from '../services/excel-export.service';
 import { ReportFilterType } from '@/common/types/enums/report';
 import { Response } from 'express';
 
@@ -11,6 +12,7 @@ export class ReportController {
   constructor(
     private readonly reportService: ReportService,
     private readonly revenueCalculatorService: RevenueCalculatorService,
+    private readonly excelExportService: ExcelExportService,
   ) {}
 
   @Get('total-billing')
@@ -159,5 +161,44 @@ export class ReportController {
         ? defaultFiscalYear
         : Number(fiscalYear),
     );
+  }
+
+  // ==================== EXCEL EXPORT ENDPOINT ====================
+
+  @Get('export-excel')
+  async exportExcelReport(
+    @Query('fiscalYear') fiscalYear: string,
+    @Query('filter') filter: 'monthly' | 'quarterly',
+    @Res() res: Response,
+  ) {
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    const defaultFiscalYear = currentMonth >= 3 ? currentYear : currentYear - 1;
+
+    const fy = fiscalYear === 'undefined' || !fiscalYear
+      ? defaultFiscalYear
+      : Number(fiscalYear);
+
+    // Fetch all data in parallel
+    const [revenueDashboard, expectedVsCollected, clientHealth] = await Promise.all([
+      this.revenueCalculatorService.getRevenueDashboard({ filter: filter || 'monthly', year: fy }),
+      this.revenueCalculatorService.getExpectedVsCollected({ fiscalYear: fy, filter: filter || 'monthly' }),
+      this.revenueCalculatorService.getClientHealthDashboard(fy),
+    ]);
+
+    // Generate Excel
+    const workbook = await this.excelExportService.generateRevenueReport({
+      revenueDashboard: revenueDashboard,
+      expectedVsCollected: expectedVsCollected,
+      clientHealth: clientHealth,
+      fiscalYear: fy,
+      filter: filter || 'monthly',
+    });
+
+    // Stream response
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=Revenue_Report_FY_${fy}-${(fy + 1).toString().slice(-2)}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.end();
   }
 }
