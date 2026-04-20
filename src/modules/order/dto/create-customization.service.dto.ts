@@ -62,4 +62,8 @@ export class CreateCustomizationDto {
   @IsEnum(CustomizationType)
   @IsNotEmpty()
   type: CustomizationType;
+
+  @IsNumber()
+  @IsOptional()
+  amc_percentage: number;
 }

@@ -58,4 +58,8 @@ export class CreateLicenseDto {
   @IsString()
   @IsOptional()
   invoice_document: string;
+
+  @IsNumber()
+  @IsOptional()
+  amc_percentage: number;
 }

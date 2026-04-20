@@ -6,7 +6,7 @@ import {
   HydratedDocument,
   Types,
 } from 'mongoose';
-import { PAYMENT_STATUS_ENUM } from './product-order.schema';
+import { IAMCRate, PAYMENT_STATUS_ENUM } from './product-order.schema';
 
 // Define the document type for TypeScript
 export type AdditionalServiceDocument = HydratedDocument<AdditionalService>;
@@ -67,6 +67,14 @@ export class AdditionalService extends Document {
 
   @Prop({ type: String })
   service_document: string; // cdn url
+
+  @Prop({
+    type: {
+      percentage: { type: Number },
+      amount: { type: Number },
+    },
+  })
+  amc_rate: IAMCRate;
 
   @Prop({ type: Types.ObjectId, ref: 'Order' })
   order_id: Types.ObjectId;

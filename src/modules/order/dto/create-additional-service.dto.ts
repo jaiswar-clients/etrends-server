@@ -71,4 +71,8 @@ export class CreateAdditionalServiceDto {
   @IsString()
   @IsOptional()
   service_document?: string;
+
+  @IsNumber()
+  @IsOptional()
+  amc_percentage: number;
 }

@@ -955,6 +955,12 @@ export class OrderService {
 
       const { cost_per_license, total_license, product_id } = body;
 
+      const cost = cost_per_license * total_license;
+
+      // Calculate line-item AMC rate
+      const amcPercentage = body.amc_percentage ?? 0;
+      const amcAmount = (cost / 100) * amcPercentage;
+
       const license = new this.licenseModel({
         rate: {
           amount: cost_per_license,
@@ -966,6 +972,10 @@ export class OrderService {
         purchase_date: body.purchase_date,
         purchase_order_document: body.purchase_order_document,
         invoice_document: body.invoice_document,
+        amc_rate: {
+          percentage: amcPercentage,
+          amount: amcAmount,
+        },
       });
       await license.save();
 
@@ -976,9 +986,7 @@ export class OrderService {
         }),
       );
 
-      const cost = cost_per_license * total_license;
-
-      // Add customization cost to AMC total cost
+      // Add license AMC amount to parent AMC (do NOT recalculate percentage)
       const amc = await this.amcModel.findOne({
         order_id: new Types.ObjectId(orderId),
       });
@@ -987,14 +995,14 @@ export class OrderService {
       }
 
       const newTotalCost = amc.total_cost + cost;
-      const newAmount = (newTotalCost / 100) * amc.amc_percentage;
+      const newAmount = amc.amount + amcAmount;
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'addCustomization: AMC Calc completed',
+          message: 'addLicense: AMC Calc completed',
           newTotalCost,
           newAmount,
-          used: { percentage: amc.amc_percentage, total_cost: amc.total_cost },
+          used: { licenseAmcPercentage: amcPercentage, licenseAmcAmount: amcAmount, previousAmcAmount: amc.amount },
         }),
       );
 
@@ -1009,7 +1017,7 @@ export class OrderService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'addCustomization: AMC update completed',
+          message: 'addLicense: AMC update completed',
           amcUpdateResult,
           orderId,
         }),
@@ -1044,9 +1052,17 @@ export class OrderService {
         }),
       );
 
+      // Calculate line-item AMC rate
+      const amcPercentage = body.amc_percentage ?? 0;
+      const amcAmount = (body.cost / 100) * amcPercentage;
+
       const additionalService = new this.additionalServiceModel({
         ...body,
         order_id: orderId,
+        amc_rate: {
+          percentage: amcPercentage,
+          amount: amcAmount,
+        },
       });
       await additionalService.save();
 
@@ -1057,6 +1073,29 @@ export class OrderService {
           additional_service_id: additionalService._id,
         }),
       );
+
+      // Add additional service AMC amount to parent AMC (do NOT recalculate percentage)
+      const amc = await this.amcModel.findOne({
+        order_id: new Types.ObjectId(orderId),
+      });
+      if (amc) {
+        const newTotalCost = amc.total_cost + body.cost;
+        const newAmount = amc.amount + amcAmount;
+
+        await this.amcModel.findByIdAndUpdate(amc._id, {
+          total_cost: newTotalCost,
+          amount: newAmount,
+        });
+
+        this.loggerService.log(
+          JSON.stringify({
+            message: 'addAdditionalService: AMC update completed',
+            newTotalCost,
+            newAmount,
+            used: { additionalServiceAmcPercentage: amcPercentage, additionalServiceAmcAmount: amcAmount },
+          }),
+        );
+      }
 
       await this.orderModel.findByIdAndUpdate(orderId, {
         $push: { additional_services: additionalService._id },
@@ -1097,9 +1136,17 @@ export class OrderService {
         }),
       );
 
+      // Calculate line-item AMC rate
+      const amcPercentage = body.amc_percentage ?? 0;
+      const amcAmount = (cost / 100) * amcPercentage;
+
       const customization = new this.customizationModel({
         ...body,
         order_id: orderId,
+        amc_rate: {
+          percentage: amcPercentage,
+          amount: amcAmount,
+        },
       });
       await customization.save();
 
@@ -1112,7 +1159,7 @@ export class OrderService {
         }),
       );
 
-      // Add customization cost to AMC total cost
+      // Add customization AMC amount to parent AMC (do NOT recalculate percentage)
       const amc = await this.amcModel.findOne({
         order_id: new Types.ObjectId(orderId),
       });
@@ -1121,14 +1168,14 @@ export class OrderService {
       }
 
       const newTotalCost = amc.total_cost + cost;
-      const newAmount = (newTotalCost / 100) * amc.amc_percentage;
+      const newAmount = amc.amount + amcAmount;
 
       this.loggerService.log(
         JSON.stringify({
           message: 'addCustomization: AMC Calc completed',
           newTotalCost,
           newAmount,
-          used: { percentage: amc.amc_percentage, total_cost: amc.total_cost },
+          used: { customizationAmcPercentage: amcPercentage, customizationAmcAmount: amcAmount, previousAmcAmount: amc.amount },
         }),
       );
 
@@ -2763,6 +2810,10 @@ export class OrderService {
               model: License.name,
             },
             {
+              path: 'additional_services',
+              model: AdditionalService.name,
+            },
+            {
               path: 'client_id',
               model: Client.name,
               select: 'amc_frequency_in_months',
@@ -2859,25 +2910,33 @@ export class OrderService {
                 }),
               );
 
-              // Calculate total cost including customizations and licenses
+              // Calculate total cost including customizations, licenses, and additional services
               let totalCost = order.base_cost;
+              // AMC from base cost
+              let amcAmount = (order.base_cost / 100) * order.amc_rate.percentage;
 
-              // Add customization costs
+              // Add customization costs with per-line-item AMC
               const customizations = order.customizations || [];
               for (const customization of customizations) {
                 totalCost += customization.cost || 0;
+                amcAmount += customization.amc_rate?.amount || 0;
               }
 
-              // Add license costs
+              // Add license costs with per-line-item AMC
               const licenses = order.licenses || [];
               for (const license of licenses) {
                 const licenseCost =
                   (license.rate?.amount || 0) * (license.total_license || 0);
                 totalCost += licenseCost;
+                amcAmount += license.amc_rate?.amount || 0;
               }
 
-              // Calculate AMC amount based on total cost
-              const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
+              // Add additional service costs with per-line-item AMC
+              const additionalServices = order.additional_services || [];
+              for (const service of additionalServices) {
+                totalCost += service.cost || 0;
+                amcAmount += service.amc_rate?.amount || 0;
+              }
 
               // Create new payment to cover the agreement period
               while (fromDate < agreementEndDate) {
@@ -3015,25 +3074,33 @@ export class OrderService {
     lastPayment: any,
     amc_frequency_in_months: number,
   ) {
-    // Calculate total cost including customizations and licenses
+    // Calculate total cost including customizations, licenses, and additional services
     let totalCost = order.base_cost;
+    // AMC from base cost
+    let amcAmount = (order.base_cost / 100) * order.amc_rate.percentage;
 
-    // Add customization costs
+    // Add customization costs with per-line-item AMC
     const customizations = order.customizations || [];
     for (const customization of customizations) {
       totalCost += customization.cost || 0;
+      amcAmount += customization.amc_rate?.amount || 0;
     }
 
-    // Add license costs
+    // Add license costs with per-line-item AMC
     const licenses = order.licenses || [];
     for (const license of licenses) {
       const licenseCost =
         (license.rate?.amount || 0) * (license.total_license || 0);
       totalCost += licenseCost;
+      amcAmount += license.amc_rate?.amount || 0;
     }
 
-    // Calculate AMC amount based on total cost
-    const amcAmount = (totalCost / 100) * order.amc_rate.percentage;
+    // Add additional service costs with per-line-item AMC
+    const additionalServices = order.additional_services || [];
+    for (const service of additionalServices) {
+      totalCost += service.cost || 0;
+      amcAmount += service.amc_rate?.amount || 0;
+    }
 
     const newPayment = {
       from_date: new Date(lastPayment.to_date),
@@ -4164,6 +4231,10 @@ export class OrderService {
           model: License.name,
         },
         {
+          path: 'additional_services',
+          model: AdditionalService.name,
+        },
+        {
           path: 'client_id',
           model: Client.name,
           select: 'amc_frequency_in_months',
@@ -4672,7 +4743,8 @@ export class OrderService {
           // If purchased on or before the payment date, include the cost
           if (shouldAdd) {
             const newTotalCost = payment.total_cost + customization.cost;
-            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+            // Use line-item AMC amount instead of recalculating with parent percentage
+            const newAmount = payment.amc_rate_amount + (customization.amc_rate?.amount || 0);
 
             payment.amc_rate_amount = newAmount;
             payment.total_cost = newTotalCost;
@@ -4728,7 +4800,35 @@ export class OrderService {
           // If purchased on or before the payment date, include the cost
           if (shouldAdd) {
             const newTotalCost = payment.total_cost + licenseCost;
-            const newAmount = (newTotalCost / 100) * payment.amc_rate_applied;
+            // Use line-item AMC amount instead of recalculating with parent percentage
+            const newAmount = payment.amc_rate_amount + (license.amc_rate?.amount || 0);
+
+            payment.amc_rate_amount = newAmount;
+            payment.total_cost = newTotalCost;
+          }
+        }
+      }
+
+      // Process additional services with per-line-item AMC
+      const additionalServices = (order as any).additional_services || [];
+
+      for (const service of additionalServices) {
+        let purchaseDate = service.date?.start
+          ? new Date(service.date.start)
+          : new Date(order.purchased_date);
+
+        // Normalize to start of day
+        purchaseDate.setHours(0, 0, 0, 0);
+
+        for (const payment of payments) {
+          const paymentDate = new Date(payment.from_date);
+          paymentDate.setHours(0, 0, 0, 0);
+
+          const shouldAdd = purchaseDate <= paymentDate;
+
+          if (shouldAdd) {
+            const newTotalCost = payment.total_cost + (service.cost || 0);
+            const newAmount = payment.amc_rate_amount + (service.amc_rate?.amount || 0);
 
             payment.amc_rate_amount = newAmount;
             payment.total_cost = newTotalCost;

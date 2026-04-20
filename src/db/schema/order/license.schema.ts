@@ -6,7 +6,7 @@ import {
   Types,
 } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
-import { PAYMENT_STATUS_ENUM } from './product-order.schema';
+import { IAMCRate, PAYMENT_STATUS_ENUM } from './product-order.schema';
 
 // Define the document type for TypeScript
 export type LicenseDocument = HydratedDocument<License>;
@@ -65,6 +65,14 @@ export class License extends Document {
 
   @Prop({ type: String })
   invoice_document: string; // cdn url
+
+  @Prop({
+    type: {
+      percentage: { type: Number },
+      amount: { type: Number },
+    },
+  })
+  amc_rate: IAMCRate;
 
   @Prop()
   createdAt?: Date;
