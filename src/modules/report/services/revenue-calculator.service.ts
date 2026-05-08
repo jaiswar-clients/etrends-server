@@ -133,15 +133,21 @@ export class RevenueCalculatorService {
 
     const revenueByPeriod = new Map<string, number>();
 
-    console.log(orders.length,"orders")
+    let debugNewSalesOrders = 0;
+    let debugNewSalesTerms = 0;
+    let debugNoInvoice = 0;
+    let debugProforma = 0;
+    let debugWrongStatus = 0;
 
     // FIX 1: Iterate payment_terms directly and group by term.invoice_date
     for (const order of orders) {
       if (this.isNewSaleOrder(order)) {
+        debugNewSalesOrders++;
         for (const term of order.payment_terms || []) {
-          if (!term.invoice_date) continue;
-          if (term.status === 'proforma') continue;
-          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+          debugNewSalesTerms++;
+          if (!term.invoice_date) { debugNoInvoice++; continue; }
+          if (term.status === 'proforma') { debugProforma++; continue; }
+          if (term.status !== 'paid' && term.status !== 'invoice') { debugWrongStatus++; continue; }
 
           const revenue = term.calculated_amount || 0;
           const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
@@ -149,6 +155,17 @@ export class RevenueCalculatorService {
         }
       }
     }
+
+    console.log('[DEBUG calculateNewSalesRevenue]', {
+      dateRange: { start: startDate.toISOString(), end: endDate.toISOString() },
+      ordersFound: orders.length,
+      newSaleOrders: debugNewSalesOrders,
+      totalTerms: debugNewSalesTerms,
+      noInvoice: debugNoInvoice,
+      proforma: debugProforma,
+      wrongStatus: debugWrongStatus,
+      periods: Array.from(revenueByPeriod.entries()),
+    });
 
     return revenueByPeriod;
   }
@@ -197,10 +214,10 @@ export class RevenueCalculatorService {
       for (const payment of allPayments) {
         debugTotalPayments++;
         // Skip proforma payments
-        if (payment.status === 'proforma') {
-          debugProformaSkipped++;
-          continue;
-        }
+        // if (payment.status === 'proforma') {
+        //   debugProformaSkipped++;
+        //   continue;
+        // }
 
         const paymentFromDate = new Date(payment.from_date);
 
@@ -424,7 +441,7 @@ export class RevenueCalculatorService {
     }
 
     // AMC: Expected vs Collected
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+    const amcs = await (this.amcModel as any).findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
       .lean();
 
@@ -580,7 +597,7 @@ export class RevenueCalculatorService {
     }
 
     // AMC Details
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+    const amcs = await (this.amcModel as any).findWithDeleted()
       .populate('client_id')
       .populate({ path: 'order_id', model: 'Order' })
       .lean();
@@ -655,7 +672,7 @@ export class RevenueCalculatorService {
     const clientIdsWithOrders = new Set(ordersInFY.map((o) => o.client_id?.toString()));
 
     // Get AMC payments in FY
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } }).lean();
+    const amcs = await (this.amcModel as any).findWithDeleted().lean();
     const clientIdsWithAMCPayments = new Set<string>();
 
     for (const amc of amcs) {
@@ -811,7 +828,7 @@ export class RevenueCalculatorService {
     }
 
     // AMC revenue
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+    const amcs = await (this.amcModel as any).findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
       .lean();
     for (const amc of amcs) {
@@ -931,7 +948,7 @@ export class RevenueCalculatorService {
 
       // Check AMC late payments
       if (!hasLatePayment) {
-        const clientAMCs = await this.amcModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
+        const clientAMCs = await (this.amcModel as any).findWithDeleted({ client_id: clientId }).lean();
         for (const amc of clientAMCs) {
           const allPayments = amc.payments || [];
           for (const payment of allPayments) {
@@ -967,7 +984,7 @@ export class RevenueCalculatorService {
       }
 
       if (!hasRecentActivity) {
-        const clientAMCs = await this.amcModel.find({ client_id: clientId, deleted: { $ne: true } }).lean();
+        const clientAMCs = await (this.amcModel as any).findWithDeleted({ client_id: clientId }).lean();
         for (const amc of clientAMCs) {
           const allPayments = amc.payments || [];
           for (const payment of allPayments) {
@@ -1054,7 +1071,7 @@ export class RevenueCalculatorService {
     }
 
     // AMC
-    const amcs = await this.amcModel.find({ deleted: { $ne: true } })
+    const amcs = await (this.amcModel as any).findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
       .lean();
     for (const amc of amcs) {

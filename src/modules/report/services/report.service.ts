@@ -597,7 +597,7 @@ export class ReportService {
               populate: { path: 'client_id' },
             })
             .lean(),
-          this.amcModel.find().populate('order_id').lean(),
+          (this.amcModel as any).findWithDeleted().populate('order_id').lean(),
         ]);
 
       const groupByPeriod = (date: Date) => {
@@ -1028,7 +1028,7 @@ export class ReportService {
       addBilling(new Date(service.invoice_date), { purchase: service.cost || 0 });
     }
 
-    const amcs = await this.amcModel.find().populate('order_id').lean();
+    const amcs = await (this.amcModel as any).findWithDeleted().populate('order_id').lean();
     for (const amc of amcs) {
       const order = amc.order_id as any;
       for (const payment of amc.payments || []) {
@@ -1253,7 +1253,7 @@ export class ReportService {
         amcQuery = { order_id: { $in: orderIds } };
       }
 
-      const amcs = await this.amcModel.find(amcQuery).populate('order_id').lean();
+      const amcs = await (this.amcModel as any).findWithDeleted(amcQuery).populate('order_id').lean();
 
       const breakdownMap = new Map<
         string,
@@ -1463,7 +1463,7 @@ export class ReportService {
     }
 
     // 5) AMCs
-    const allAmcs = await this.amcModel.find().populate('order_id').lean();
+    const allAmcs = await (this.amcModel as any).findWithDeleted().populate('order_id').lean();
     for (const a of allAmcs) {
       const amcOrder = a.order_id as any;
       for (const pay of a.payments || []) {
