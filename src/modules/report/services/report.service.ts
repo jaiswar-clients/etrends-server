@@ -721,7 +721,6 @@ export class ReportService {
       // Process AMCs
       for (const amc of amcs) {
         const order = amc.order_id as any;
-        if (!order || !order.amc_start_date) continue;
         const client = await this.clientModel
           .findById(amc.client_id)
           .lean();
@@ -733,7 +732,8 @@ export class ReportService {
             new Date(payment.from_date) >= start &&
             new Date(payment.from_date) <= end
           ) {
-            const period = groupByPeriod(new Date(order.amc_start_date));
+            const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : new Date(payment.from_date);
+            const period = groupByPeriod(groupDate);
             const amount = payment.amc_rate_amount || 0;
             addRevenue(industry, period, amount);
           }
@@ -1037,9 +1037,9 @@ export class ReportService {
         if (!payment.from_date) continue;
         const paymentFromDate = new Date(payment.from_date);
         if (paymentFromDate < start || paymentFromDate > end) continue;
-        // Group by order.amc_start_date
-        if (!order || !order.amc_start_date) continue;
-        addBilling(new Date(order.amc_start_date), {
+        // Group by order.amc_start_date when available, fallback to payment.from_date
+        const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
+        addBilling(groupDate, {
           amc: payment.amc_rate_amount || 0,
         });
       }
@@ -1272,9 +1272,9 @@ export class ReportService {
           if (!payment.from_date) continue;
           const paymentDate = new Date(payment.from_date);
           if (paymentDate >= start && paymentDate <= end) {
-            // Group by order.amc_start_date
-            if (!order || !order.amc_start_date) continue;
-            const period = groupByPeriod(new Date(order.amc_start_date));
+            // Group by order.amc_start_date when available, fallback to payment.from_date
+            const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentDate;
+            const period = groupByPeriod(groupDate);
             const existing = breakdownMap.get(period) || {
               totalExpected: 0,
               totalCollected: 0,
@@ -1466,20 +1466,20 @@ export class ReportService {
     const allAmcs = await this.amcModel.find().populate('order_id').lean();
     for (const a of allAmcs) {
       const amcOrder = a.order_id as any;
-      if (!amcOrder || !amcOrder.amc_start_date) continue;
       for (const pay of a.payments || []) {
         if (pay.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
         // Range check using pay.from_date
         if (!pay.from_date) continue;
         const fromDate = new Date(pay.from_date);
         if (fromDate < start || fromDate > end) continue;
-        // Expected amount grouped by order.amc_start_date
+        // Expected amount grouped by order.amc_start_date when available, fallback to pay.from_date
+        const groupDate = amcOrder?.amc_start_date ? new Date(amcOrder.amc_start_date) : fromDate;
         const expectedAmount = pay.amc_rate_amount || 0;
-        addData(new Date(amcOrder.amc_start_date), expectedAmount, 0);
+        addData(groupDate, expectedAmount, 0);
 
         // If paid, add to received
         if (pay.status === PAYMENT_STATUS_ENUM.PAID) {
-          addData(new Date(amcOrder.amc_start_date), 0, expectedAmount);
+          addData(groupDate, 0, expectedAmount);
         }
       }
     }
@@ -1769,7 +1769,7 @@ export class ReportService {
     for (const a of amcs) {
       const ind = (a.client_id as any)?.industry || 'Unknown';
       const order = a.order_id as any;
-      if (!order || !order.products || !order.amc_start_date) continue;
+      if (!order || !order.products) continue;
       const prods = Array.isArray(order.products) ? order.products : [];
       for (const pay of a.payments || []) {
         if (pay.status === PAYMENT_STATUS_ENUM.PROFORMA) continue;
@@ -1777,8 +1777,8 @@ export class ReportService {
         if (!pay.from_date) continue;
         const fromDate = new Date(pay.from_date);
         if (fromDate < start || fromDate > end) continue;
-        // Group by order.amc_start_date
-        const groupDate = new Date(order.amc_start_date);
+        // Group by order.amc_start_date when available, fallback to pay.from_date
+        const groupDate = order.amc_start_date ? new Date(order.amc_start_date) : fromDate;
         for (const p of prods) {
           addData(groupDate, ind, p.name, pay.amc_rate_amount || 0, 0);
         }

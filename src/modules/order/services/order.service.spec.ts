@@ -8,39 +8,81 @@ import {
   AMCDocument,
   PAYMENT_STATUS_ENUM,
 } from '@/db/schema/amc/amc.schema';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
+import { CreateLicenseDto } from '@/modules/order/dto/create-license.dto';
+import { CreateAdditionalServiceDto } from '@/modules/order/dto/create-additional-service.dto';
+import { CreateCustomizationDto } from '@/modules/order/dto/create-customization.service.dto';
 
 describe('OrderService', () => {
   let service: OrderService;
   let amcModel: Model<AMCDocument>;
   let orderModel: Model<any>;
+  let licenseModel: any;
+  let customizationModel: any;
+  let additionalServiceModel: any;
   let loggerService: LoggerService;
 
+  const createMockDoc = (overrides: any = {}) => ({
+    _id: new Types.ObjectId(),
+    ...overrides,
+    save: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), ...overrides }),
+  });
+
   beforeEach(async () => {
+    const mockLicenseModel = jest.fn().mockImplementation((data: any) => createMockDoc(data));
+    (mockLicenseModel as any).find = jest.fn().mockReturnValue({
+      populate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
+    const mockCustomizationModel = jest.fn().mockImplementation((data: any) => createMockDoc(data));
+    (mockCustomizationModel as any).find = jest.fn().mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
+    const mockAdditionalServiceModel = jest.fn().mockImplementation((data: any) => createMockDoc(data));
+    (mockAdditionalServiceModel as any).find = jest.fn().mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OrderService,
-        { 
-          provide: getModelToken('Order'), 
-          useValue: { 
+        {
+          provide: getModelToken('Order'),
+          useValue: {
             findById: jest.fn().mockReturnThis(),
             populate: jest.fn().mockReturnThis(),
-          } 
+            findByIdAndUpdate: jest.fn().mockResolvedValue(null),
+            find: jest.fn().mockReturnValue({
+              populate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+              lean: jest.fn().mockResolvedValue([]),
+            }),
+          }
         },
-        { provide: getModelToken('License'), useValue: {} },
-        { provide: getModelToken('Customization'), useValue: {} },
+        { provide: getModelToken('License'), useValue: mockLicenseModel },
+        { provide: getModelToken('Customization'), useValue: mockCustomizationModel },
         { provide: getModelToken('Product'), useValue: {} },
         { provide: getModelToken('Client'), useValue: {} },
-        { provide: getModelToken('AdditionalService'), useValue: {} },
+        { provide: getModelToken('AdditionalService'), useValue: mockAdditionalServiceModel },
         {
           provide: getModelToken('AMC'),
-          useValue: { 
-            find: jest.fn(), 
-            findByIdAndUpdate: jest.fn(),
+          useValue: {
+            find: jest.fn(),
+            findByIdAndUpdate: jest.fn().mockResolvedValue(null),
             findById: jest.fn(),
+            findOne: jest.fn(),
           },
         },
         {
@@ -48,8 +90,8 @@ describe('OrderService', () => {
           useValue: { log: jest.fn(), error: jest.fn() },
         },
         { provide: StorageService, useValue: {} },
-        { 
-          provide: CACHE_MANAGER, 
+        {
+          provide: CACHE_MANAGER,
           useValue: {
             get: jest.fn(),
             set: jest.fn(),
@@ -63,6 +105,9 @@ describe('OrderService', () => {
     service = module.get<OrderService>(OrderService);
     amcModel = module.get<Model<AMCDocument>>(getModelToken('AMC'));
     orderModel = module.get(getModelToken('Order'));
+    licenseModel = module.get(getModelToken('License'));
+    customizationModel = module.get(getModelToken('Customization'));
+    additionalServiceModel = module.get(getModelToken('AdditionalService'));
     loggerService = module.get<LoggerService>(LoggerService);
   });
 
@@ -70,6 +115,290 @@ describe('OrderService', () => {
     expect(service).toBeDefined();
   });
 
+  // ─── addLicense ──────────────────────────────────────────────────────────
+  describe('addLicense', () => {
+    const orderId = '507f1f77bcf86cd799439011';
+
+    const mockAmc = {
+      _id: new Types.ObjectId(),
+      order_id: new Types.ObjectId(orderId),
+      total_cost: 10000,
+      amount: 2000,
+    };
+
+    beforeEach(() => {
+      jest.spyOn(amcModel, 'findOne').mockResolvedValue(mockAmc);
+      jest.spyOn(amcModel, 'findByIdAndUpdate').mockResolvedValue(null);
+      jest.spyOn(orderModel, 'findByIdAndUpdate').mockResolvedValue(null);
+    });
+
+    it('should create license with correct amc_rate and roll up to parent AMC', async () => {
+      const dto: CreateLicenseDto = {
+        product_id: new Types.ObjectId(),
+        cost_per_license: 500,
+        total_license: 4,
+        amc_percentage: 15,
+        purchase_date: '2024-06-01',
+        payment_status: PAYMENT_STATUS_ENUM.PENDING,
+      } as any;
+
+      const result = await service.addLicense(orderId, dto);
+
+      // Verify license created with amc_rate
+      expect(licenseModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          rate: { amount: 500, percentage: 0 },
+          total_license: 4,
+          amc_rate: {
+            percentage: 15,
+            amount: (500 * 4 * 15) / 100, // 300
+          },
+        })
+      );
+
+      // Verify AMC updated: total_cost += 2000, amount += 300
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockAmc._id,
+        {
+          total_cost: 12000,
+          amount: 2300,
+        },
+        { new: true }
+      );
+
+      // Verify order updated
+      expect(orderModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        orderId,
+        { $push: { licenses: expect.any(Types.ObjectId) } }
+      );
+    });
+
+    it('should use zero amc_percentage when not provided', async () => {
+      const dto: CreateLicenseDto = {
+        product_id: new Types.ObjectId(),
+        cost_per_license: 100,
+        total_license: 2,
+        purchase_date: '2024-06-01',
+      } as any;
+
+      await service.addLicense(orderId, dto);
+
+      expect(licenseModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amc_rate: {
+            percentage: 0,
+            amount: 0,
+          },
+        })
+      );
+
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockAmc._id,
+        {
+          total_cost: 10200,
+          amount: 2000,
+        },
+        { new: true }
+      );
+    });
+
+    it('should throw HttpException when AMC is not found', async () => {
+      jest.spyOn(amcModel, 'findOne').mockResolvedValue(null);
+
+      const dto: CreateLicenseDto = {
+        product_id: new Types.ObjectId(),
+        cost_per_license: 100,
+        total_license: 1,
+      } as any;
+
+      await expect(service.addLicense(orderId, dto)).rejects.toThrow(
+        new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR)
+      );
+    });
+  });
+
+  // ─── addAdditionalService ────────────────────────────────────────────────
+  describe('addAdditionalService', () => {
+    const orderId = '507f1f77bcf86cd799439011';
+
+    const mockAmc = {
+      _id: new Types.ObjectId(),
+      order_id: new Types.ObjectId(orderId),
+      total_cost: 10000,
+      amount: 2000,
+    };
+
+    beforeEach(() => {
+      jest.spyOn(amcModel, 'findOne').mockResolvedValue(mockAmc);
+      jest.spyOn(amcModel, 'findByIdAndUpdate').mockResolvedValue(null);
+      jest.spyOn(orderModel, 'findByIdAndUpdate').mockResolvedValue(null);
+    });
+
+    it('should create additional service with amc_rate and roll up to parent AMC', async () => {
+      const dto: CreateAdditionalServiceDto = {
+        product_id: new Types.ObjectId(),
+        name: 'Support',
+        date: { start: new Date('2024-06-01'), end: new Date('2024-12-01') },
+        cost: 5000,
+        amc_percentage: 10,
+      } as any;
+
+      const result = await service.addAdditionalService(orderId, dto);
+
+      expect(additionalServiceModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cost: 5000,
+          amc_rate: {
+            percentage: 10,
+            amount: 500, // 5000 * 10 / 100
+          },
+          order_id: orderId,
+        })
+      );
+
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockAmc._id,
+        {
+          total_cost: 15000,
+          amount: 2500,
+        }
+      );
+
+      expect(orderModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        orderId,
+        { $push: { additional_services: expect.any(Types.ObjectId) } }
+      );
+    });
+
+    it('should use zero amc_percentage when not provided', async () => {
+      const dto: CreateAdditionalServiceDto = {
+        product_id: new Types.ObjectId(),
+        name: 'Training',
+        date: { start: new Date('2024-06-01'), end: new Date('2024-12-01') },
+        cost: 2000,
+      } as any;
+
+      await service.addAdditionalService(orderId, dto);
+
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockAmc._id,
+        {
+          total_cost: 12000,
+          amount: 2000,
+        }
+      );
+    });
+
+    it('should not throw when AMC is missing (graceful degradation)', async () => {
+      jest.spyOn(amcModel, 'findOne').mockResolvedValue(null);
+
+      const dto: CreateAdditionalServiceDto = {
+        product_id: new Types.ObjectId(),
+        name: 'Consulting',
+        date: { start: new Date('2024-06-01'), end: new Date('2024-12-01') },
+        cost: 1000,
+      } as any;
+
+      // Should NOT throw — additional service just skips AMC update
+      await expect(service.addAdditionalService(orderId, dto)).resolves.toBeDefined();
+      expect(amcModel.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(orderModel.findByIdAndUpdate).toHaveBeenCalled();
+    });
+  });
+
+  // ─── addCustomization ────────────────────────────────────────────────────
+  describe('addCustomization', () => {
+    const orderId = '507f1f77bcf86cd799439011';
+
+    const mockAmc = {
+      _id: new Types.ObjectId(),
+      order_id: new Types.ObjectId(orderId),
+      total_cost: 10000,
+      amount: 2000,
+    };
+
+    beforeEach(() => {
+      jest.spyOn(amcModel, 'findOne').mockResolvedValue(mockAmc);
+      jest.spyOn(amcModel, 'findByIdAndUpdate').mockResolvedValue(null);
+      jest.spyOn(orderModel, 'findByIdAndUpdate').mockResolvedValue(null);
+    });
+
+    it('should create customization with amc_rate and roll up to parent AMC', async () => {
+      const dto: CreateCustomizationDto = {
+        product_id: new Types.ObjectId(),
+        cost: 8000,
+        modules: ['mod1'],
+        type: 'module' as any,
+        amc_percentage: 25,
+        purchased_date: '2024-06-01',
+      } as any;
+
+      const result = await service.addCustomization(orderId, dto);
+
+      expect(customizationModel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cost: 8000,
+          amc_rate: {
+            percentage: 25,
+            amount: 2000, // 8000 * 25 / 100
+          },
+          order_id: orderId,
+        })
+      );
+
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockAmc._id,
+        {
+          total_cost: 18000,
+          amount: 4000,
+        },
+        { new: true }
+      );
+
+      expect(orderModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        orderId,
+        { $push: { customizations: expect.any(Types.ObjectId) } }
+      );
+    });
+
+    it('should use zero amc_percentage when not provided', async () => {
+      const dto: CreateCustomizationDto = {
+        product_id: new Types.ObjectId(),
+        cost: 3000,
+        modules: ['mod2'],
+        type: 'report' as any,
+        purchased_date: '2024-06-01',
+      } as any;
+
+      await service.addCustomization(orderId, dto);
+
+      expect(amcModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        mockAmc._id,
+        {
+          total_cost: 13000,
+          amount: 2000,
+        },
+        { new: true }
+      );
+    });
+
+    it('should throw HttpException when AMC is not found', async () => {
+      jest.spyOn(amcModel, 'findOne').mockResolvedValue(null);
+
+      const dto: CreateCustomizationDto = {
+        product_id: new Types.ObjectId(),
+        cost: 1000,
+        modules: ['mod3'],
+        type: 'customization' as any,
+      } as any;
+
+      await expect(service.addCustomization(orderId, dto)).rejects.toThrow(
+        new HttpException('Server error', HttpStatus.INTERNAL_SERVER_ERROR)
+      );
+    });
+  });
+
+  // ─── updateAMCPayments ───────────────────────────────────────────────────
   describe('updateAMCPayments - with multiple payments', () => {
     const mockOrder = {
       _id: 'order1',
@@ -116,13 +445,13 @@ describe('OrderService', () => {
     beforeEach(() => {
       const findMock = jest.fn().mockReturnThis();
       const populateMock = jest.fn().mockReturnThis();
-      
+
       findMock.mockReturnValue({
         populate: populateMock,
       });
-      
+
       populateMock.mockResolvedValue(mockAmcs);
-      
+
       jest.spyOn(amcModel, 'find').mockImplementation(findMock);
       jest.spyOn(amcModel, 'findByIdAndUpdate').mockResolvedValue(null);
       jest.spyOn(loggerService, 'log').mockImplementation();
@@ -184,11 +513,11 @@ describe('OrderService', () => {
 
       const findMock = jest.fn().mockReturnThis();
       const populateMock = jest.fn().mockResolvedValue(mocksWithoutOrder);
-      
+
       findMock.mockReturnValue({
         populate: populateMock,
       });
-      
+
       jest.spyOn(amcModel, 'find').mockImplementation(findMock);
 
       const result = await service.updateAMCPayments();
@@ -206,12 +535,12 @@ describe('OrderService', () => {
       // Skip this test if it's causing issues in the test runner
       // We've already verified the implementation works as expected
       // This is just to test the error handling path, which is not critical
-      
+
       // For reference, the code we're testing has a structure like:
       // try {
       //   await Promise.all(amcs.map(async (amc) => {
       //     try {
-      //       ... 
+      //       ...
       //       await this.amcModel.findByIdAndUpdate(...);
       //       ...
       //     } catch (error) {
@@ -220,7 +549,7 @@ describe('OrderService', () => {
       //     }
       //   }));
       // } catch (error) { ... }
-      
+
       // For now, we'll just make sure the test doesn't crash the test runner
       expect(true).toBe(true);
     });
@@ -248,11 +577,11 @@ describe('OrderService', () => {
 
       const findMock = jest.fn().mockReturnThis();
       const populateMock = jest.fn().mockResolvedValue(mocksWithoutAdditions);
-      
+
       findMock.mockReturnValue({
         populate: populateMock,
       });
-      
+
       jest.spyOn(amcModel, 'find').mockImplementation(findMock);
       jest
         .spyOn(Date, 'now')
@@ -265,7 +594,7 @@ describe('OrderService', () => {
         expect.objectContaining({
           $push: {
             payments: expect.objectContaining({
-              total_cost: 10000, // Only base cost
+              total_cost: 10000,
               amc_rate_applied: 20,
               amc_rate_amount: 2000 // 20% of 10000
             })
@@ -337,13 +666,13 @@ describe('OrderService', () => {
     beforeEach(() => {
       const findMock = jest.fn().mockReturnThis();
       const populateMock = jest.fn().mockReturnThis();
-      
+
       findMock.mockReturnValue({
         populate: populateMock,
       });
-      
+
       populateMock.mockResolvedValue(mockAmcs);
-      
+
       jest.spyOn(amcModel, 'find').mockImplementation(findMock);
       jest.spyOn(amcModel, 'findByIdAndUpdate').mockResolvedValue(null);
       jest.spyOn(loggerService, 'log').mockImplementation();
@@ -423,11 +752,11 @@ describe('OrderService', () => {
 
       const findMock = jest.fn().mockReturnThis();
       const populateMock = jest.fn().mockResolvedValue(mocksWithFullCoverage);
-      
+
       findMock.mockReturnValue({
         populate: populateMock,
       });
-      
+
       jest.spyOn(amcModel, 'find').mockImplementation(findMock);
 
       const result = await service.updateAMCPayments();
@@ -500,7 +829,7 @@ describe('OrderService', () => {
         }
       ]
     };
-    
+
     const mockAmc = {
       _id: mockAmcId,
       order_id: mockOrderId,
@@ -519,7 +848,7 @@ describe('OrderService', () => {
       jest.spyOn(amcModel, 'findById').mockResolvedValue(mockAmc);
       jest.spyOn(loggerService, 'log').mockImplementation();
       jest.spyOn(loggerService, 'error').mockImplementation();
-      
+
       // Mock Date.now to return a fixed date
       jest.spyOn(Date, 'now').mockReturnValue(new Date('2024-10-01').getTime());
     });
@@ -531,16 +860,16 @@ describe('OrderService', () => {
 
     it('should return payment schedule with inactive periods correctly flagged', async () => {
       const result = await service.getAmcReviewByOrderId(mockOrderId);
-      
+
       // Verify the basic calls
       expect(orderModel.findById).toHaveBeenCalledWith(mockOrderId);
       expect(orderModel.populate).toHaveBeenCalled();
       expect(amcModel.findById).toHaveBeenCalledWith(mockAmcId);
-      
+
       // Verify result is an array with expected payment structure
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeGreaterThan(0);
-      
+
       // Check first payment properties
       expect(result[0]).toHaveProperty('from_date');
       expect(result[0]).toHaveProperty('to_date');
@@ -549,11 +878,11 @@ describe('OrderService', () => {
       expect(result[0]).toHaveProperty('amc_rate_amount');
       expect(result[0]).toHaveProperty('amc_frequency');
       expect(result[0]).toHaveProperty('total_cost');
-      
+
       // Verify that at least one payment has an inactive flag
       const hasInactivePeriod = result.some(payment => payment.is_inactive === true);
       expect(hasInactivePeriod).toBe(true);
-      
+
       // Log messages for debugging and audit should be created
       expect(loggerService.log).toHaveBeenCalledWith(
         expect.stringContaining(JSON.stringify({
@@ -562,14 +891,14 @@ describe('OrderService', () => {
         }))
       );
     });
-    
+
     it('should throw an exception when order is not found', async () => {
       jest.spyOn(orderModel, 'populate').mockResolvedValue(null);
-      
+
       await expect(service.getAmcReviewByOrderId(mockOrderId)).rejects.toThrow(
         new HttpException('Order not found', HttpStatus.NOT_FOUND)
       );
-      
+
       expect(loggerService.error).toHaveBeenCalledWith(
         expect.stringContaining(JSON.stringify({
           message: 'getAmcReviewByOrderId: Order not found',
@@ -577,14 +906,14 @@ describe('OrderService', () => {
         }))
       );
     });
-    
+
     it('should throw an exception when AMC is not found', async () => {
       jest.spyOn(amcModel, 'findById').mockResolvedValue(null);
-      
+
       await expect(service.getAmcReviewByOrderId(mockOrderId)).rejects.toThrow(
         new HttpException('AMC not found', HttpStatus.NOT_FOUND)
       );
-      
+
       expect(loggerService.error).toHaveBeenCalledWith(
         expect.stringContaining(JSON.stringify({
           message: 'getAmcReviewByOrderId: AMC not found',
@@ -644,8 +973,8 @@ describe('OrderService', () => {
       expectedDates.forEach((expected, index) => {
         const resultPayment = result[index];
         // Helper to format date string for comparison
-        const formatDate = (dateStr) => new Date(dateStr).toISOString().split('T')[0]; 
-        
+        const formatDate = (dateStr) => new Date(dateStr).toISOString().split('T')[0];
+
         expect(formatDate(resultPayment.from_date)).toBe(expected.from);
         expect(formatDate(resultPayment.to_date)).toBe(expected.to);
         expect(resultPayment.is_inactive).toBe(false); // All returned payments should effectively be 'active'
@@ -659,7 +988,7 @@ describe('OrderService', () => {
   describe('createAmcPaymentsTillYear', () => {
     const mockAmcId = 'amc123';
     const tillYear = 2026;
-    
+
     const mockOrder = {
       _id: 'order123',
       amc_start_date: new Date('2024-01-01'),
@@ -723,7 +1052,7 @@ describe('OrderService', () => {
 
       expect(amcModel.findById).toHaveBeenCalledWith(mockAmcId);
       expect(amcModel.populate).toHaveBeenCalled();
-      
+
       expect(result).toEqual({
         amcId: mockAmcId,
         newPaymentsCreated: 1,
@@ -733,7 +1062,7 @@ describe('OrderService', () => {
       });
 
       expect(mockAmc.save).toHaveBeenCalled();
-      
+
       // Verify new payment was added with correct calculations
       expect(mockAmc.payments).toHaveLength(2);
       expect(mockAmc.payments[1]).toEqual(
@@ -893,6 +1222,4 @@ describe('OrderService', () => {
       );
     });
   });
-
-  
 });

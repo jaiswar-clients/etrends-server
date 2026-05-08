@@ -133,6 +133,8 @@ export class RevenueCalculatorService {
 
     const revenueByPeriod = new Map<string, number>();
 
+    console.log(orders.length,"orders")
+
     // FIX 1: Iterate payment_terms directly and group by term.invoice_date
     for (const order of orders) {
       if (this.isNewSaleOrder(order)) {
@@ -160,38 +162,81 @@ export class RevenueCalculatorService {
     endDate: Date,
     filter: string = 'monthly',
   ): Promise<Map<string, number>> {
-    const amcs = await this.amcModel
-      .find({
-        deleted: { $ne: true },
-      })
+    // mongoose-delete overrides find() to auto-exclude deleted docs.
+    // Use findWithDeleted() to include soft-deleted AMCs in revenue calculations.
+    const amcs = await (this.amcModel as any)
+      .findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
       .lean();
 
+    console.log('[DEBUG calculateAMCRevenue] raw AMC count (withDeleted):', amcs.length);
+    console.log('[DEBUG calculateAMCRevenue] deleted breakdown:', amcs.reduce((acc: any, a: any) => {
+      acc[String(a.deleted ?? 'undefined')] = (acc[String(a.deleted ?? 'undefined')] || 0) + 1;
+      return acc;
+    }, {}));
+    console.log('[DEBUG calculateAMCRevenue] payment counts:', amcs.map((a: any) => ({ _id: a._id, deleted: a.deleted, paymentsCount: (a.payments || []).length })));
+
     const revenueByPeriod = new Map<string, number>();
 
+    // DEBUG: trace why AMC revenue is zero
+    let debugTotalAmcs = 0;
+    let debugTotalPayments = 0;
+    let debugProformaSkipped = 0;
+    let debugOutOfRange = 0;
+    let debugZeroAmount = 0;
+    let debugAdded = 0;
+    let debugAddedAmount = 0;
+
     for (const amc of amcs) {
+      debugTotalAmcs++;
       const order = amc.order_id as any;
-      if (!order || !order.amc_start_date) continue;
 
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
+        debugTotalPayments++;
         // Skip proforma payments
-        if (payment.status === 'proforma') continue;
+        if (payment.status === 'proforma') {
+          debugProformaSkipped++;
+          continue;
+        }
 
         const paymentFromDate = new Date(payment.from_date);
 
         // Check if payment falls within date range (range eligibility check)
-        if (paymentFromDate >= startDate && paymentFromDate <= endDate) {
-          // Use amc_rate_amount from payment record
-          const revenue = payment.amc_rate_amount || 0;
-          // Group by order.amc_start_date instead of payment.from_date
-          const period = this.getPeriodLabel(new Date(order.amc_start_date), filter);
-          revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+        if (paymentFromDate < startDate || paymentFromDate > endDate) {
+          debugOutOfRange++;
+          continue;
         }
+
+        // Use amc_rate_amount from payment record
+        const revenue = payment.amc_rate_amount || 0;
+        if (revenue === 0) {
+          debugZeroAmount++;
+        }
+        // Group by order.amc_start_date when available, fallback to payment.from_date
+        const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
+        const period = this.getPeriodLabel(groupDate, filter);
+        revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+        debugAdded++;
+        debugAddedAmount += revenue;
       }
     }
+
+    console.log('[DEBUG calculateAMCRevenue]', {
+      filter,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      totalAmcs: debugTotalAmcs,
+      totalPayments: debugTotalPayments,
+      proformaSkipped: debugProformaSkipped,
+      outOfRange: debugOutOfRange,
+      zeroAmount: debugZeroAmount,
+      added: debugAdded,
+      addedAmount: debugAddedAmount,
+      periods: Array.from(revenueByPeriod.entries()),
+    });
 
     return revenueByPeriod;
   }
@@ -391,7 +436,6 @@ export class RevenueCalculatorService {
 
     for (const amc of amcs) {
       const order = amc.order_id as any;
-      if (!order || !order.amc_start_date) continue;
 
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
@@ -412,8 +456,9 @@ export class RevenueCalculatorService {
           amcExpected += expected;
           amcCollected += collected;
 
-          // Group by order.amc_start_date instead of payment.from_date
-          const period = this.getPeriodLabel(new Date(order.amc_start_date), filter);
+          // Group by order.amc_start_date when available, fallback to payment.from_date
+          const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
+          const period = this.getPeriodLabel(groupDate, filter);
           const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
           existing.expected += expected;
           existing.collected += collected;
@@ -545,7 +590,6 @@ export class RevenueCalculatorService {
 
     for (const amc of amcs) {
       const order = amc.order_id as any;
-      if (!order || !order.amc_start_date) continue;
 
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
@@ -569,7 +613,7 @@ export class RevenueCalculatorService {
             productName: 'AMC',
             amount: revenue,
             status: payment.status || 'unknown',
-            date: order.amc_start_date,
+            date: order?.amc_start_date || payment.from_date,
           });
         }
       }
@@ -775,7 +819,6 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       const order = amc.order_id as any;
-      if (!order || !order.amc_start_date) continue;
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
@@ -824,7 +867,6 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       const order = amc.order_id as any;
-      if (!order || !order.amc_start_date) continue;
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
@@ -1020,7 +1062,6 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       const order = amc.order_id as any;
-      if (!order || !order.amc_start_date) continue;
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
