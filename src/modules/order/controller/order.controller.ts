@@ -26,6 +26,7 @@ import {
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
+import { CancelOrderDto } from '../dto/cancel-order.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import { Response } from 'express';
@@ -568,6 +569,14 @@ export class OrderController {
         status: body.status,
       },
     );
+  }
+
+  @Post('/:id/cancel')
+  async cancelOrder(
+    @Param('id') id: string,
+    @Body() body: CancelOrderDto,
+  ) {
+    return this.orderService.cancelOrder(id, body.reason, body.cancelled_products);
   }
 
   @Delete('/:id')

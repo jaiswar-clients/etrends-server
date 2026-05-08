@@ -44,6 +44,27 @@ export class RevenueCalculatorService {
   ) {}
 
   /**
+   * Check if a revenue stream should be included based on order type filter
+   */
+  private shouldIncludeStream(
+    streamType: 'new' | 'amc' | 'customization' | 'license',
+    orderTypes?: string,
+  ): boolean {
+    if (!orderTypes) return true;
+    const types = orderTypes.split(',').map((t) => t.trim().toLowerCase());
+    if (types.includes('all')) return true;
+
+    const map: Record<string, string> = {
+      new: 'new',
+      amc: 'amc',
+      customization: 'customization',
+      auditor: 'license',
+      auditor_license: 'license',
+    };
+    return types.some((t) => map[t] === streamType);
+  }
+
+  /**
    * Check if an order qualifies as a new sale
    * New Sale = Any new product order (NOT AMC renewal payments)
    */
@@ -342,8 +363,15 @@ export class RevenueCalculatorService {
     }
 
     // Calculate revenues
-    const newSalesRevenue = await this.calculateNewSalesRevenue(start, end, filter);
-    const amcRevenue = await this.calculateAMCRevenue(start, end, filter);
+    const includeNewOrders = this.shouldIncludeStream('new', query.orderTypes);
+    const includeAMC = this.shouldIncludeStream('amc', query.orderTypes);
+
+    const newSalesRevenue = includeNewOrders
+      ? await this.calculateNewSalesRevenue(start, end, filter)
+      : new Map<string, number>();
+    const amcRevenue = includeAMC
+      ? await this.calculateAMCRevenue(start, end, filter)
+      : new Map<string, number>();
 
     // Combine all periods
     const allPeriods = this.sortPeriods([
@@ -384,115 +412,122 @@ export class RevenueCalculatorService {
     const { start, end } = this.getFiscalYearRange(fiscalYear);
     const fyLabel = `FY${(fiscalYear % 100).toString().padStart(2, '0')}-${((fiscalYear + 1) % 100).toString().padStart(2, '0')}`;
 
-    // New Sales: Expected vs Collected
-    const newSalesOrders = await this.orderModel
-      .find({
-        purchased_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
+    const includeNewOrders = this.shouldIncludeStream('new', query.orderTypes);
+    const includeAMC = this.shouldIncludeStream('amc', query.orderTypes);
 
-    const newSalesBreakdown: IPeriodBreakdown[] = [];
+    // New Sales: Expected vs Collected
+    let newSalesBreakdown: IPeriodBreakdown[] = [];
     let newSalesExpected = 0;
     let newSalesCollected = 0;
 
-    // Group by month for breakdown
-    const newSalesByPeriod = new Map<string, { expected: number; collected: number }>();
+    if (includeNewOrders) {
+      const newSalesOrders = await this.orderModel
+        .find({
+          purchased_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
 
-    // FIX 2: Iterate payment_terms directly and group by term.invoice_date
-    for (const order of newSalesOrders) {
-      if (this.isNewSaleOrder(order)) {
-        for (const term of order.payment_terms || []) {
-          if (!term.invoice_date) continue;
-          if (term.status === 'proforma') continue;
-          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+      // Group by month for breakdown
+      const newSalesByPeriod = new Map<string, { expected: number; collected: number }>();
 
-          const termAmount = term.calculated_amount || 0;
-          const isPaid = term.status === 'paid';
+      // FIX 2: Iterate payment_terms directly and group by term.invoice_date
+      for (const order of newSalesOrders) {
+        if (this.isNewSaleOrder(order)) {
+          for (const term of order.payment_terms || []) {
+            if (!term.invoice_date) continue;
+            if (term.status === 'proforma') continue;
+            if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
-          // Expected: all terms with status 'paid' or 'invoice'
-          newSalesExpected += termAmount;
-          // Collected: only terms with status 'paid'
-          if (isPaid) {
-            newSalesCollected += termAmount;
+            const termAmount = term.calculated_amount || 0;
+            const isPaid = term.status === 'paid';
+
+            // Expected: all terms with status 'paid' or 'invoice'
+            newSalesExpected += termAmount;
+            // Collected: only terms with status 'paid'
+            if (isPaid) {
+              newSalesCollected += termAmount;
+            }
+
+            // Add to period breakdown grouped by invoice_date
+            const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
+            const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
+            existing.expected += termAmount;
+            if (isPaid) {
+              existing.collected += termAmount;
+            }
+            newSalesByPeriod.set(period, existing);
           }
-
-          // Add to period breakdown grouped by invoice_date
-          const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
-          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
-          existing.expected += termAmount;
-          if (isPaid) {
-            existing.collected += termAmount;
-          }
-          newSalesByPeriod.set(period, existing);
         }
       }
-    }
 
-    // Convert to array
-    const sortedPeriods = this.sortPeriods([...newSalesByPeriod.keys()]);
-    for (const period of sortedPeriods) {
-      const data = newSalesByPeriod.get(period)!;
-      newSalesBreakdown.push({
-        period,
-        expected: data.expected,
-        collected: data.collected,
-      });
+      // Convert to array
+      const sortedPeriods = this.sortPeriods([...newSalesByPeriod.keys()]);
+      for (const period of sortedPeriods) {
+        const data = newSalesByPeriod.get(period)!;
+        newSalesBreakdown.push({
+          period,
+          expected: data.expected,
+          collected: data.collected,
+        });
+      }
     }
 
     // AMC: Expected vs Collected
-    const amcs = await (this.amcModel as any).findWithDeleted()
-      .populate({ path: 'order_id', model: 'Order' })
-      .lean();
-
-    const amcBreakdown: IPeriodBreakdown[] = [];
+    let amcBreakdown: IPeriodBreakdown[] = [];
     let amcExpected = 0;
     let amcCollected = 0;
 
-    const amcByPeriod = new Map<string, { expected: number; collected: number }>();
+    if (includeAMC) {
+      const amcs = await (this.amcModel as any).findWithDeleted()
+        .populate({ path: 'order_id', model: 'Order' })
+        .lean();
 
-    for (const amc of amcs) {
-      const order = amc.order_id as any;
+      const amcByPeriod = new Map<string, { expected: number; collected: number }>();
 
-      // Include all payments (first payment is now paid AMC, not free period)
-      const allPayments = amc.payments || [];
+      for (const amc of amcs) {
+        const order = amc.order_id as any;
 
-      for (const payment of allPayments) {
-        // Skip proforma payments
-        if (payment.status === 'proforma') continue;
+        // Include all payments (first payment is now paid AMC, not free period)
+        const allPayments = amc.payments || [];
 
-        const paymentFromDate = new Date(payment.from_date);
+        for (const payment of allPayments) {
+          // Skip proforma payments
+          if (payment.status === 'proforma') continue;
 
-        // Check if payment falls within date range (range eligibility check)
-        if (paymentFromDate >= start && paymentFromDate <= end) {
-          // Expected: calculated_amount (amc_rate_amount)
-          const expected = payment.amc_rate_amount || 0;
-          // Collected: only if status is PAID
-          const collected = payment.status === PAYMENT_STATUS_ENUM.PAID ? expected : 0;
+          const paymentFromDate = new Date(payment.from_date);
 
-          amcExpected += expected;
-          amcCollected += collected;
+          // Check if payment falls within date range (range eligibility check)
+          if (paymentFromDate >= start && paymentFromDate <= end) {
+            // Expected: calculated_amount (amc_rate_amount)
+            const expected = payment.amc_rate_amount || 0;
+            // Collected: only if status is PAID
+            const collected = payment.status === PAYMENT_STATUS_ENUM.PAID ? expected : 0;
 
-          // Group by order.amc_start_date when available, fallback to payment.from_date
-          const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
-          const period = this.getPeriodLabel(groupDate, filter);
-          const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
-          existing.expected += expected;
-          existing.collected += collected;
-          amcByPeriod.set(period, existing);
+            amcExpected += expected;
+            amcCollected += collected;
+
+            // Group by order.amc_start_date when available, fallback to payment.from_date
+            const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
+            const period = this.getPeriodLabel(groupDate, filter);
+            const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
+            existing.expected += expected;
+            existing.collected += collected;
+            amcByPeriod.set(period, existing);
+          }
         }
       }
-    }
 
-    // Convert to array
-    const amcSortedPeriods = this.sortPeriods([...amcByPeriod.keys()]);
-    for (const period of amcSortedPeriods) {
-      const data = amcByPeriod.get(period)!;
-      amcBreakdown.push({
-        period,
-        expected: data.expected,
-        collected: data.collected,
-      });
+      // Convert to array
+      const amcSortedPeriods = this.sortPeriods([...amcByPeriod.keys()]);
+      for (const period of amcSortedPeriods) {
+        const data = amcByPeriod.get(period)!;
+        amcBreakdown.push({
+          period,
+          expected: data.expected,
+          collected: data.collected,
+        });
+      }
     }
 
     return {

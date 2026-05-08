@@ -105,6 +105,7 @@ export class ReportController {
     @Query('quarter') quarter: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('orderTypes') orderTypes?: string,
   ) {
     return await this.revenueCalculatorService.getRevenueDashboard({
       filter: filter || 'monthly',
@@ -114,6 +115,7 @@ export class ReportController {
         startDate === 'undefined' || !startDate ? undefined : new Date(startDate),
       endDate:
         endDate === 'undefined' || !endDate ? undefined : new Date(endDate),
+      orderTypes: orderTypes === 'undefined' || !orderTypes ? undefined : orderTypes,
     });
   }
 
@@ -121,6 +123,7 @@ export class ReportController {
   async getExpectedVsCollected(
     @Query('fiscalYear') fiscalYear: string,
     @Query('filter') filter: 'monthly' | 'quarterly' | 'yearly',
+    @Query('orderTypes') orderTypes?: string,
   ) {
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
@@ -131,6 +134,7 @@ export class ReportController {
         ? defaultFiscalYear
         : Number(fiscalYear),
       filter: filter || 'monthly',
+      orderTypes: orderTypes === 'undefined' || !orderTypes ? undefined : orderTypes,
     });
   }
 
@@ -169,6 +173,7 @@ export class ReportController {
   async exportExcelReport(
     @Query('fiscalYear') fiscalYear: string,
     @Query('filter') filter: 'monthly' | 'quarterly',
+    @Query('orderTypes') orderTypes: string,
     @Res() res: Response,
   ) {
     const currentMonth = new Date().getMonth();
@@ -179,10 +184,12 @@ export class ReportController {
       ? defaultFiscalYear
       : Number(fiscalYear);
 
+    const ot = orderTypes === 'undefined' || !orderTypes ? undefined : orderTypes;
+
     // Fetch all data in parallel
     const [revenueDashboard, expectedVsCollected, clientHealth] = await Promise.all([
-      this.revenueCalculatorService.getRevenueDashboard({ filter: filter || 'monthly', year: fy }),
-      this.revenueCalculatorService.getExpectedVsCollected({ fiscalYear: fy, filter: filter || 'monthly' }),
+      this.revenueCalculatorService.getRevenueDashboard({ filter: filter || 'monthly', year: fy, orderTypes: ot }),
+      this.revenueCalculatorService.getExpectedVsCollected({ fiscalYear: fy, filter: filter || 'monthly', orderTypes: ot }),
       this.revenueCalculatorService.getClientHealthDashboard(fy),
     ]);
 

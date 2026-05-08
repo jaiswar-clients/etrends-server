@@ -5119,6 +5119,82 @@ export class OrderService {
     }
   }
 
+  async cancelOrder(orderId: string, reason: string, cancelledProducts?: string[]) {
+    if (!orderId) {
+      throw new HttpException('Order id is required', HttpStatus.BAD_REQUEST);
+    }
+    if (!reason) {
+      throw new HttpException('Cancellation reason is required', HttpStatus.BAD_REQUEST);
+    }
+
+    const existingOrder = await this.orderModel.findById(orderId);
+    if (!existingOrder) {
+      throw new HttpException('Order not found', HttpStatus.NOT_FOUND);
+    }
+    if (
+      existingOrder.status === ORDER_STATUS_ENUM.INACTIVE ||
+      existingOrder.cancelled_at
+    ) {
+      throw new HttpException(
+        'Order is already cancelled or inactive',
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    const previousStatus = existingOrder.status;
+
+    const order = await this.orderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        status: { $ne: ORDER_STATUS_ENUM.INACTIVE },
+        cancelled_at: { $exists: false },
+      },
+      {
+        $set: {
+          status: ORDER_STATUS_ENUM.INACTIVE,
+          cancelled_at: new Date(),
+          cancellation_reason: reason,
+          ...(cancelledProducts?.length
+            ? { cancelled_products: cancelledProducts }
+            : {}),
+        },
+        $push: {
+          status_logs: {
+            from: previousStatus,
+            to: ORDER_STATUS_ENUM.INACTIVE,
+            date: new Date(),
+            user: null as any,
+          },
+        },
+      },
+      { new: true },
+    );
+
+    if (!order) {
+      throw new HttpException(
+        'Order was modified by another request. Please try again.',
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'cancelOrder: Order cancelled',
+        orderId,
+        reason,
+        cancelledProducts,
+      }),
+    );
+
+    return {
+      message: 'Order cancelled successfully',
+      orderId: order._id,
+      status: order.status,
+      cancelled_at: order.cancelled_at,
+      cancellation_reason: order.cancellation_reason,
+    };
+  }
+
   async deleteOrderById(orderId: string) {
     if (!orderId) {
       this.loggerService.error(

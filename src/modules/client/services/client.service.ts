@@ -9,17 +9,20 @@ import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
 import { Product, ProductDocument } from '@/db/schema/product.schema';
 import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
+import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import { Types } from 'mongoose';
 import { Reminder, ReminderDocument } from '@/db/schema/reminders/reminder.schema';
 
 interface ClientFilterOptions {
   parentCompanyId?: string;
   clientName?: string;
-  industry?: string;
-  productId?: string;
+  industry?: string; // now can be comma-separated for multi-select
+  productId?: string; // already comma-separated
   startDate?: string;
   endDate?: string;
   hasOrders?: string;
+  status?: string; // 'active', 'inactive', or comma-separated both
+  financialYear?: number; // e.g. 2024 means FY 2024-25
 }
 
 @Injectable()
@@ -55,14 +58,17 @@ export class ClientService {
   }> {
     try {
       // Validate industry if provided
-      if (
-        filters.industry &&
-        !Object.values(INDUSTRIES_ENUM).includes(filters.industry as any)
-      ) {
-        throw new HttpException(
-          'Invalid industry value',
-          HttpStatus.BAD_REQUEST,
+      if (filters.industry) {
+        const industries = filters.industry.split(',').map((s) => s.trim());
+        const invalid = industries.filter(
+          (i) => !Object.values(INDUSTRIES_ENUM).includes(i as any),
         );
+        if (invalid.length > 0) {
+          throw new HttpException(
+            'Invalid industry value(s)',
+            HttpStatus.BAD_REQUEST,
+          );
+        }
       }
 
       // Validate dates
@@ -127,16 +133,19 @@ export class ClientService {
       const filterQuery: any = { is_parent_company: false };
       let orderIdsForFilter: Types.ObjectId[] | null = null;
 
-      // Apply date range filter to createdAt
-      if (parsedStartDate && parsedEndDate) {
-        filterQuery.createdAt = {
-          $gte: parsedStartDate,
-          $lte: parsedEndDate,
-        };
-      } else if (parsedStartDate) {
-        filterQuery.createdAt = { $gte: parsedStartDate };
-      } else if (parsedEndDate) {
-        filterQuery.createdAt = { $lte: parsedEndDate };
+      // Skip createdAt date filtering when financialYear is provided
+      // (FY filter uses first_order_date instead)
+      if (!filters.financialYear) {
+        if (parsedStartDate && parsedEndDate) {
+          filterQuery.createdAt = {
+            $gte: parsedStartDate,
+            $lte: parsedEndDate,
+          };
+        } else if (parsedStartDate) {
+          filterQuery.createdAt = { $gte: parsedStartDate };
+        } else if (parsedEndDate) {
+          filterQuery.createdAt = { $lte: parsedEndDate };
+        }
       }
 
       // 1. Filter by Client Name
@@ -165,7 +174,8 @@ export class ClientService {
 
       // 3. Filter by Industry
       if (filters.industry && filters.industry.trim() !== '') {
-        filterQuery.industry = filters.industry;
+        const industries = filters.industry.split(',').map((s) => s.trim());
+        filterQuery.industry = { $in: industries };
       }
 
       // 4. Filter by Product ID or short_name (find orders first)
@@ -232,6 +242,37 @@ export class ClientService {
         } else {
           filterQuery.orders = { $exists: false, $eq: [] };
         }
+      }
+
+      // 6. Filter by status (active/inactive derived from orders)
+      let activeClientIds: Types.ObjectId[] = [];
+      const idConditions: any[] = [];
+      if (filters.status && filters.status.trim() !== '') {
+        const statuses = filters.status.split(',').map((s) => s.trim().toLowerCase());
+        // Only query active orders if we need to differentiate
+        if (statuses.includes('active') || statuses.includes('inactive')) {
+          activeClientIds = await this.orderModel
+            .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+            .distinct('client_id');
+
+          const activeClientObjectIds = activeClientIds.map((id) =>
+            typeof id === 'string' ? new Types.ObjectId(id) : id,
+          );
+
+          if (statuses.includes('active') && !statuses.includes('inactive')) {
+            idConditions.push({ $in: activeClientObjectIds });
+          } else if (statuses.includes('inactive') && !statuses.includes('active')) {
+            idConditions.push({ $nin: activeClientObjectIds });
+          }
+          // If both, no additional _id filter needed
+        }
+      }
+
+      // Merge _id conditions if any
+      if (idConditions.length === 1) {
+        filterQuery._id = idConditions[0];
+      } else if (idConditions.length > 1) {
+        filterQuery._id = { $and: idConditions };
       }
 
       this.loggerService.log(
@@ -367,18 +408,42 @@ export class ClientService {
         }),
       );
 
+      // Filter by financial year (post-query, using first_order_date)
+      let filteredClients = transformedClients;
+      let fyFilteredTotal = transformedClients.length;
+      if (filters.financialYear) {
+        const fyStart = new Date(filters.financialYear, 3, 1);
+        const fyEnd = new Date(filters.financialYear + 1, 2, 31, 23, 59, 59);
+        filteredClients = transformedClients.filter((client) => {
+          if (!client.first_order_date) return false;
+          const firstOrder = new Date(client.first_order_date);
+          return firstOrder >= fyStart && firstOrder <= fyEnd;
+        });
+        fyFilteredTotal = filteredClients.length;
+      }
+
+      // When financialYear is active, paginate the filtered results in-memory
+      if (filters.financialYear && !fetchAll) {
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        filteredClients = filteredClients.slice(startIndex, endIndex);
+      }
+
       const result: any = {
-        clients: transformedClients,
+        clients: filteredClients,
       };
 
       // Add pagination info if not fetchAll
       if (!fetchAll) {
+        const actualTotal = filters.financialYear
+          ? fyFilteredTotal
+          : totalClients;
         result.pagination = {
-          total: totalClients,
+          total: actualTotal,
           page,
           limit,
-          pages: Math.ceil(totalClients / limit),
-          hasNextPage: page < Math.ceil(totalClients / limit),
+          pages: Math.ceil(actualTotal / limit),
+          hasNextPage: page < Math.ceil(actualTotal / limit),
           hasPreviousPage: page > 1,
         };
       }
@@ -1035,6 +1100,7 @@ export class ClientService {
       let totalProfit = 0;
       let upcomingAmcProfit = 0;
       let totalAMCCollected = 0;
+      let totalBalance = 0;
 
       // Revenue breakdown
       let revenueBreakdown = {
@@ -1084,6 +1150,36 @@ export class ClientService {
           revenueBreakdown.additional_services += additionalServicesCost;
         }
 
+        // Compute balance for this order
+        const orderTotalValue =
+          (order.base_cost || 0) +
+          (order.training_and_implementation_cost || 0) +
+          (order.customizations?.reduce(
+            (sum: number, c: any) => sum + (c.cost || 0),
+            0,
+          ) || 0) +
+          (order.licenses?.reduce(
+            (sum: number, l: any) => sum + (l.total_license || 0) * (l.rate?.amount || 0),
+            0,
+          ) || 0) +
+          (order.additional_services?.reduce(
+            (sum: number, s: any) => sum + (s.cost || 0),
+            0,
+          ) || 0);
+
+        const receivedPayments =
+          order.payment_terms?.reduce((sum: number, pt: any) => {
+            if (
+              pt.status === PAYMENT_STATUS_ENUM.PAID ||
+              pt.status === PAYMENT_STATUS_ENUM.INVOICE
+            ) {
+              return sum + (pt.calculated_amount || 0);
+            }
+            return sum;
+          }, 0) || 0;
+
+        totalBalance += orderTotalValue - receivedPayments;
+
         if (amc.payments.length > 1) {
           // exclude first payment as it is free
           const amcPayments = amc.payments.slice(1);
@@ -1114,6 +1210,7 @@ export class ClientService {
         total_profit: totalProfit,
         upcoming_amc_profit: upcomingAmcProfit,
         total_amc_collection: totalAMCCollected,
+        balance: totalBalance,
         revenue_breakdown: revenueBreakdown,
         currency: 'INR',
         orders: formattedOrders,
@@ -1187,7 +1284,45 @@ export class ClientService {
     }
   }
 
-  async checkClientNameExists(clientName: string): Promise<{
+  async getClientStats(
+    filters: Omit<ClientFilterOptions, 'status'>,
+  ): Promise<{ active: number; inactive: number; total: number }> {
+    try {
+      // Get all matching clients without status filter (fetchAll ignores limit)
+      const { clients } = await this.getAllClients(1, 1, true, {
+        ...filters,
+        status: undefined,
+      });
+
+      // Count clients with at least one active order
+      const activeClientIds = await this.orderModel
+        .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+        .distinct('client_id');
+      const activeIdSet = new Set(activeClientIds.map((id) => id.toString()));
+
+      const active = clients.filter((c: any) => activeIdSet.has(c._id.toString())).length;
+      const total = clients.length;
+
+      return { active, inactive: total - active, total };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getClientStats failed',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message ?? 'Failed to get client stats',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async checkClientDuplicate(
+    clientName: string,
+    product?: string,
+    excludeClientId?: string,
+  ): Promise<{
     exists: boolean;
     clients: any[];
   }> {
@@ -1196,19 +1331,26 @@ export class ClientService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'checkClientNameExists: Checking if client name exists',
+          message: 'checkClientDuplicate: Checking for duplicate client',
           originalName: clientName,
           normalizedName,
+          product,
+          excludeClientId,
         }),
       );
 
       // Fetch only relevant clients and limit for performance
+      let query: any = {};
+      if (excludeClientId && Types.ObjectId.isValid(excludeClientId)) {
+        query._id = { $ne: new Types.ObjectId(excludeClientId) };
+      }
+
       const clients = await this.clientModel
-        .find({})
-        .select('name client_id industry createdAt')
+        .find(query)
+        .select('name client_id industry createdAt orders')
         .lean();
 
-      const filteredClients = clients
+      let filteredClients = clients
         .map((client) => {
           const normalized = client.name.toLowerCase().replace(/\s+/g, '');
           return {
@@ -1225,6 +1367,52 @@ export class ClientService {
         })
         .map(({ normalizedName, ...client }) => client); // Strip temp field
 
+      // If product is provided, further filter by product match
+      if (product && product.trim() !== '') {
+        const productNormalized = product.toLowerCase().replace(/\s+/g, '');
+        const clientsWithProductMatch: any[] = [];
+
+        for (const client of filteredClients) {
+          if (!client.orders || client.orders.length === 0) {
+            continue;
+          }
+
+          const orders = await this.orderModel
+            .find({ _id: { $in: client.orders } })
+            .populate({
+              path: 'products',
+              model: 'Product',
+              select: 'name short_name _id',
+            })
+            .lean();
+
+          const hasProductMatch = orders.some((order: any) => {
+            if (!order.products || order.products.length === 0) return false;
+            return order.products.some((p: any) => {
+              const nameMatch =
+                p.name &&
+                p.name.toLowerCase().replace(/\s+/g, '') === productNormalized;
+              const shortNameMatch =
+                p.short_name &&
+                p.short_name.toLowerCase().replace(/\s+/g, '') ===
+                  productNormalized;
+              const idMatch =
+                p._id &&
+                (p._id.toString() === product ||
+                  (Types.ObjectId.isValid(product) &&
+                    p._id.toString() === new Types.ObjectId(product).toString()));
+              return nameMatch || shortNameMatch || idMatch;
+            });
+          });
+
+          if (hasProductMatch) {
+            clientsWithProductMatch.push(client);
+          }
+        }
+
+        filteredClients = clientsWithProductMatch;
+      }
+
       const exists =
         filteredClients.length > 0 &&
         filteredClients[0].name.toLowerCase().replace(/\s+/g, '') ===
@@ -1232,7 +1420,7 @@ export class ClientService {
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'checkClientNameExists: Client name search completed',
+          message: 'checkClientDuplicate: Client duplicate search completed',
           exists,
           totalResults: filteredClients.length,
           normalizedName,
@@ -1246,8 +1434,7 @@ export class ClientService {
     } catch (error: any) {
       this.loggerService.error(
         JSON.stringify({
-          message:
-            'checkClientNameExists: Failed to check client name existence',
+          message: 'checkClientDuplicate: Failed to check client duplicate',
           error: error.message,
           stack: error.stack,
           clientName,
@@ -1255,7 +1442,7 @@ export class ClientService {
       );
 
       throw new HttpException(
-        error.message ?? 'Failed to check client name existence',
+        error.message ?? 'Failed to check client duplicate',
         HttpStatus.BAD_GATEWAY,
         { cause: error },
       );

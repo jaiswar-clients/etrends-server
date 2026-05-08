@@ -73,11 +73,13 @@ export interface IRevenueDashboardQuery {
   quarter?: string;
   startDate?: Date;
   endDate?: Date;
+  orderTypes?: string; // comma-separated: 'new','amc','customization','auditor'
 }
 
 export interface IExpectedVsCollectedQuery {
   fiscalYear: number; // Start year of fiscal year (e.g., 2024 for FY24-25)
   filter?: 'monthly' | 'quarterly' | 'yearly';
+  orderTypes?: string; // comma-separated: 'new','amc','customization','auditor'
 }
 
 export interface IMonthlyBreakdownQuery {

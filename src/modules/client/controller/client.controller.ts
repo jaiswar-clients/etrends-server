@@ -39,18 +39,31 @@ export class ClientController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('has_orders') hasOrders?: string,
+    @Query('status') status?: string,
+    @Query('financial_year') financialYear?: string,
   ) {
     // Ensure valid pagination parameters
     const parsedPage = Math.max(1, parseInt(String(page)) || 1);
     const parsedLimit = Math.min(
-      50,
+      100,
       Math.max(1, parseInt(String(limit)) || 10),
     );
     const fetchAll = String(all).toLowerCase() === 'true';
 
+    const parsedFinancialYear = financialYear ? parseInt(financialYear) : undefined;
+    if (financialYear && isNaN(parsedFinancialYear)) {
+      throw new HttpException('Invalid financial year', HttpStatus.BAD_REQUEST);
+    }
+
     // Validate industry if provided
-    if (industry && !Object.values(INDUSTRIES_ENUM).includes(industry as any)) {
-      throw new HttpException('Invalid industry value', HttpStatus.BAD_REQUEST);
+    if (industry) {
+      const industries = industry.split(',').map((s) => s.trim());
+      const invalid = industries.filter(
+        (i) => !Object.values(INDUSTRIES_ENUM).includes(i as any),
+      );
+      if (invalid.length > 0) {
+        throw new HttpException('Invalid industry value(s)', HttpStatus.BAD_REQUEST);
+      }
     }
 
     // Basic date validation
@@ -63,7 +76,6 @@ export class ClientController {
     if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
       throw new HttpException('Start date cannot be after end date', HttpStatus.BAD_REQUEST);
     }
-
 
     this.loggerService.log(
       JSON.stringify({
@@ -79,6 +91,8 @@ export class ClientController {
           startDate,
           endDate,
           hasOrders,
+          status,
+          financialYear: parsedFinancialYear,
         },
       }),
     );
@@ -95,6 +109,8 @@ export class ClientController {
         startDate,
         endDate,
         hasOrders,
+        status,
+        financialYear: parsedFinancialYear,
       },
     );
   }
@@ -109,12 +125,25 @@ export class ClientController {
     @Query('startDate') startDate: string | undefined = undefined,
     @Query('endDate') endDate: string | undefined = undefined,
     @Query('has_orders') hasOrders: string | undefined = undefined,
+    @Query('status') status: string | undefined = undefined,
+    @Query('financial_year') financialYear: string | undefined = undefined,
     @Res() res: Response,
   ) {
     const fetchAll = String(all).toLowerCase() === 'true';
 
-    if (industry && !Object.values(INDUSTRIES_ENUM).includes(industry as any)) {
-      throw new HttpException('Invalid industry value', HttpStatus.BAD_REQUEST);
+    const parsedFinancialYear = financialYear ? parseInt(financialYear) : undefined;
+    if (financialYear && isNaN(parsedFinancialYear)) {
+      throw new HttpException('Invalid financial year', HttpStatus.BAD_REQUEST);
+    }
+
+    if (industry) {
+      const industries = industry.split(',').map((s) => s.trim());
+      const invalid = industries.filter(
+        (i) => !Object.values(INDUSTRIES_ENUM).includes(i as any),
+      );
+      if (invalid.length > 0) {
+        throw new HttpException('Invalid industry value(s)', HttpStatus.BAD_REQUEST);
+      }
     }
 
     if (startDate && isNaN(new Date(startDate).getTime())) {
@@ -139,6 +168,8 @@ export class ClientController {
           startDate,
           endDate,
           hasOrders,
+          status,
+          financialYear: parsedFinancialYear,
         },
       }),
     );
@@ -151,6 +182,8 @@ export class ClientController {
       startDate,
       endDate,
       hasOrders,
+      status,
+      financialYear: parsedFinancialYear,
     });
 
     const date = new Date().toISOString().split('T')[0];
@@ -170,9 +203,40 @@ export class ClientController {
     return this.clientService.generateUniqueClientId();
   }
 
-  @Get('/check-client-name')
-  async checkClientName(@Query('name') name: string) {
-    return this.clientService.checkClientNameExists(name);
+  @Get('/stats')
+  async getClientStats(
+    @Query('parent_company_id') parentCompanyId?: string,
+    @Query('client_name') clientName?: string,
+    @Query('industry') industry?: string,
+    @Query('product_id') productId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('has_orders') hasOrders?: string,
+    @Query('financial_year') financialYear?: string,
+  ) {
+    const parsedFinancialYear = financialYear ? parseInt(financialYear) : undefined;
+    if (financialYear && isNaN(parsedFinancialYear)) {
+      throw new HttpException('Invalid financial year', HttpStatus.BAD_REQUEST);
+    }
+    return this.clientService.getClientStats({
+      parentCompanyId,
+      clientName,
+      industry,
+      productId,
+      startDate,
+      endDate,
+      hasOrders,
+      financialYear: parsedFinancialYear,
+    });
+  }
+
+  @Get('/check-client-duplicate')
+  async checkClientDuplicate(
+    @Query('name') name: string,
+    @Query('product') product?: string,
+    @Query('exclude_id') excludeId?: string,
+  ) {
+    return this.clientService.checkClientDuplicate(name, product, excludeId);
   }
 
   @Get('/parent-companies')

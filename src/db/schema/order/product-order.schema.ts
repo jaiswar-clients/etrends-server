@@ -241,6 +241,15 @@ export class Order extends Document {
     amount: number;
     date: Date;
   }[];
+
+  @Prop({ type: Date })
+  cancelled_at?: Date;
+
+  @Prop({ type: String })
+  cancellation_reason?: string;
+
+  @Prop({ type: [String], default: [] })
+  cancelled_products?: string[];
 }
 
 // Define schema with plugins and virtuals as needed
