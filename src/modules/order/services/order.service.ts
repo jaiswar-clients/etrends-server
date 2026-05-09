@@ -1594,8 +1594,18 @@ export class OrderService {
         .limit(limit)
         .sort({ createdAt: -1 })
         .populate([
-          { path: 'licenses', model: License.name, select: '_id' },
-          { path: 'customizations', model: Customization.name, select: '_id' },
+          {
+            path: 'licenses',
+            model: License.name,
+            select:
+              '_id purchase_order_number purchase_date invoice_number rate total_license payment_status',
+          },
+          {
+            path: 'customizations',
+            model: Customization.name,
+            select:
+              '_id type purchase_order_number cost modules purchased_date',
+          },
           { path: 'additional_services', model: AdditionalService.name },
           { path: 'client_id', select: 'name parent_company_id' },
           { path: 'products', model: Product.name },
@@ -1665,6 +1675,13 @@ export class OrderService {
           } else {
             orderObj.agreements = [];
           }
+
+          // Add has_* flags based on raw ObjectId array lengths (before populate filtering)
+          orderObj.has_customizations =
+            Array.isArray(order.customizations) && order.customizations.length > 0;
+          orderObj.has_licenses =
+            Array.isArray(order.licenses) && order.licenses.length > 0;
+          orderObj.has_amc = order.amc_id != null;
 
           // Process licenses
           if (order.licenses && order.licenses.length) {
