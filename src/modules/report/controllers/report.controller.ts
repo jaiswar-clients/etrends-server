@@ -15,6 +15,9 @@ export class ReportController {
     private readonly excelExportService: ExcelExportService,
   ) {}
 
+  /**
+   * @deprecated Use /reports/revenue-dashboard instead
+   */
   @Get('total-billing')
   async getTotalBilling(
     @Query('filter') filter: ReportFilterType,
@@ -29,6 +32,9 @@ export class ReportController {
     });
   }
 
+  /**
+   * @deprecated Use /reports/client-health-dashboard instead
+   */
   @Get('amc-annual-breakdown')
   async getAMCAnnualBreakdown(
     @Query('filter') filter: ReportFilterType,
@@ -52,6 +58,9 @@ export class ReportController {
     });
   }
 
+  /**
+   * @deprecated Use /reports/expected-vs-collected instead
+   */
   @Get('expected-vs-received-revenue')
   async getExpectedVsReceivedRevenue(
     @Query('filter') filter: ReportFilterType,
@@ -66,6 +75,9 @@ export class ReportController {
     });
   }
 
+  /**
+   * @deprecated Use /reports/revenue-dashboard instead
+   */
   @Get('product-wise-revenue-distribution')
   async getProductWiseRevenueDistribution(
     @Query('filter') filter: ReportFilterType,
@@ -82,6 +94,9 @@ export class ReportController {
     });
   }
 
+  /**
+   * @deprecated Use /reports/client-health-dashboard instead
+   */
   @Get('industry-wise-revenue-distribution')
   async getIndustryWiseRevenueDistribution(
     @Query('filter') filter: ReportFilterType,
