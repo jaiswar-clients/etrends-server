@@ -57,6 +57,8 @@ interface OrderFilterOptions {
   status?: ORDER_STATUS_ENUM;
   startDate?: string | Date;
   endDate?: string | Date;
+  types?: string;
+  includeCancelled?: boolean;
 }
 
 @Injectable()
@@ -781,6 +783,7 @@ export class OrderService {
       const order = await this.orderModel
         .findById(orderId)
         .populate([{ path: 'customizations', model: Customization.name }])
+        .populate({ path: 'licenses', model: License.name })
         .populate({ path: 'amc_id', select: 'amount', model: AMC.name });
 
       if (!order) {
@@ -1224,161 +1227,160 @@ export class OrderService {
     }
   }
 
-  async loadAllOrdersWithAttributes(
-    page: number,
-    limit: number,
-    filters: OrderFilterOptions = {},
-  ): Promise<{
-    purchases: any[]; // Use any[] for simplicity here
-    pagination: {
-      total: number;
-      page: number;
-      limit: number;
-      pages: number;
-      hasNextPage: boolean;
-      hasPreviousPage: boolean;
-    };
-    // Removed clientCompanies and parentCompanies from return type
-  }> {
-    try {
-      // Validate status if provided
-      if (
-        filters.status &&
-        !Object.values(ORDER_STATUS_ENUM).includes(filters.status)
-      ) {
-        throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
-      }
+  /**
+   * Shared filter builder for order list and export queries.
+   * Returns the constructed MongoDB filter query.
+   */
+  private async buildOrderFilterQuery(
+    filters: OrderFilterOptions,
+    context: string,
+  ): Promise<{ filterQuery: any; parsedStartDate?: Date; parsedEndDate?: Date }> {
+    // Validate status if provided
+    if (
+      filters.status &&
+      !Object.values(ORDER_STATUS_ENUM).includes(filters.status)
+    ) {
+      throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
+    }
 
-      // Validate dates
-      let parsedStartDate: Date | undefined = undefined;
-      let parsedEndDate: Date | undefined = undefined;
+    // Validate dates
+    let parsedStartDate: Date | undefined = undefined;
+    let parsedEndDate: Date | undefined = undefined;
 
-      if (filters.startDate && filters.startDate !== 'undefined') {
-        parsedStartDate = new Date(filters.startDate);
-        if (isNaN(parsedStartDate.getTime())) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'loadAllOrdersWithAttributes: Invalid start date format, ignoring',
-              startDate: filters.startDate,
-            }),
-          );
-          parsedStartDate = undefined; // Ignore invalid date
-        }
-      }
-
-      if (filters.endDate && filters.endDate !== 'undefined') {
-        parsedEndDate = new Date(filters.endDate);
-        if (isNaN(parsedEndDate.getTime())) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'loadAllOrdersWithAttributes: Invalid end date format, ignoring',
-              endDate: filters.endDate,
-            }),
-          );
-          parsedEndDate = undefined; // Ignore invalid date
-        }
-      }
-
-      // Validate date range
-      if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
-        // If range is invalid, perhaps log and ignore, or throw error
-        // For now, let's log and proceed without date filtering to avoid breaking existing functionality
-        this.loggerService.warn(
+    if (filters.startDate && filters.startDate !== 'undefined') {
+      parsedStartDate = new Date(filters.startDate);
+      if (isNaN(parsedStartDate.getTime())) {
+        this.loggerService.error(
           JSON.stringify({
-            message:
-              'loadAllOrdersWithAttributes: Start date is after end date, date filter will be ignored',
-            startDate: parsedStartDate,
-            endDate: parsedEndDate,
+            message: `${context}: Invalid start date format, ignoring`,
+            startDate: filters.startDate,
           }),
         );
         parsedStartDate = undefined;
+      }
+    }
+
+    if (filters.endDate && filters.endDate !== 'undefined') {
+      parsedEndDate = new Date(filters.endDate);
+      if (isNaN(parsedEndDate.getTime())) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: `${context}: Invalid end date format, ignoring`,
+            endDate: filters.endDate,
+          }),
+        );
         parsedEndDate = undefined;
       }
+    }
 
-      this.loggerService.log(
+    // Validate date range
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      this.loggerService.warn(
         JSON.stringify({
-          message:
-            'loadAllOrdersWithAttributes: Fetching orders with pagination and filters',
-          data: {
-            page,
-            limit,
-            filters,
-            startDate: parsedStartDate,
-            endDate: parsedEndDate,
-          },
+          message: `${context}: Start date is after end date, date filter will be ignored`,
+          startDate: parsedStartDate,
+          endDate: parsedEndDate,
         }),
       );
+      parsedStartDate = undefined;
+      parsedEndDate = undefined;
+    }
 
-      const skip = (page - 1) * limit;
-      const filterQuery: any = {};
-      let clientIdsForFilter: Types.ObjectId[] | null = null; // Explicitly type
+    const filterQuery: any = {};
+    let clientIdsForFilter: Types.ObjectId[] | null = null;
 
-      // Apply date range filter to purchase_date
-      if (parsedStartDate && parsedEndDate) {
-        filterQuery.purchased_date = {
-          $gte: parsedStartDate,
-          $lte: parsedEndDate,
-        };
-      } else if (parsedStartDate) {
-        filterQuery.purchased_date = { $gte: parsedStartDate };
-      } else if (parsedEndDate) {
-        filterQuery.purchased_date = { $lte: parsedEndDate };
-      }
+    // Apply date range filter to purchase_date
+    if (parsedStartDate && parsedEndDate) {
+      filterQuery.purchased_date = {
+        $gte: parsedStartDate,
+        $lte: parsedEndDate,
+      };
+    } else if (parsedStartDate) {
+      filterQuery.purchased_date = { $gte: parsedStartDate };
+    } else if (parsedEndDate) {
+      filterQuery.purchased_date = { $lte: parsedEndDate };
+    }
 
-      // --- Build Filter Query ---
-      // // 1. Filter by Client Name (find client IDs first)
-      if (filters.clientName && filters.clientName.trim() !== '') {
-        const clientsByName = await this.clientModel
-          .find({
-            name: { $regex: filters.clientName, $options: 'i' },
-          })
-          .select('_id')
-          .lean<{ _id: Types.ObjectId }[]>(); // Add lean type hint
-        clientIdsForFilter = clientsByName.map((c) => c._id); // Now correctly typed
-        // If no clients match the name, no orders will be found
-        if (clientIdsForFilter.length === 0) {
-          return {
-            purchases: [],
-            pagination: {
-              total: 0,
-              page,
-              limit,
-              pages: 0,
-              hasNextPage: false,
-              hasPreviousPage: false,
-            },
-          }; // Removed company arrays
-        }
+    // 1. Filter by Client Name
+    if (filters.clientName && filters.clientName.trim() !== '') {
+      const clientsByName = await this.clientModel
+        .find({
+          name: { $regex: filters.clientName, $options: 'i' },
+        })
+        .select('_id')
+        .lean<{ _id: Types.ObjectId }[]>();
+      clientIdsForFilter = clientsByName.map((c) => c._id);
+      if (clientIdsForFilter.length === 0) {
+        filterQuery.client_id = { $in: [] };
+      } else {
         filterQuery.client_id = { $in: clientIdsForFilter };
       }
+    }
 
-      // 2. Filter by Parent Company (find client IDs first)
-      if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
-        try {
-          const parentCompanyObjectId = new Types.ObjectId(
-            filters.parentCompanyId,
+    // 2. Filter by Parent Company
+    if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
+      try {
+        const parentCompanyObjectId = new Types.ObjectId(
+          filters.parentCompanyId,
+        );
+        const childClients = await this.clientModel
+          .find({
+            parent_company_id: parentCompanyObjectId,
+          })
+          .select('_id')
+          .lean<{ _id: Types.ObjectId }[]>();
+
+        const childClientIds: Types.ObjectId[] = childClients.map((c) => c._id);
+
+        if (
+          filterQuery.client_id &&
+          filterQuery.client_id.$in &&
+          Array.isArray(filterQuery.client_id.$in)
+        ) {
+          const existingClientIds = filterQuery.client_id.$in
+            .map((id) =>
+              id instanceof Types.ObjectId
+                ? id
+                : Types.ObjectId.isValid(id)
+                  ? new Types.ObjectId(id)
+                  : null,
+            )
+            .filter((id) => id !== null);
+
+          clientIdsForFilter = existingClientIds.filter((id: Types.ObjectId) =>
+            childClientIds.some((childId) => childId.equals(id)),
           );
-          const childClients = await this.clientModel
-            .find({
-              parent_company_id: parentCompanyObjectId,
-            })
-            .select('_id')
-            .lean<{ _id: Types.ObjectId }[]>(); // Add lean type hint
+        } else {
+          clientIdsForFilter = childClientIds;
+        }
 
-          const childClientIds: Types.ObjectId[] = childClients.map(
-            (c) => c._id,
-          ); // Explicitly type
+        if (clientIdsForFilter.length === 0) {
+          filterQuery.client_id = { $in: [] };
+        } else {
+          filterQuery.client_id = { $in: clientIdsForFilter };
+        }
+      } catch (error: any) {
+        this.loggerService.error(
+          JSON.stringify({
+            message: `${context}: Invalid parent company ID, skipping filter`,
+            error: error.message,
+            parentCompanyId: filters.parentCompanyId,
+          }),
+        );
+      }
+    }
 
-          // Combine with existing client ID filter if necessary
-          if (
-            filterQuery.client_id &&
-            filterQuery.client_id.$in &&
-            Array.isArray(filterQuery.client_id.$in)
-          ) {
-            // Ensure the items in $in are ObjectIds before filtering
-            const existingClientIds = filterQuery.client_id.$in
+    // 3. Filter by specific Client ID
+    if (filters.clientId && filters.clientId.trim() !== '') {
+      try {
+        const specificClientId = new Types.ObjectId(filters.clientId);
+        if (
+          filterQuery.client_id &&
+          filterQuery.client_id.$in &&
+          Array.isArray(filterQuery.client_id.$in)
+        ) {
+          const currentFilteredIds: Types.ObjectId[] =
+            filterQuery.client_id.$in
               .map((id) =>
                 id instanceof Types.ObjectId
                   ? id
@@ -1388,156 +1390,180 @@ export class OrderService {
               )
               .filter((id) => id !== null);
 
-            // Intersect IDs from clientName filter and parentCompany filter
-            clientIdsForFilter = existingClientIds.filter(
-              (id: Types.ObjectId) =>
-                childClientIds.some((childId) => childId.equals(id)), // Now compares ObjectId correctly
-            );
-          } else {
-            clientIdsForFilter = childClientIds;
-          }
-
-          // If no clients match the combined filter, assign an impossible condition to ensure no results
-          if (clientIdsForFilter.length === 0) {
-            filterQuery.client_id = { $in: [] }; // No clients match combination
-          } else {
-            filterQuery.client_id = { $in: clientIdsForFilter };
-          }
-        } catch (error: any) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'loadAllOrdersWithAttributes: Invalid parent company ID, skipping filter',
-              error: error.message,
-              parentCompanyId: filters.parentCompanyId,
-            }),
-          );
-          // Don't return early, just skip this filter
-          // return { purchases: [], pagination: { total: 0, page, limit, pages: 0, hasNextPage: false, hasPreviousPage: false } };
-        }
-      }
-
-      // 3. Filter by specific Client ID
-      if (filters.clientId && filters.clientId.trim() !== '') {
-        try {
-          const specificClientId = new Types.ObjectId(filters.clientId);
-          // Combine with or overwrite existing client filters
-          if (
-            filterQuery.client_id &&
-            filterQuery.client_id.$in &&
-            Array.isArray(filterQuery.client_id.$in)
-          ) {
-            // Check if the specific client is already within the filtered list
-            const currentFilteredIds: Types.ObjectId[] =
-              filterQuery.client_id.$in
-                .map((id) =>
-                  id instanceof Types.ObjectId
-                    ? id
-                    : Types.ObjectId.isValid(id)
-                      ? new Types.ObjectId(id)
-                      : null,
-                )
-                .filter((id) => id !== null);
-
-            if (currentFilteredIds.some((id) => id.equals(specificClientId))) {
-              // If included, narrow down to only this client
-              filterQuery.client_id = specificClientId;
-            } else {
-              // The specific client is not part of the previous filter results, impossible condition
-              filterQuery.client_id = { $in: [] };
-            }
-          } else {
-            // No other client filters, just use this one
+          if (currentFilteredIds.some((id) => id.equals(specificClientId))) {
             filterQuery.client_id = specificClientId;
-          }
-        } catch (error: any) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'loadAllOrdersWithAttributes: Invalid client ID, skipping filter',
-              error: error.message,
-              clientId: filters.clientId,
-            }),
-          );
-          // Don't return early, just skip this filter
-          // return { purchases: [], pagination: { total: 0, page, limit, pages: 0, hasNextPage: false, hasPreviousPage: false } };
-        }
-      }
-
-      // 4. Filter by Product ID or short_name
-      if (filters.productId && filters.productId.trim() !== '') {
-        const identifiers = filters.productId.split(',').map((id) => id.trim());
-        const objectIds: (Types.ObjectId | string)[] = [];
-        const shortNames: string[] = [];
-
-        identifiers.forEach((identifier) => {
-          if (Types.ObjectId.isValid(identifier)) {
-            // Add both ObjectId and string format to handle mixed storage
-            objectIds.push(new Types.ObjectId(identifier));
-            objectIds.push(identifier); // Add string version too
           } else {
-            shortNames.push(identifier);
+            filterQuery.client_id = { $in: [] };
           }
-        });
-
-        if (shortNames.length > 0) {
-          const products = await this.productModel
-            .find({ short_name: { $in: shortNames } })
-            .select('_id')
-            .lean<{ _id: Types.ObjectId }[]>();
-
-          products.forEach((product) => {
-            objectIds.push(product._id);
-            objectIds.push(product._id.toString()); // Add string version too
-          });
+        } else {
+          filterQuery.client_id = specificClientId;
         }
-
-        filterQuery.products =
-          objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
-
-        this.loggerService.log(
+      } catch (error: any) {
+        this.loggerService.error(
           JSON.stringify({
-            message: 'loadAllOrdersWithAttributes: Product filter applied',
-            data: {
-              originalProductId: filters.productId,
-              identifiers,
-              shortNames,
-              objectIds: objectIds.map((id) => id.toString()),
-              filterQuery: filterQuery.products,
-            },
+            message: `${context}: Invalid client ID, skipping filter`,
+            error: error.message,
+            clientId: filters.clientId,
           }),
         );
       }
+    }
 
-      // 5. Filter by Status
-      if (filters.status) {
-        filterQuery.status = filters.status;
+    // 4. Filter by Product ID or short_name
+    if (filters.productId && filters.productId.trim() !== '') {
+      const identifiers = filters.productId.split(',').map((id) => id.trim());
+      const objectIds: (Types.ObjectId | string)[] = [];
+      const shortNames: string[] = [];
+
+      identifiers.forEach((identifier) => {
+        if (Types.ObjectId.isValid(identifier)) {
+          objectIds.push(new Types.ObjectId(identifier));
+          objectIds.push(identifier);
+        } else {
+          shortNames.push(identifier);
+        }
+      });
+
+      if (shortNames.length > 0) {
+        const products = await this.productModel
+          .find({ short_name: { $in: shortNames } })
+          .select('_id')
+          .lean<{ _id: Types.ObjectId }[]>();
+
+        products.forEach((product) => {
+          objectIds.push(product._id);
+          objectIds.push(product._id.toString());
+        });
       }
-      // --- End Build Filter Query ---
+
+      filterQuery.products =
+        objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
 
       this.loggerService.log(
         JSON.stringify({
-          message: 'Constructed Filter Query',
-          data: filterQuery,
+          message: `${context}: Product filter applied`,
+          data: {
+            originalProductId: filters.productId,
+            identifiers,
+            shortNames,
+            objectIds: objectIds.map((id) => id.toString()),
+            filterQuery: filterQuery.products,
+          },
+        }),
+      );
+    }
+
+    // 5. Filter by Status
+    if (filters.status) {
+      filterQuery.status = filters.status;
+    }
+
+    // 6. Filter by Types (new, amc, customization, auditor_license)
+    if (filters.types && filters.types.trim() !== '') {
+      const typeValues = filters.types
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0);
+
+      const typeConditions: any[] = [];
+
+      if (typeValues.includes('new')) {
+        typeConditions.push({
+          products: { $exists: true, $ne: [] },
+        });
+      }
+      if (typeValues.includes('amc')) {
+        typeConditions.push({
+          amc_id: { $exists: true, $ne: null },
+        });
+      }
+      if (typeValues.includes('customization')) {
+        typeConditions.push({
+          customizations: { $exists: true, $ne: [] },
+        });
+      }
+      if (typeValues.includes('auditor_license')) {
+        typeConditions.push({
+          licenses: { $exists: true, $ne: [] },
+        });
+      }
+
+      if (typeConditions.length > 0) {
+        if (filterQuery.$or) {
+          filterQuery.$and = filterQuery.$and || [];
+          filterQuery.$and.push({ $or: typeConditions });
+        } else {
+          filterQuery.$or = typeConditions;
+        }
+      }
+    }
+
+    // 7. Filter by includeCancelled
+    if (!filters.includeCancelled) {
+      filterQuery.$and = filterQuery.$and || [];
+      filterQuery.$and.push({
+        $or: [{ cancelled_at: { $exists: false } }, { cancelled_at: null }],
+      });
+    }
+
+    // Normalize client_id to strings for consistency
+    if (filterQuery.client_id?.$in) {
+      filterQuery.client_id.$in = filterQuery.client_id.$in.map((id) =>
+        String(id),
+      );
+    } else if (filterQuery.client_id) {
+      filterQuery.client_id = String(filterQuery.client_id);
+    }
+
+    return { filterQuery, parsedStartDate, parsedEndDate };
+  }
+
+  async loadAllOrdersWithAttributes(
+    page: number,
+    limit: number,
+    filters: OrderFilterOptions = {},
+  ): Promise<{
+    purchases: any[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      pages: number;
+      hasNextPage: boolean;
+      hasPreviousPage: boolean;
+    };
+  }> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'loadAllOrdersWithAttributes: Fetching orders with pagination and filters',
+          data: { page, limit, filters },
         }),
       );
 
-      if (filterQuery.client_id?.$in) {
-        filterQuery.client_id.$in = filterQuery.client_id?.$in.map((id) =>
-          String(id),
-        );
-      } else if (filterQuery.client_id) {
-        filterQuery.client_id = String(filterQuery.client_id);
-      }
+      const { filterQuery } = await this.buildOrderFilterQuery(
+        filters,
+        'loadAllOrdersWithAttributes',
+      );
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'loadAllOrdersWithAttributes: Constructed filter query',
+          filterQuery,
+        }),
+      );
+
+      const skip = (page - 1) * limit;
+
       // Fetch Total Count with Filters
       const totalOrders = await this.orderModel.countDocuments(filterQuery);
 
-      // If no orders match, return early
       if (totalOrders === 0) {
         this.loggerService.log(
           JSON.stringify({
-            message: 'No orders found',
-            data: filterQuery,
+            message: 'loadAllOrdersWithAttributes: No orders found',
+            filterQuery,
             totalOrders,
           }),
         );
@@ -1551,25 +1577,29 @@ export class OrderService {
             hasNextPage: false,
             hasPreviousPage: false,
           },
-        }; // Removed company arrays
+        };
       }
 
       this.loggerService.log(
-        JSON.stringify({ message: 'Total Orders', data: totalOrders }),
+        JSON.stringify({
+          message: 'loadAllOrdersWithAttributes: Total orders',
+          totalOrders,
+        }),
       );
-      // Fetch Paginated Orders with Filters and Population
 
+      // Fetch Paginated Orders with Filters and Population
       const orders = await this.orderModel
         .find(filterQuery)
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
         .populate([
-          { path: 'licenses', model: License.name },
-          { path: 'customizations', model: Customization.name },
+          { path: 'licenses', model: License.name, select: '_id' },
+          { path: 'customizations', model: Customization.name, select: '_id' },
           { path: 'additional_services', model: AdditionalService.name },
-          { path: 'client_id', select: 'name parent_company_id' }, // Only select needed fields, no population
+          { path: 'client_id', select: 'name parent_company_id' },
           { path: 'products', model: Product.name },
+          { path: 'amc_id', select: '_id' },
         ]);
 
       this.loggerService.log(
@@ -1581,16 +1611,14 @@ export class OrderService {
         }),
       );
 
-      // --- Process Orders (Removed Company Aggregation) ---
+      // Process Orders
       const processedOrders = await Promise.all(
         orders.map(async (order: any) => {
-          const orderObj: any = order.toObject(); // Start with plain object as any
+          const orderObj: any = order.toObject();
           orderObj.purchase_type = PURCHASE_TYPE.ORDER;
 
-          // Process Client and Parent Company Info (only for adding parent to client in response)
+          // Process Client and Parent Company Info
           if (order.client_id && orderObj.client_id) {
-            // Check both original and object
-            // Safely handle parent company information
             try {
               const parentCompanyId = order.client_id
                 ?.parent_company_id as unknown as ClientDocument & {
@@ -1607,7 +1635,6 @@ export class OrderService {
                 }
               }
             } catch (error) {
-              // If there's an error processing parent company, just continue without it
               this.loggerService.warn(
                 JSON.stringify({
                   message:
@@ -1630,7 +1657,7 @@ export class OrderService {
           if (order.agreements && order.agreements.length) {
             orderObj.agreements = order.agreements.map((agreement) => {
               const agreementObj: any = { ...agreement };
-              agreementObj.document = agreement?.document // Optional chaining
+              agreementObj.document = agreement?.document
                 ? this.storageService.get(agreement.document)
                 : null;
               return agreementObj;
@@ -1643,7 +1670,7 @@ export class OrderService {
           if (order.licenses && order.licenses.length) {
             orderObj.licenses = order.licenses
               .map((license: any) => {
-                if (!license) return null; // Skip if license is null/undefined
+                if (!license) return null;
                 const licenseObj: any = license;
                 licenseObj.status = order.status;
                 licenseObj.purchase_order_document =
@@ -1655,7 +1682,7 @@ export class OrderService {
                   : null;
                 return licenseObj;
               })
-              .filter((l) => l !== null); // Filter out any null results
+              .filter((l) => l !== null);
           } else {
             orderObj.licenses = [];
           }
@@ -1664,7 +1691,7 @@ export class OrderService {
           if (order.customizations && order.customizations.length) {
             orderObj.customizations = order.customizations
               .map((customization) => {
-                if (!customization) return null; // Skip if customization is null/undefined
+                if (!customization) return null;
                 const customizationObj: any = customization.toObject();
                 customizationObj.status = order.status;
                 customizationObj.purchase_order_document =
@@ -1675,7 +1702,7 @@ export class OrderService {
                     : null;
                 return customizationObj;
               })
-              .filter((c) => c !== null); // Filter out any null results
+              .filter((c) => c !== null);
           } else {
             orderObj.customizations = [];
           }
@@ -1684,7 +1711,7 @@ export class OrderService {
           if (order.additional_services && order.additional_services.length) {
             orderObj.additional_services = order.additional_services
               .map((service) => {
-                if (!service) return null; // Skip if service is null/undefined
+                if (!service) return null;
                 const serviceObj: any = service.toObject();
                 serviceObj.status = order.status;
                 serviceObj.purchase_order_document =
@@ -1696,7 +1723,7 @@ export class OrderService {
                   : null;
                 return serviceObj;
               })
-              .filter((s) => s !== null); // Filter out any null results
+              .filter((s) => s !== null);
           } else {
             orderObj.additional_services = [];
           }
@@ -1704,12 +1731,11 @@ export class OrderService {
           return orderObj;
         }),
       );
-      // --- End Process Orders ---
 
       this.loggerService.log(
         JSON.stringify({
           message: 'loadAllOrdersWithAttributes: Completed processing orders',
-          data: { processedCount: processedOrders.length }, // Removed company counts
+          data: { processedCount: processedOrders.length },
         }),
       );
 
@@ -1723,7 +1749,6 @@ export class OrderService {
           hasNextPage: page < Math.ceil(totalOrders / limit),
           hasPreviousPage: page > 1,
         },
-        // Removed clientCompanies and parentCompanies from return object
       };
     } catch (error: any) {
       console.log(error);
@@ -1735,7 +1760,6 @@ export class OrderService {
         }),
       );
 
-      // Return empty result set on error
       return {
         purchases: [],
         pagination: {
@@ -6603,15 +6627,7 @@ export class OrderService {
   }
 
   async exportPurchasesToExcel(
-    filters: {
-      clientName?: string;
-      clientId?: string;
-      parentCompanyId?: string;
-      productId?: string;
-      status?: ORDER_STATUS_ENUM;
-      startDate?: Date | string;
-      endDate?: Date | string;
-    } = {},
+    filters: OrderFilterOptions = {},
   ): Promise<Buffer> {
     try {
       this.loggerService.log(
@@ -6676,241 +6692,8 @@ export class OrderService {
         },
       });
 
-      // Use the same filtering logic as loadAllOrdersWithAttributes (without pagination)
-      // Validate status if provided
-      if (
-        filters.status &&
-        !Object.values(ORDER_STATUS_ENUM).includes(filters.status)
-      ) {
-        throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
-      }
-
-      // Validate dates
-      let parsedStartDate: Date | undefined = undefined;
-      let parsedEndDate: Date | undefined = undefined;
-
-      if (filters.startDate && filters.startDate !== 'undefined') {
-        parsedStartDate = new Date(filters.startDate);
-        if (isNaN(parsedStartDate.getTime())) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'exportPurchasesToExcel: Invalid start date format, ignoring',
-              startDate: filters.startDate,
-            }),
-          );
-          parsedStartDate = undefined;
-        }
-      }
-
-      if (filters.endDate && filters.endDate !== 'undefined') {
-        parsedEndDate = new Date(filters.endDate);
-        if (isNaN(parsedEndDate.getTime())) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'exportPurchasesToExcel: Invalid end date format, ignoring',
-              endDate: filters.endDate,
-            }),
-          );
-          parsedEndDate = undefined;
-        }
-      }
-
-      // Validate date range
-      if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
-        this.loggerService.warn(
-          JSON.stringify({
-            message:
-              'exportPurchasesToExcel: Start date is after end date, date filter will be ignored',
-            startDate: parsedStartDate,
-            endDate: parsedEndDate,
-          }),
-        );
-        parsedStartDate = undefined;
-        parsedEndDate = undefined;
-      }
-
-      const filterQuery: any = {};
-      let clientIdsForFilter: Types.ObjectId[] | null = null;
-
-      // Apply date range filter to purchase_date
-      if (parsedStartDate && parsedEndDate) {
-        filterQuery.purchased_date = {
-          $gte: parsedStartDate,
-          $lte: parsedEndDate,
-        };
-      } else if (parsedStartDate) {
-        filterQuery.purchased_date = { $gte: parsedStartDate };
-      } else if (parsedEndDate) {
-        filterQuery.purchased_date = { $lte: parsedEndDate };
-      }
-
-      // Filter by Client Name
-      if (filters.clientName && filters.clientName.trim() !== '') {
-        const clientsByName = await this.clientModel
-          .find({
-            name: { $regex: filters.clientName, $options: 'i' },
-          })
-          .select('_id')
-          .lean<{ _id: Types.ObjectId }[]>();
-        clientIdsForFilter = clientsByName.map((c) => c._id);
-
-        if (clientIdsForFilter.length === 0) {
-          // No matching clients found
-          this.loggerService.log(
-            JSON.stringify({
-              message:
-                'exportPurchasesToExcel: No clients found with name filter',
-              clientName: filters.clientName,
-            }),
-          );
-          return this.generateEmptyExcelBuffer(workbook, worksheet, columns);
-        }
-        filterQuery.client_id = { $in: clientIdsForFilter };
-      }
-
-      // Filter by Parent Company
-      if (filters.parentCompanyId && filters.parentCompanyId.trim() !== '') {
-        try {
-          const parentCompanyObjectId = new Types.ObjectId(
-            filters.parentCompanyId,
-          );
-          const childClients = await this.clientModel
-            .find({
-              parent_company_id: parentCompanyObjectId,
-            })
-            .select('_id')
-            .lean<{ _id: Types.ObjectId }[]>();
-
-          const childClientIds: Types.ObjectId[] = childClients.map(
-            (c) => c._id,
-          );
-
-          if (
-            filterQuery.client_id &&
-            filterQuery.client_id.$in &&
-            Array.isArray(filterQuery.client_id.$in)
-          ) {
-            const existingClientIds = filterQuery.client_id.$in
-              .map((id) =>
-                id instanceof Types.ObjectId
-                  ? id
-                  : Types.ObjectId.isValid(id)
-                    ? new Types.ObjectId(id)
-                    : null,
-              )
-              .filter((id) => id !== null);
-
-            clientIdsForFilter = existingClientIds.filter(
-              (id: Types.ObjectId) =>
-                childClientIds.some((childId) => childId.equals(id)),
-            );
-          } else {
-            clientIdsForFilter = childClientIds;
-          }
-
-          if (clientIdsForFilter.length === 0) {
-            filterQuery.client_id = { $in: [] };
-          } else {
-            filterQuery.client_id = { $in: clientIdsForFilter };
-          }
-        } catch (error: any) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'exportPurchasesToExcel: Invalid parent company ID, skipping filter',
-              error: error.message,
-              parentCompanyId: filters.parentCompanyId,
-            }),
-          );
-        }
-      }
-
-      // Filter by specific Client ID
-      if (filters.clientId && filters.clientId.trim() !== '') {
-        try {
-          const specificClientId = new Types.ObjectId(filters.clientId);
-          if (
-            filterQuery.client_id &&
-            filterQuery.client_id.$in &&
-            Array.isArray(filterQuery.client_id.$in)
-          ) {
-            const currentFilteredIds: Types.ObjectId[] =
-              filterQuery.client_id.$in
-                .map((id) =>
-                  id instanceof Types.ObjectId
-                    ? id
-                    : Types.ObjectId.isValid(id)
-                      ? new Types.ObjectId(id)
-                      : null,
-                )
-                .filter((id) => id !== null);
-
-            if (currentFilteredIds.some((id) => id.equals(specificClientId))) {
-              filterQuery.client_id = specificClientId;
-            } else {
-              filterQuery.client_id = { $in: [] };
-            }
-          } else {
-            filterQuery.client_id = specificClientId;
-          }
-        } catch (error: any) {
-          this.loggerService.error(
-            JSON.stringify({
-              message:
-                'exportPurchasesToExcel: Invalid client ID, skipping filter',
-              error: error.message,
-              clientId: filters.clientId,
-            }),
-          );
-        }
-      }
-
-      // Filter by Product ID or short_name
-      if (filters.productId && filters.productId.trim() !== '') {
-        const identifiers = filters.productId.split(',').map((id) => id.trim());
-        const objectIds: (Types.ObjectId | string)[] = [];
-        const shortNames: string[] = [];
-
-        identifiers.forEach((identifier) => {
-          if (Types.ObjectId.isValid(identifier)) {
-            objectIds.push(new Types.ObjectId(identifier));
-            objectIds.push(identifier);
-          } else {
-            shortNames.push(identifier);
-          }
-        });
-
-        if (shortNames.length > 0) {
-          const products = await this.productModel
-            .find({ short_name: { $in: shortNames } })
-            .select('_id')
-            .lean<{ _id: Types.ObjectId }[]>();
-
-          products.forEach((product) => {
-            objectIds.push(product._id);
-            objectIds.push(product._id.toString());
-          });
-        }
-
-        filterQuery.products =
-          objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
-      }
-
-      // Filter by Status
-      if (filters.status) {
-        filterQuery.status = filters.status;
-      }
-
-      // Convert client_id to string for consistency
-      if (filterQuery.client_id?.$in) {
-        filterQuery.client_id.$in = filterQuery.client_id.$in.map((id) =>
-          String(id),
-        );
-      } else if (filterQuery.client_id) {
-        filterQuery.client_id = String(filterQuery.client_id);
-      }
+      const { filterQuery, parsedStartDate, parsedEndDate } =
+        await this.buildOrderFilterQuery(filters, 'exportPurchasesToExcel');
 
       this.loggerService.log(
         JSON.stringify({

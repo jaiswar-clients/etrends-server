@@ -52,6 +52,8 @@ export class OrderController {
     @Query('status') status?: ORDER_STATUS_ENUM,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('types') types?: string,
+    @Query('include_cancelled') includeCancelled?: string,
   ) {
     // Ensure valid pagination parameters
     const parsedPage = Math.max(1, parseInt(String(page)) || 1);
@@ -64,7 +66,7 @@ export class OrderController {
     if (status && !Object.values(ORDER_STATUS_ENUM).includes(status)) {
       throw new HttpException('Invalid status value', HttpStatus.BAD_REQUEST);
     }
-    
+
     // Basic date validation (more thorough validation in service)
     if (startDate && isNaN(new Date(startDate).getTime())) {
       throw new HttpException('Invalid start date format', HttpStatus.BAD_REQUEST);
@@ -75,6 +77,9 @@ export class OrderController {
     if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
       throw new HttpException('Start date cannot be after end date', HttpStatus.BAD_REQUEST);
     }
+
+    // Parse include_cancelled to boolean
+    const parsedIncludeCancelled = includeCancelled?.toLowerCase() === 'true';
 
     this.loggerService.log(
       JSON.stringify({
@@ -89,6 +94,8 @@ export class OrderController {
           status,
           startDate,
           endDate,
+          types,
+          includeCancelled: parsedIncludeCancelled,
         },
       }),
     );
@@ -104,6 +111,8 @@ export class OrderController {
         status,
         startDate,
         endDate,
+        types,
+        includeCancelled: parsedIncludeCancelled,
       },
     );
   }
@@ -311,6 +320,8 @@ export class OrderController {
     @Query('status') status?: ORDER_STATUS_ENUM,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('types') types?: string,
+    @Query('include_cancelled') includeCancelled?: string,
     @Res() res?: Response,
   ) {
     // Validate status if provided
@@ -350,6 +361,9 @@ export class OrderController {
       );
     }
 
+    // Parse include_cancelled to boolean
+    const parsedIncludeCancelled = includeCancelled?.toLowerCase() === 'true';
+
     this.loggerService.log(
       JSON.stringify({
         message: 'exportPurchasesToExcel: Requested Purchases export',
@@ -361,6 +375,8 @@ export class OrderController {
           status,
           startDate: parsedStartDate,
           endDate: parsedEndDate,
+          types,
+          includeCancelled: parsedIncludeCancelled,
         },
       }),
     );
@@ -374,6 +390,8 @@ export class OrderController {
       status,
       startDate: parsedStartDate,
       endDate: parsedEndDate,
+      types,
+      includeCancelled: parsedIncludeCancelled,
     });
 
     // Set headers for file download
