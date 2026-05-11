@@ -24,6 +24,8 @@ import {
   IIndustryBreakdown,
   IClientConcentrationRisk,
   IClientHealthDashboardResponse,
+  IClientWiseRevenue,
+  IClientWiseRevenueResponse,
 } from '../dto/revenue-report.dto';
 
 @Injectable()
@@ -235,10 +237,10 @@ export class RevenueCalculatorService {
       for (const payment of allPayments) {
         debugTotalPayments++;
         // Skip proforma payments
-        // if (payment.status === 'proforma') {
-        //   debugProformaSkipped++;
-        //   continue;
-        // }
+        if (payment.status === 'proforma') {
+          debugProformaSkipped++;
+          continue;
+        }
 
         const paymentFromDate = new Date(payment.from_date);
 
@@ -1204,6 +1206,120 @@ export class RevenueCalculatorService {
       topPerformers,
       concentrationRisk,
       fiscalYear: fyLabel,
+    };
+  }
+
+  /**
+   * Get per-client revenue breakdown for a fiscal year.
+   *
+   * Mirrors the rules used by calculateNewSalesRevenue + calculateAMCRevenue so the
+   * grand totals on this sheet reconcile with the Revenue Dashboard KPIs:
+   *   - New sales: skip proforma; accept payment_terms with status 'paid' or 'invoice'.
+   *   - AMC: skip proforma; payments are eligible when payment.from_date falls inside
+   *     the FY range.
+   * Only clients with non-zero revenue in the selected FY are returned.
+   */
+  async getClientWiseRevenueBreakdown(
+    fiscalYear: number,
+    orderTypes?: string,
+  ): Promise<IClientWiseRevenueResponse> {
+    const { start, end } = this.getFiscalYearRange(fiscalYear);
+    const includeNew = this.shouldIncludeStream('new', orderTypes);
+    const includeAMC = this.shouldIncludeStream('amc', orderTypes);
+
+    const clients = await this.clientModel.find({ deleted: { $ne: true } }).lean();
+    const clientMap = new Map(clients.map((c) => [c._id.toString(), c]));
+
+    const perClient = new Map<string, { newSales: number; amc: number }>();
+
+    if (includeNew) {
+      const orders = await this.orderModel
+        .find({
+          purchased_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+
+      for (const order of orders) {
+        const clientId = order.client_id?.toString();
+        if (!clientId) continue;
+        if (!this.isNewSaleOrder(order)) continue;
+
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
+
+          const revenue = term.calculated_amount || 0;
+          const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
+          existing.newSales += revenue;
+          perClient.set(clientId, existing);
+        }
+      }
+    }
+
+    if (includeAMC) {
+      const amcs = await (this.amcModel as any)
+        .findWithDeleted()
+        .populate({ path: 'order_id', model: 'Order' })
+        .lean();
+
+      for (const amc of amcs) {
+        const clientId = amc.client_id?.toString();
+        if (!clientId) continue;
+
+        for (const payment of amc.payments || []) {
+          if (payment.status === 'proforma') continue;
+          const paymentFromDate = new Date(payment.from_date);
+          if (paymentFromDate < start || paymentFromDate > end) continue;
+
+          const revenue = payment.amc_rate_amount || 0;
+          const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
+          existing.amc += revenue;
+          perClient.set(clientId, existing);
+        }
+      }
+    }
+
+    let totalNewSales = 0;
+    let totalAMC = 0;
+    const rows: Array<Omit<IClientWiseRevenue, 'percentageOfTotal'>> = [];
+
+    for (const [clientId, revenue] of perClient) {
+      const totalRevenue = revenue.newSales + revenue.amc;
+      if (totalRevenue === 0) continue;
+
+      const client = clientMap.get(clientId);
+      totalNewSales += revenue.newSales;
+      totalAMC += revenue.amc;
+
+      rows.push({
+        clientId,
+        clientName: client?.name || 'Unknown',
+        industry: client?.industry || 'Unknown',
+        newSalesRevenue: revenue.newSales,
+        amcRevenue: revenue.amc,
+        totalRevenue,
+      });
+    }
+
+    const grandTotal = totalNewSales + totalAMC;
+    const clientsSorted: IClientWiseRevenue[] = rows
+      .sort((a, b) => b.totalRevenue - a.totalRevenue)
+      .map((r) => ({
+        ...r,
+        percentageOfTotal: grandTotal > 0 ? (r.totalRevenue / grandTotal) * 100 : 0,
+      }));
+
+    const fyLabel = `FY${(fiscalYear % 100).toString().padStart(2, '0')}-${((fiscalYear + 1) % 100).toString().padStart(2, '0')}`;
+
+    return {
+      fiscalYear: fyLabel,
+      orderTypes: orderTypes || 'all',
+      clients: clientsSorted,
+      grandTotal,
+      totalNewSales,
+      totalAMC,
     };
   }
 }

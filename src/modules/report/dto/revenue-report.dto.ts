@@ -143,3 +143,24 @@ export interface IClientHealthDashboardResponse {
   concentrationRisk: IClientConcentrationRisk;
   fiscalYear: string;
 }
+
+// ==================== CLIENT-WISE REVENUE BREAKDOWN TYPES ====================
+
+export interface IClientWiseRevenue {
+  clientId: string;
+  clientName: string;
+  industry: string;
+  newSalesRevenue: number;
+  amcRevenue: number;
+  totalRevenue: number;
+  percentageOfTotal: number;
+}
+
+export interface IClientWiseRevenueResponse {
+  fiscalYear: string;
+  orderTypes: string;
+  clients: IClientWiseRevenue[];
+  grandTotal: number;
+  totalNewSales: number;
+  totalAMC: number;
+}

@@ -7,6 +7,7 @@ import {
   IRevenueDashboardResponse,
   IExpectedVsCollectedResponse,
   IClientHealthDashboardResponse,
+  IClientWiseRevenueResponse,
 } from '../dto/revenue-report.dto';
 
 @Injectable()
@@ -57,6 +58,7 @@ export class ExcelExportService {
     revenueDashboard: IRevenueDashboardResponse;
     expectedVsCollected: IExpectedVsCollectedResponse;
     clientHealth: IClientHealthDashboardResponse;
+    clientWiseRevenue: IClientWiseRevenueResponse;
     fiscalYear: number;
     filter: 'monthly' | 'quarterly';
   }): Promise<Workbook> {
@@ -72,6 +74,7 @@ export class ExcelExportService {
     this.addCollectionAnalysis(workbook, data.expectedVsCollected, data.filter);
     this.addClientHealth(workbook, data.clientHealth);
     this.addTopPerformers(workbook, data.clientHealth);
+    this.addClientWiseRevenue(workbook, data.clientWiseRevenue);
     this.addConcentrationRisk(workbook, data.clientHealth);
     this.addDetailedData(workbook, data);
 
@@ -596,6 +599,115 @@ export class ExcelExportService {
       { width: 12 }, // Trend
       { width: 12 }, // Change %
     ];
+  }
+
+  private addClientWiseRevenue(workbook: Workbook, data: IClientWiseRevenueResponse): void {
+    const sheet = workbook.addWorksheet('Client-Wise Revenue', {
+      views: [{ state: 'frozen', ySplit: 4 }],
+    });
+
+    sheet.columns = [
+      { width: 6 },   // Rank
+      { width: 35 },  // Client Name
+      { width: 22 },  // Industry
+      { width: 20 },  // New Sales Revenue
+      { width: 20 },  // AMC Revenue
+      { width: 22 },  // Total Revenue
+      { width: 15 },  // % of Grand Total
+    ];
+
+    const streamLabelMap: Record<string, string> = {
+      all: 'All Streams',
+      new: 'New Sales Only',
+      amc: 'AMC Only',
+    };
+    const streamLabel = streamLabelMap[(data.orderTypes || 'all').toLowerCase()] || data.orderTypes;
+
+    const titleRow = sheet.addRow(['CLIENT-WISE REVENUE BREAKDOWN']);
+    sheet.mergeCells(`A${titleRow.number}:G${titleRow.number}`);
+    titleRow.getCell(1).font = { ...this.FONTS.title, size: 14 };
+    titleRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    titleRow.getCell(1).fill = {
+      type: 'pattern',
+      pattern: 'solid' as any,
+      fgColor: { argb: this.COLORS.navyBlue },
+    };
+    titleRow.getCell(1).font = { name: 'Calibri', size: 14, bold: true, color: { argb: this.COLORS.white } };
+    titleRow.height = 26;
+
+    const metaRow = sheet.addRow([`${data.fiscalYear}  •  Stream: ${streamLabel}  •  Clients: ${data.clients.length}  •  Grand Total: ${this.formatCurrency(data.grandTotal)}`]);
+    sheet.mergeCells(`A${metaRow.number}:G${metaRow.number}`);
+    metaRow.getCell(1).font = this.FONTS.subtitle;
+    metaRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+    metaRow.height = 20;
+
+    sheet.addRow([]); // spacer
+
+    const headerRow = sheet.addRow([
+      'Rank',
+      'Client Name',
+      'Industry',
+      'New Sales Revenue',
+      'AMC Revenue',
+      'Total Revenue',
+      '% of Grand Total',
+    ]);
+    this.styleHeaderRow(headerRow);
+
+    data.clients.forEach((client, idx) => {
+      const row = sheet.addRow([
+        idx + 1,
+        client.clientName,
+        client.industry,
+        client.newSalesRevenue,
+        client.amcRevenue,
+        client.totalRevenue,
+        `${client.percentageOfTotal.toFixed(2)}%`,
+      ]);
+      this.styleDataRow(row, idx);
+
+      row.getCell(1).alignment = { horizontal: 'center' };
+      row.getCell(4).numFmt = this.CURRENCY_FORMAT;
+      row.getCell(5).numFmt = this.CURRENCY_FORMAT;
+      row.getCell(6).numFmt = this.CURRENCY_FORMAT;
+      row.getCell(4).alignment = { horizontal: 'right' };
+      row.getCell(5).alignment = { horizontal: 'right' };
+      row.getCell(6).alignment = { horizontal: 'right' };
+      row.getCell(7).alignment = { horizontal: 'center' };
+    });
+
+    if (data.clients.length === 0) {
+      const emptyRow = sheet.addRow(['', 'No clients with revenue in selected fiscal year', '', '', '', '', '']);
+      sheet.mergeCells(`A${emptyRow.number}:G${emptyRow.number}`);
+      emptyRow.getCell(1).alignment = { horizontal: 'center' };
+      emptyRow.getCell(1).font = { ...this.FONTS.body, italic: true, color: { argb: this.COLORS.mediumGray } };
+    }
+
+    const totalRow = sheet.addRow([
+      '',
+      'TOTAL',
+      '',
+      data.totalNewSales,
+      data.totalAMC,
+      data.grandTotal,
+      data.grandTotal > 0 ? '100.00%' : '0.00%',
+    ]);
+    totalRow.font = { bold: true, color: { argb: this.COLORS.navyBlue } };
+    totalRow.fill = {
+      type: 'pattern',
+      pattern: 'solid' as any,
+      fgColor: { argb: 'FFE8EDF2' },
+    };
+    totalRow.eachCell((cell) => {
+      cell.border = this.BORDER_STYLE;
+    });
+    totalRow.getCell(4).numFmt = this.CURRENCY_FORMAT;
+    totalRow.getCell(5).numFmt = this.CURRENCY_FORMAT;
+    totalRow.getCell(6).numFmt = this.CURRENCY_FORMAT;
+    totalRow.getCell(4).alignment = { horizontal: 'right' };
+    totalRow.getCell(5).alignment = { horizontal: 'right' };
+    totalRow.getCell(6).alignment = { horizontal: 'right' };
+    totalRow.getCell(7).alignment = { horizontal: 'center' };
   }
 
   private addConcentrationRisk(workbook: Workbook, data: IClientHealthDashboardResponse): void {

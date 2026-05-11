@@ -202,10 +202,11 @@ export class ReportController {
     const ot = orderTypes === 'undefined' || !orderTypes ? undefined : orderTypes;
 
     // Fetch all data in parallel
-    const [revenueDashboard, expectedVsCollected, clientHealth] = await Promise.all([
+    const [revenueDashboard, expectedVsCollected, clientHealth, clientWiseRevenue] = await Promise.all([
       this.revenueCalculatorService.getRevenueDashboard({ filter: filter || 'monthly', year: fy, orderTypes: ot }),
       this.revenueCalculatorService.getExpectedVsCollected({ fiscalYear: fy, filter: filter || 'monthly', orderTypes: ot }),
       this.revenueCalculatorService.getClientHealthDashboard(fy),
+      this.revenueCalculatorService.getClientWiseRevenueBreakdown(fy, ot),
     ]);
 
     // Generate Excel
@@ -213,6 +214,7 @@ export class ReportController {
       revenueDashboard: revenueDashboard,
       expectedVsCollected: expectedVsCollected,
       clientHealth: clientHealth,
+      clientWiseRevenue: clientWiseRevenue,
       fiscalYear: fy,
       filter: filter || 'monthly',
     });
