@@ -59,6 +59,7 @@ interface OrderFilterOptions {
   endDate?: string | Date;
   types?: string;
   includeCancelled?: boolean;
+  paymentStatus?: PAYMENT_STATUS_ENUM;
 }
 
 @Injectable()
@@ -1638,6 +1639,66 @@ export class OrderService {
       filterQuery.$and.push({
         $or: [{ cancelled_at: { $exists: false } }, { cancelled_at: null }],
       });
+    }
+
+    // 8. Filter by Payment Status
+    if (
+      filters.paymentStatus &&
+      Object.values(PAYMENT_STATUS_ENUM).includes(filters.paymentStatus)
+    ) {
+      const paymentStatusConditions: any[] = [];
+
+      // Orders with matching payment_terms.status (embedded array)
+      paymentStatusConditions.push({
+        payment_terms: { $elemMatch: { status: filters.paymentStatus } },
+      });
+
+      // Query sub-collections for order_ids with matching payment_status
+      const [licenseOrderIds, customizationOrderIds, additionalServiceOrderIds] =
+        await Promise.all([
+          this.licenseModel
+            .find({
+              payment_status: filters.paymentStatus,
+              deleted: { $ne: true },
+            })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>(),
+          this.customizationModel
+            .find({
+              payment_status: filters.paymentStatus,
+              deleted: { $ne: true },
+            })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>(),
+          this.additionalServiceModel
+            .find({
+              payment_status: filters.paymentStatus,
+              deleted: { $ne: true },
+            })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>(),
+        ]);
+
+      const subCollectionOrderIds = [
+        ...new Set([
+          ...licenseOrderIds.map((l) => String(l.order_id)),
+          ...customizationOrderIds.map((c) => String(c.order_id)),
+          ...additionalServiceOrderIds.map((s) => String(s.order_id)),
+        ]),
+      ]
+        .filter((id) => Types.ObjectId.isValid(id))
+        .map((id) => new Types.ObjectId(id));
+
+      if (subCollectionOrderIds.length > 0) {
+        paymentStatusConditions.push({
+          _id: { $in: subCollectionOrderIds },
+        });
+      }
+
+      if (paymentStatusConditions.length > 0) {
+        filterQuery.$and = filterQuery.$and || [];
+        filterQuery.$and.push({ $or: paymentStatusConditions });
+      }
     }
 
     // Normalize client_id to strings for consistency

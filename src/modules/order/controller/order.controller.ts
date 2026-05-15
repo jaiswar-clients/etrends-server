@@ -28,7 +28,10 @@ import { AuthGuard } from '@/common/guards/auth.guard';
 import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 import { CancelOrderDto } from '../dto/cancel-order.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
-import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
+import {
+  ORDER_STATUS_ENUM,
+  PAYMENT_STATUS_ENUM,
+} from '@/common/types/enums/order.enum';
 import { Response } from 'express';
 
 export type UpdateOrderType = CreateOrderDto;
@@ -54,6 +57,7 @@ export class OrderController {
     @Query('endDate') endDate?: string,
     @Query('types') types?: string,
     @Query('include_cancelled') includeCancelled?: string,
+    @Query('payment_status') paymentStatus?: PAYMENT_STATUS_ENUM,
   ) {
     // Ensure valid pagination parameters
     const parsedPage = Math.max(1, parseInt(String(page)) || 1);
@@ -81,6 +85,17 @@ export class OrderController {
     // Parse include_cancelled to boolean
     const parsedIncludeCancelled = includeCancelled?.toLowerCase() === 'true';
 
+    // Validate payment_status if provided
+    if (
+      paymentStatus &&
+      !Object.values(PAYMENT_STATUS_ENUM).includes(paymentStatus)
+    ) {
+      throw new HttpException(
+        'Invalid payment_status value',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     this.loggerService.log(
       JSON.stringify({
         message: 'loadAllOrdersWithAttributes: Controller called',
@@ -96,6 +111,7 @@ export class OrderController {
           endDate,
           types,
           includeCancelled: parsedIncludeCancelled,
+          paymentStatus,
         },
       }),
     );
@@ -113,6 +129,7 @@ export class OrderController {
         endDate,
         types,
         includeCancelled: parsedIncludeCancelled,
+        paymentStatus,
       },
     );
   }
@@ -322,6 +339,7 @@ export class OrderController {
     @Query('endDate') endDate?: string,
     @Query('types') types?: string,
     @Query('include_cancelled') includeCancelled?: string,
+    @Query('payment_status') paymentStatus?: PAYMENT_STATUS_ENUM,
     @Res() res?: Response,
   ) {
     // Validate status if provided
@@ -364,6 +382,17 @@ export class OrderController {
     // Parse include_cancelled to boolean
     const parsedIncludeCancelled = includeCancelled?.toLowerCase() === 'true';
 
+    // Validate payment_status if provided
+    if (
+      paymentStatus &&
+      !Object.values(PAYMENT_STATUS_ENUM).includes(paymentStatus)
+    ) {
+      throw new HttpException(
+        'Invalid payment_status value',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     this.loggerService.log(
       JSON.stringify({
         message: 'exportPurchasesToExcel: Requested Purchases export',
@@ -377,6 +406,7 @@ export class OrderController {
           endDate: parsedEndDate,
           types,
           includeCancelled: parsedIncludeCancelled,
+          paymentStatus,
         },
       }),
     );
@@ -392,6 +422,7 @@ export class OrderController {
       endDate: parsedEndDate,
       types,
       includeCancelled: parsedIncludeCancelled,
+      paymentStatus,
     });
 
     // Set headers for file download
