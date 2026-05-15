@@ -28,21 +28,21 @@ describe('RevenueCalculatorService', () => {
           useValue: {
             find: jest.fn().mockReturnThis(),
             findById: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue([]),
             populate: jest.fn().mockReturnThis(),
           },
         },
         {
           provide: getModelToken(License.name),
           useValue: {
-            find: jest.fn().mockReturnThis(),
+            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
             lean: jest.fn().mockReturnThis(),
           },
         },
         {
           provide: getModelToken(Customization.name),
           useValue: {
-            find: jest.fn().mockReturnThis(),
+            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
             lean: jest.fn().mockReturnThis(),
           },
         },
@@ -51,7 +51,7 @@ describe('RevenueCalculatorService', () => {
           useValue: {
             findById: jest.fn().mockReturnThis(),
             find: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue([]),
           },
         },
         {
@@ -59,7 +59,7 @@ describe('RevenueCalculatorService', () => {
           useValue: {
             find: jest.fn().mockReturnThis(),
             findById: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockReturnThis(),
+            lean: jest.fn().mockResolvedValue([]),
           },
         },
         {
@@ -68,7 +68,16 @@ describe('RevenueCalculatorService', () => {
             find: jest.fn().mockReturnThis(),
             findById: jest.fn().mockReturnThis(),
             findByIdAndUpdate: jest.fn().mockReturnThis(),
-            lean: jest.fn().mockReturnThis(),
+            findWithDeleted: jest.fn().mockReturnValue({
+              populate: jest.fn().mockReturnValue({
+                populate: jest.fn().mockReturnValue({
+                  lean: jest.fn().mockResolvedValue([]),
+                }),
+                lean: jest.fn().mockResolvedValue([]),
+              }),
+              lean: jest.fn().mockResolvedValue([]),
+            }),
+            lean: jest.fn().mockResolvedValue([]),
             populate: jest.fn().mockReturnThis(),
           },
         },
@@ -203,7 +212,7 @@ describe('RevenueCalculatorService', () => {
         },
       ];
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -237,7 +246,7 @@ describe('RevenueCalculatorService', () => {
         },
       ];
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -267,7 +276,7 @@ describe('RevenueCalculatorService', () => {
         },
       ];
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -315,7 +324,7 @@ describe('RevenueCalculatorService', () => {
         }),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -361,7 +370,7 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -420,7 +429,7 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -444,7 +453,7 @@ describe('RevenueCalculatorService', () => {
           client_id: { name: 'Client A' },
           purchased_date: new Date('2023-04-15'),
           payment_terms: [
-            { invoice_date: new Date('2023-05-10'), calculated_amount: 3000, status: 'paid' },
+            { invoice_date: new Date('2023-04-20'), calculated_amount: 3000, status: 'paid' },
           ],
         },
       ];
@@ -468,7 +477,7 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(mockAMCs),
       } as any);
@@ -476,7 +485,7 @@ describe('RevenueCalculatorService', () => {
       const result = await service.getMonthlyBreakdown({ year: 2023, month: 4 });
 
       expect(result.newSales.total).toBe(3000);
-      expect(result.newSales.details[0].date).toEqual(new Date('2023-05-10'));
+      expect(result.newSales.details[0].date).toEqual(new Date('2023-04-20'));
       expect(result.amc.total).toBe(1000);
       expect(result.amc.details[0].date).toEqual(new Date('2023-04-01'));
     });
@@ -520,7 +529,7 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -582,7 +591,7 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
         populate: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue(mockAMCs),
         }),
@@ -596,6 +605,237 @@ describe('RevenueCalculatorService', () => {
 
       expect(result.totalRevenue).toBe(15000);
       expect(result.industryDiversification[0].totalRevenue).toBe(15000);
+    });
+  });
+
+  describe('calculateNewSalesRevenue with standalone customizations and licenses', () => {
+    it('should include standalone customizations and licenses in new sales', async () => {
+      const mockOrders = [
+        {
+          _id: new Types.ObjectId(),
+          products: [new Types.ObjectId()],
+          payment_terms: [
+            { invoice_date: '2023-05-10T00:00:00.000Z', calculated_amount: 10000, status: 'paid' },
+          ],
+        },
+      ];
+
+      const mockCustomizations = [
+        {
+          _id: new Types.ObjectId(),
+          order_id: new Types.ObjectId(),
+          invoice_date: new Date('2023-06-15'),
+          cost: 5000,
+          payment_status: 'paid',
+        },
+      ];
+
+      const mockLicenses = [
+        {
+          _id: new Types.ObjectId(),
+          order_id: new Types.ObjectId(),
+          invoice_date: new Date('2023-07-20'),
+          total_license: 10,
+          payment_status: 'paid',
+        },
+      ];
+
+      const mockLinkedOrder = {
+        _id: mockLicenses[0].order_id,
+        cost_per_license: 100,
+      };
+
+      jest.spyOn(orderModel, 'find').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockOrders),
+        }),
+      } as any);
+
+      jest.spyOn(customizationModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue(mockCustomizations),
+      } as any);
+
+      jest.spyOn(licenseModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue(mockLicenses),
+      } as any);
+
+      jest.spyOn(orderModel, 'findById').mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockLinkedOrder),
+        }),
+      } as any);
+
+      const start = new Date('2023-04-01');
+      const end = new Date('2024-03-31');
+      const result = await service.calculateNewSalesRevenue(start, end, 'monthly');
+
+      // Order term: 10000 in May
+      expect(result.get('May FY23-24')).toBe(10000);
+      // Customization: 5000 in Jun
+      expect(result.get('Jun FY23-24')).toBe(5000);
+      // License: 10 * 100 = 1000 in Jul
+      expect(result.get('Jul FY23-24')).toBe(1000);
+    });
+
+    it('should handle string invoice_date in payment_terms (real DB format)', async () => {
+      const mockOrders = [
+        {
+          _id: new Types.ObjectId(),
+          products: [new Types.ObjectId()],
+          payment_terms: [
+            // Real DB stores invoice_date as ISO string, not Date
+            { invoice_date: '2023-05-10T18:30:00.000Z', calculated_amount: 5000, status: 'paid' },
+            { invoice_date: '2023-06-15T18:30:00.000Z', calculated_amount: 3000, status: 'invoice' },
+          ],
+        },
+      ];
+
+      jest.spyOn(orderModel, 'find').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockOrders),
+        }),
+      } as any);
+
+      jest.spyOn(customizationModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      } as any);
+
+      jest.spyOn(licenseModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      } as any);
+
+      const start = new Date('2023-04-01');
+      const end = new Date('2024-03-31');
+      const result = await service.calculateNewSalesRevenue(start, end, 'monthly');
+
+      expect(result.get('May FY23-24')).toBe(5000);
+      expect(result.get('Jun FY23-24')).toBe(3000);
+    });
+
+    it('should compute license cost from base_cost / licenses_with_base_price when cost_per_license is 0', async () => {
+      const mockLicenses = [
+        {
+          _id: new Types.ObjectId(),
+          order_id: new Types.ObjectId(),
+          invoice_date: new Date('2023-08-15'),
+          total_license: 10,
+          payment_status: 'paid',
+        },
+      ];
+
+      const mockLinkedOrder = {
+        _id: mockLicenses[0].order_id,
+        cost_per_license: 0,
+        base_cost: 1000000,
+        licenses_with_base_price: 25,
+      };
+
+      jest.spyOn(orderModel, 'find').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        }),
+      } as any);
+
+      jest.spyOn(customizationModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      } as any);
+
+      jest.spyOn(licenseModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue(mockLicenses),
+      } as any);
+
+      jest.spyOn(orderModel, 'findById').mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockLinkedOrder),
+        }),
+      } as any);
+
+      const start = new Date('2023-04-01');
+      const end = new Date('2024-03-31');
+      const result = await service.calculateNewSalesRevenue(start, end, 'monthly');
+
+      // 10 licenses * (1,000,000 / 25) = 10 * 40,000 = 400,000
+      expect(result.get('Aug FY23-24')).toBe(400000);
+    });
+  });
+
+  describe('AMC inactive order exclusion', () => {
+    it('should exclude AMC payments from inactive orders', async () => {
+      const activeOrderId = new Types.ObjectId();
+      const inactiveOrderId = new Types.ObjectId();
+
+      const mockAMCs = [
+        {
+          _id: new Types.ObjectId(),
+          order_id: {
+            _id: activeOrderId,
+            amc_start_date: new Date('2023-04-01'),
+            status: 'active',
+          },
+          payments: [
+            { from_date: new Date('2023-04-01'), amc_rate_amount: 1000, status: PAYMENT_STATUS_ENUM.PAID },
+          ],
+        },
+        {
+          _id: new Types.ObjectId(),
+          order_id: {
+            _id: inactiveOrderId,
+            amc_start_date: new Date('2023-04-01'),
+            status: 'inactive',
+          },
+          payments: [
+            { from_date: new Date('2023-04-01'), amc_rate_amount: 2000, status: PAYMENT_STATUS_ENUM.PAID },
+          ],
+        },
+      ];
+
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAMCs),
+        }),
+      } as any);
+
+      const start = new Date('2023-04-01');
+      const end = new Date('2024-03-31');
+      const result = await service.calculateAMCRevenue(start, end, 'yearly');
+
+      // Only active order's AMC payment should count
+      expect(result.get('FY23-24')).toBe(1000);
+    });
+
+    it('should exclude inactive orders in getRevenueDashboard', async () => {
+      const mockOrders: any[] = [];
+
+      const mockAMCs = [
+        {
+          _id: new Types.ObjectId(),
+          order_id: {
+            _id: new Types.ObjectId(),
+            amc_start_date: new Date('2023-04-01'),
+            status: 'inactive',
+          },
+          payments: [
+            { from_date: new Date('2023-04-01'), amc_rate_amount: 5000, status: PAYMENT_STATUS_ENUM.PAID },
+          ],
+        },
+      ];
+
+      jest.spyOn(orderModel, 'find').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockOrders),
+        }),
+      } as any);
+
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAMCs),
+        }),
+      } as any);
+
+      const result = await service.getRevenueDashboard({ year: 2023, filter: 'yearly' });
+
+      expect(result.summary.totalNewSalesRevenue).toBe(0);
+      expect(result.summary.totalAMCRevenue).toBe(0);
     });
   });
 
@@ -634,8 +874,10 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
-        lean: jest.fn().mockResolvedValue(mockAMCs),
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAMCs),
+        }),
       } as any);
 
       const result = await service.getClientHealthMetrics(2023);
@@ -672,8 +914,10 @@ describe('RevenueCalculatorService', () => {
         lean: jest.fn().mockResolvedValue(mockOrders),
       } as any);
 
-      jest.spyOn(amcModel, 'find').mockReturnValue({
-        lean: jest.fn().mockResolvedValue(mockAMCs),
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAMCs),
+        }),
       } as any);
 
       const result = await service.getClientHealthMetrics(2023);

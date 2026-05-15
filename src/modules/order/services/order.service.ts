@@ -1289,18 +1289,6 @@ export class OrderService {
     const filterQuery: any = {};
     let clientIdsForFilter: Types.ObjectId[] | null = null;
 
-    // Apply date range filter to purchase_date
-    if (parsedStartDate && parsedEndDate) {
-      filterQuery.purchased_date = {
-        $gte: parsedStartDate,
-        $lte: parsedEndDate,
-      };
-    } else if (parsedStartDate) {
-      filterQuery.purchased_date = { $gte: parsedStartDate };
-    } else if (parsedEndDate) {
-      filterQuery.purchased_date = { $lte: parsedEndDate };
-    }
-
     // 1. Filter by Client Name
     if (filters.clientName && filters.clientName.trim() !== '') {
       const clientsByName = await this.clientModel
@@ -1465,27 +1453,133 @@ export class OrderService {
         .map((t) => t.trim().toLowerCase())
         .filter((t) => t.length > 0);
 
+      // Build date query for sub-collection lookups
+      const subItemDateQuery: any = {};
+      if (parsedStartDate && parsedEndDate) {
+        subItemDateQuery.$gte = parsedStartDate;
+        subItemDateQuery.$lte = parsedEndDate;
+      } else if (parsedStartDate) {
+        subItemDateQuery.$gte = parsedStartDate;
+      } else if (parsedEndDate) {
+        subItemDateQuery.$lte = parsedEndDate;
+      }
+
+      // Fetch order IDs from sub-collections when date range is provided
+      let licenseOrderIds: Types.ObjectId[] | null = null;
+      let customizationOrderIds: Types.ObjectId[] | null = null;
+      let amcOrderIds: Types.ObjectId[] | null = null;
+
+      if (Object.keys(subItemDateQuery).length > 0) {
+        if (typeValues.includes('auditor_license')) {
+          const licenses = await this.licenseModel
+            .find({ purchase_date: subItemDateQuery })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>();
+          licenseOrderIds = [
+            ...new Set(licenses.map((l) => String(l.order_id))),
+          ]
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id));
+        }
+        if (typeValues.includes('customization')) {
+          const customizations = await this.customizationModel
+            .find({ purchased_date: subItemDateQuery })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>();
+          customizationOrderIds = [
+            ...new Set(customizations.map((c) => String(c.order_id))),
+          ]
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id));
+        }
+        if (typeValues.includes('amc')) {
+          const amcs = await this.amcModel
+            .find({
+              $or: [
+                { start_date: subItemDateQuery },
+                {
+                  'payments.from_date': {
+                    $lte: subItemDateQuery.$lte ?? new Date('2099-12-31'),
+                  },
+                  'payments.to_date': {
+                    $gte: subItemDateQuery.$gte ?? new Date('1970-01-01'),
+                  },
+                },
+              ],
+            })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>();
+          amcOrderIds = [...new Set(amcs.map((a) => String(a.order_id)))]
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id));
+        }
+      }
+
       const typeConditions: any[] = [];
 
       if (typeValues.includes('new')) {
-        typeConditions.push({
+        const newCond: any = {
           products: { $exists: true, $ne: [] },
-        });
+        };
+        if (parsedStartDate && parsedEndDate) {
+          newCond.purchased_date = {
+            $gte: parsedStartDate,
+            $lte: parsedEndDate,
+          };
+        } else if (parsedStartDate) {
+          newCond.purchased_date = { $gte: parsedStartDate };
+        } else if (parsedEndDate) {
+          newCond.purchased_date = { $lte: parsedEndDate };
+        }
+        typeConditions.push(newCond);
       }
       if (typeValues.includes('amc')) {
-        typeConditions.push({
-          amc_id: { $exists: true, $ne: null },
-        });
+        if (
+          Object.keys(subItemDateQuery).length > 0 &&
+          amcOrderIds
+        ) {
+          if (amcOrderIds.length > 0) {
+            typeConditions.push({ _id: { $in: amcOrderIds } });
+          } else {
+            typeConditions.push({ _id: { $in: [] } });
+          }
+        } else {
+          typeConditions.push({
+            amc_id: { $exists: true, $ne: null },
+          });
+        }
       }
       if (typeValues.includes('customization')) {
-        typeConditions.push({
-          customizations: { $exists: true, $ne: [] },
-        });
+        if (
+          Object.keys(subItemDateQuery).length > 0 &&
+          customizationOrderIds
+        ) {
+          if (customizationOrderIds.length > 0) {
+            typeConditions.push({ _id: { $in: customizationOrderIds } });
+          } else {
+            typeConditions.push({ _id: { $in: [] } });
+          }
+        } else {
+          typeConditions.push({
+            customizations: { $exists: true, $ne: [] },
+          });
+        }
       }
       if (typeValues.includes('auditor_license')) {
-        typeConditions.push({
-          licenses: { $exists: true, $ne: [] },
-        });
+        if (
+          Object.keys(subItemDateQuery).length > 0 &&
+          licenseOrderIds
+        ) {
+          if (licenseOrderIds.length > 0) {
+            typeConditions.push({ _id: { $in: licenseOrderIds } });
+          } else {
+            typeConditions.push({ _id: { $in: [] } });
+          }
+        } else {
+          typeConditions.push({
+            licenses: { $exists: true, $ne: [] },
+          });
+        }
       }
 
       if (typeConditions.length > 0) {
@@ -1495,6 +1589,18 @@ export class OrderService {
         } else {
           filterQuery.$or = typeConditions;
         }
+      }
+    } else {
+      // No types filter: apply date range to purchase_date
+      if (parsedStartDate && parsedEndDate) {
+        filterQuery.purchased_date = {
+          $gte: parsedStartDate,
+          $lte: parsedEndDate,
+        };
+      } else if (parsedStartDate) {
+        filterQuery.purchased_date = { $gte: parsedStartDate };
+      } else if (parsedEndDate) {
+        filterQuery.purchased_date = { $lte: parsedEndDate };
       }
     }
 
@@ -1542,10 +1648,11 @@ export class OrderService {
         }),
       );
 
-      const { filterQuery } = await this.buildOrderFilterQuery(
-        filters,
-        'loadAllOrdersWithAttributes',
-      );
+      const { filterQuery, parsedStartDate, parsedEndDate } =
+        await this.buildOrderFilterQuery(
+          filters,
+          'loadAllOrdersWithAttributes',
+        );
 
       this.loggerService.log(
         JSON.stringify({
@@ -1620,6 +1727,10 @@ export class OrderService {
           limit,
         }),
       );
+
+      const typeValues = filters.types
+        ? filters.types.split(',').map((t) => t.trim().toLowerCase())
+        : [];
 
       // Process Orders
       const processedOrders = await Promise.all(
@@ -1722,6 +1833,38 @@ export class OrderService {
               .filter((c) => c !== null);
           } else {
             orderObj.customizations = [];
+          }
+
+          // Filter sub-items by date range when corresponding type is selected
+          if (
+            typeValues.includes('auditor_license') &&
+            (parsedStartDate || parsedEndDate)
+          ) {
+            orderObj.licenses = orderObj.licenses.filter((license: any) => {
+              if (!license.purchase_date) return false;
+              const d = new Date(license.purchase_date);
+              return (
+                (!parsedStartDate || d >= parsedStartDate) &&
+                (!parsedEndDate || d <= parsedEndDate)
+              );
+            });
+            orderObj.has_licenses = orderObj.licenses.length > 0;
+          }
+          if (
+            typeValues.includes('customization') &&
+            (parsedStartDate || parsedEndDate)
+          ) {
+            orderObj.customizations = orderObj.customizations.filter(
+              (c: any) => {
+                if (!c.purchased_date) return false;
+                const d = new Date(c.purchased_date);
+                return (
+                  (!parsedStartDate || d >= parsedStartDate) &&
+                  (!parsedEndDate || d <= parsedEndDate)
+                );
+              },
+            );
+            orderObj.has_customizations = orderObj.customizations.length > 0;
           }
 
           // Process additional services
@@ -6738,6 +6881,10 @@ export class OrderService {
         }),
       );
 
+      const typeValues = filters.types
+        ? filters.types.split(',').map((t) => t.trim().toLowerCase())
+        : [];
+
       // Process orders similar to loadAllOrdersWithAttributes
       const processedOrders = await Promise.all(
         orders.map(async (order: any) => {
@@ -6767,6 +6914,38 @@ export class OrderService {
                 }),
               );
             }
+          }
+
+          // Filter sub-items by date range when corresponding type is selected
+          if (
+            typeValues.includes('auditor_license') &&
+            (parsedStartDate || parsedEndDate)
+          ) {
+            orderObj.licenses = (orderObj.licenses || []).filter(
+              (license: any) => {
+                if (!license.purchase_date) return false;
+                const d = new Date(license.purchase_date);
+                return (
+                  (!parsedStartDate || d >= parsedStartDate) &&
+                  (!parsedEndDate || d <= parsedEndDate)
+                );
+              },
+            );
+          }
+          if (
+            typeValues.includes('customization') &&
+            (parsedStartDate || parsedEndDate)
+          ) {
+            orderObj.customizations = (orderObj.customizations || []).filter(
+              (c: any) => {
+                if (!c.purchased_date) return false;
+                const d = new Date(c.purchased_date);
+                return (
+                  (!parsedStartDate || d >= parsedStartDate) &&
+                  (!parsedEndDate || d <= parsedEndDate)
+                );
+              },
+            );
           }
 
           return orderObj;
@@ -6868,6 +7047,8 @@ export class OrderService {
       if (filters.status) appliedFilters.push(`Status: ${filters.status}`);
       if (filters.productId)
         appliedFilters.push(`Product: ${filters.productId}`);
+      if (filters.types)
+        appliedFilters.push(`Types: ${filters.types}`);
       if (parsedStartDate || parsedEndDate) {
         const dateRange =
           parsedStartDate && parsedEndDate

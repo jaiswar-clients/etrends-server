@@ -96,6 +96,94 @@ export class RevenueCalculatorService {
   }
 
   /**
+   * Calculate Customization Revenue by period
+   * Standalone customizations purchased separately from initial order
+   */
+  async calculateCustomizationRevenue(
+    startDate: Date,
+    endDate: Date,
+    filter: string = 'monthly',
+  ): Promise<Map<string, number>> {
+    const customizations = await this.customizationModel
+      .find({
+        invoice_date: { $gte: startDate, $lte: endDate },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    const revenueByPeriod = new Map<string, number>();
+
+    for (const cust of customizations) {
+      if (cust.payment_status === 'proforma') continue;
+      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+
+      const revenue = cust.cost || 0;
+      const date = cust.invoice_date;
+      if (!date) continue;
+
+      const period = this.getPeriodLabel(new Date(date), filter);
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    }
+
+    return revenueByPeriod;
+  }
+
+  /**
+   * Calculate License Revenue by period
+   * Standalone licenses purchased separately from initial order
+   * Revenue = total_license * order.cost_per_license
+   */
+  async calculateLicenseRevenue(
+    startDate: Date,
+    endDate: Date,
+    filter: string = 'monthly',
+  ): Promise<Map<string, number>> {
+    const licenses = await this.licenseModel
+      .find({
+        invoice_date: { $gte: startDate, $lte: endDate },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    const revenueByPeriod = new Map<string, number>();
+
+    for (const license of licenses) {
+      if (license.payment_status === 'proforma') continue;
+      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+
+      // Look up linked order for cost_per_license
+      const order = await this.orderModel
+        .findById(license.order_id)
+        .select('cost_per_license base_cost licenses_with_base_price')
+        .lean();
+
+      const costPerLicense = this.getLicenseCostPerLicense(order);
+      const revenue = (license.total_license || 0) * costPerLicense;
+      if (revenue === 0) continue;
+
+      const date = license.invoice_date;
+      if (!date) continue;
+
+      const period = this.getPeriodLabel(new Date(date), filter);
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    }
+
+    return revenueByPeriod;
+  }
+
+  /**
+   * Compute effective cost per license for standalone license purchases.
+   * Fallback to base_cost / licenses_with_base_price when cost_per_license is 0.
+   */
+  private getLicenseCostPerLicense(order: any): number {
+    if (order?.cost_per_license > 0) return order.cost_per_license;
+    if (order?.licenses_with_base_price > 0 && order?.base_cost > 0) {
+      return order.base_cost / order.licenses_with_base_price;
+    }
+    return 0;
+  }
+
+  /**
    * Get date range for a fiscal year (April 1 to March 31)
    */
   getFiscalYearRange(fiscalYearStart: number): { start: Date; end: Date } {
@@ -140,6 +228,7 @@ export class RevenueCalculatorService {
 
   /**
    * Calculate New Sales Revenue by period
+   * Includes: orders, standalone customizations, standalone licenses
    */
   async calculateNewSalesRevenue(
     startDate: Date,
@@ -148,7 +237,7 @@ export class RevenueCalculatorService {
   ): Promise<Map<string, number>> {
     const orders = await this.orderModel
       .find({
-        purchased_date: { $gte: startDate, $lte: endDate },
+        'payment_terms.invoice_date': { $gte: startDate.toISOString(), $lte: endDate.toISOString() },
         deleted: { $ne: true },
       })
       .populate('products')
@@ -156,39 +245,34 @@ export class RevenueCalculatorService {
 
     const revenueByPeriod = new Map<string, number>();
 
-    let debugNewSalesOrders = 0;
-    let debugNewSalesTerms = 0;
-    let debugNoInvoice = 0;
-    let debugProforma = 0;
-    let debugWrongStatus = 0;
-
     // FIX 1: Iterate payment_terms directly and group by term.invoice_date
     for (const order of orders) {
       if (this.isNewSaleOrder(order)) {
-        debugNewSalesOrders++;
         for (const term of order.payment_terms || []) {
-          debugNewSalesTerms++;
-          if (!term.invoice_date) { debugNoInvoice++; continue; }
-          if (term.status === 'proforma') { debugProforma++; continue; }
-          if (term.status !== 'paid' && term.status !== 'invoice') { debugWrongStatus++; continue; }
+          if (!term.invoice_date) continue;
+          const termInvoiceDate = new Date(term.invoice_date);
+          if (termInvoiceDate < startDate || termInvoiceDate > endDate) continue;
+          if (term.status === 'proforma') continue;
+          if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
           const revenue = term.calculated_amount || 0;
-          const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
+          const period = this.getPeriodLabel(termInvoiceDate, filter);
           revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
         }
       }
     }
 
-    console.log('[DEBUG calculateNewSalesRevenue]', {
-      dateRange: { start: startDate.toISOString(), end: endDate.toISOString() },
-      ordersFound: orders.length,
-      newSaleOrders: debugNewSalesOrders,
-      totalTerms: debugNewSalesTerms,
-      noInvoice: debugNoInvoice,
-      proforma: debugProforma,
-      wrongStatus: debugWrongStatus,
-      periods: Array.from(revenueByPeriod.entries()),
-    });
+    // Include standalone customizations
+    const customizationRevenue = await this.calculateCustomizationRevenue(startDate, endDate, filter);
+    for (const [period, revenue] of customizationRevenue) {
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    }
+
+    // Include standalone licenses
+    const licenseRevenue = await this.calculateLicenseRevenue(startDate, endDate, filter);
+    for (const [period, revenue] of licenseRevenue) {
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    }
 
     return revenueByPeriod;
   }
@@ -196,6 +280,7 @@ export class RevenueCalculatorService {
   /**
    * Calculate AMC Revenue by period
    * EXCLUDES first payment (free maintenance period)
+   * EXCLUDES AMCs linked to inactive orders
    */
   async calculateAMCRevenue(
     startDate: Date,
@@ -209,74 +294,38 @@ export class RevenueCalculatorService {
       .populate({ path: 'order_id', model: 'Order' })
       .lean();
 
-    console.log('[DEBUG calculateAMCRevenue] raw AMC count (withDeleted):', amcs.length);
-    console.log('[DEBUG calculateAMCRevenue] deleted breakdown:', amcs.reduce((acc: any, a: any) => {
-      acc[String(a.deleted ?? 'undefined')] = (acc[String(a.deleted ?? 'undefined')] || 0) + 1;
-      return acc;
-    }, {}));
-    console.log('[DEBUG calculateAMCRevenue] payment counts:', amcs.map((a: any) => ({ _id: a._id, deleted: a.deleted, paymentsCount: (a.payments || []).length })));
-
     const revenueByPeriod = new Map<string, number>();
 
-    // DEBUG: trace why AMC revenue is zero
-    let debugTotalAmcs = 0;
-    let debugTotalPayments = 0;
-    let debugProformaSkipped = 0;
-    let debugOutOfRange = 0;
-    let debugZeroAmount = 0;
-    let debugAdded = 0;
-    let debugAddedAmount = 0;
-
     for (const amc of amcs) {
-      debugTotalAmcs++;
       const order = amc.order_id as any;
 
-      // Include all payments (first payment is now paid AMC, not free period)
+      // Skip AMCs without order or amc_start_date
+      if (!order || !order.amc_start_date) {
+        continue;
+      }
+
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') {
+        continue;
+      }
+
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
-        debugTotalPayments++;
         // Skip proforma payments
-        if (payment.status === 'proforma') {
-          debugProformaSkipped++;
-          continue;
-        }
+        if (payment.status === 'proforma') continue;
 
         const paymentFromDate = new Date(payment.from_date);
 
-        // Check if payment falls within date range (range eligibility check)
-        if (paymentFromDate < startDate || paymentFromDate > endDate) {
-          debugOutOfRange++;
-          continue;
-        }
+        // Check if payment falls within date range
+        if (paymentFromDate < startDate || paymentFromDate > endDate) continue;
 
-        // Use amc_rate_amount from payment record
         const revenue = payment.amc_rate_amount || 0;
-        if (revenue === 0) {
-          debugZeroAmount++;
-        }
-        // Group by order.amc_start_date when available, fallback to payment.from_date
         const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
         const period = this.getPeriodLabel(groupDate, filter);
         revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
-        debugAdded++;
-        debugAddedAmount += revenue;
       }
     }
-
-    console.log('[DEBUG calculateAMCRevenue]', {
-      filter,
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString(),
-      totalAmcs: debugTotalAmcs,
-      totalPayments: debugTotalPayments,
-      proformaSkipped: debugProformaSkipped,
-      outOfRange: debugOutOfRange,
-      zeroAmount: debugZeroAmount,
-      added: debugAdded,
-      addedAmount: debugAddedAmount,
-      periods: Array.from(revenueByPeriod.entries()),
-    });
 
     return revenueByPeriod;
   }
@@ -425,7 +474,7 @@ export class RevenueCalculatorService {
     if (includeNewOrders) {
       const newSalesOrders = await this.orderModel
         .find({
-          purchased_date: { $gte: start, $lte: end },
+          'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
           deleted: { $ne: true },
         })
         .lean();
@@ -438,6 +487,8 @@ export class RevenueCalculatorService {
         if (this.isNewSaleOrder(order)) {
           for (const term of order.payment_terms || []) {
             if (!term.invoice_date) continue;
+            const termInvoiceDate = new Date(term.invoice_date);
+            if (termInvoiceDate < start || termInvoiceDate > end) continue;
             if (term.status === 'proforma') continue;
             if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
@@ -452,7 +503,7 @@ export class RevenueCalculatorService {
             }
 
             // Add to period breakdown grouped by invoice_date
-            const period = this.getPeriodLabel(new Date(term.invoice_date), filter);
+            const period = this.getPeriodLabel(termInvoiceDate, filter);
             const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
             existing.expected += termAmount;
             if (isPaid) {
@@ -460,6 +511,57 @@ export class RevenueCalculatorService {
             }
             newSalesByPeriod.set(period, existing);
           }
+        }
+      }
+
+      // Include standalone customizations
+      const customizations = await this.customizationModel
+        .find({
+          invoice_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+      for (const cust of customizations) {
+        if (cust.payment_status === 'proforma') continue;
+        if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+        const cost = cust.cost || 0;
+        const isPaid = cust.payment_status === 'paid';
+        newSalesExpected += cost;
+        if (isPaid) newSalesCollected += cost;
+        const date = cust.invoice_date;
+        if (date) {
+          const period = this.getPeriodLabel(new Date(date), filter);
+          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
+          existing.expected += cost;
+          if (isPaid) existing.collected += cost;
+          newSalesByPeriod.set(period, existing);
+        }
+      }
+
+      // Include standalone licenses
+      const licenses = await this.licenseModel
+        .find({
+          invoice_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+      for (const license of licenses) {
+        if (license.payment_status === 'proforma') continue;
+        if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+        const order = await this.orderModel.findById(license.order_id).select('cost_per_license base_cost licenses_with_base_price').lean();
+        const costPerLicense = this.getLicenseCostPerLicense(order);
+        const revenue = (license.total_license || 0) * costPerLicense;
+        if (revenue === 0) continue;
+        const isPaid = license.payment_status === 'paid';
+        newSalesExpected += revenue;
+        if (isPaid) newSalesCollected += revenue;
+        const date = license.invoice_date;
+        if (date) {
+          const period = this.getPeriodLabel(new Date(date), filter);
+          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
+          existing.expected += revenue;
+          if (isPaid) existing.collected += revenue;
+          newSalesByPeriod.set(period, existing);
         }
       }
 
@@ -489,6 +591,9 @@ export class RevenueCalculatorService {
 
       for (const amc of amcs) {
         const order = amc.order_id as any;
+
+        // Skip AMCs linked to inactive orders
+        if (order?.status === 'inactive') continue;
 
         // Include all payments (first payment is now paid AMC, not free period)
         const allPayments = amc.payments || [];
@@ -577,11 +682,9 @@ export class RevenueCalculatorService {
     const period = `${monthNames[month - 1]} ${fyLabel}`;
 
     // New Sales Details
-    // FIX 3: The initial query filter on purchased_date can stay (it gets orders in range),
-    // but after fetching, iterate payment_terms for revenue grouping
     const orders = await this.orderModel
       .find({
-        purchased_date: { $gte: start, $lte: end },
+        'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
         deleted: { $ne: true },
       })
       .populate('client_id')
@@ -615,6 +718,8 @@ export class RevenueCalculatorService {
         // Iterate payment_terms directly instead of calculateNewSaleOrderRevenue
         for (const term of order.payment_terms || []) {
           if (!term.invoice_date) continue;
+          const termInvoiceDate = new Date(term.invoice_date);
+          if (termInvoiceDate < start || termInvoiceDate > end) continue;
           if (term.status === 'proforma') continue;
           if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
@@ -633,6 +738,56 @@ export class RevenueCalculatorService {
       }
     }
 
+    // Include standalone customizations
+    const customizations = await this.customizationModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const cust of customizations) {
+      if (cust.payment_status === 'proforma') continue;
+      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+      const revenue = cust.cost || 0;
+      newSalesTotal += revenue;
+      const order = await this.orderModel.findById(cust.order_id).select('client_id').populate('client_id').lean();
+      const client = order?.client_id as any;
+      newSalesDetails.push({
+        orderId: cust._id.toString(),
+        clientName: client?.name || 'Unknown',
+        productName: cust.title || 'Customization',
+        amount: revenue,
+        status: cust.payment_status || 'unknown',
+        date: cust.invoice_date,
+      });
+    }
+
+    // Include standalone licenses
+    const licenses = await this.licenseModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const license of licenses) {
+      if (license.payment_status === 'proforma') continue;
+      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(license.order_id).select('cost_per_license base_cost licenses_with_base_price client_id').populate('client_id').lean();
+      const costPerLicense = this.getLicenseCostPerLicense(order);
+      const revenue = (license.total_license || 0) * costPerLicense;
+      if (revenue === 0) continue;
+      newSalesTotal += revenue;
+      const client = order?.client_id as any;
+      newSalesDetails.push({
+        orderId: license._id.toString(),
+        clientName: client?.name || 'Unknown',
+        productName: `License (${license.total_license})`,
+        amount: revenue,
+        status: license.payment_status || 'unknown',
+        date: license.invoice_date,
+      });
+    }
+
     // AMC Details
     const amcs = await (this.amcModel as any).findWithDeleted()
       .populate('client_id')
@@ -644,6 +799,9 @@ export class RevenueCalculatorService {
 
     for (const amc of amcs) {
       const order = amc.order_id as any;
+
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
 
       // Include all payments (first payment is now paid AMC, not free period)
       const allPayments = amc.payments || [];
@@ -701,7 +859,7 @@ export class RevenueCalculatorService {
     // Get clients with activity in current FY (orders or AMC payments)
     const ordersInFY = await this.orderModel
       .find({
-        purchased_date: { $gte: start, $lte: end },
+        'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
         deleted: { $ne: true },
       })
       .lean();
@@ -709,10 +867,16 @@ export class RevenueCalculatorService {
     const clientIdsWithOrders = new Set(ordersInFY.map((o) => o.client_id?.toString()));
 
     // Get AMC payments in FY
-    const amcs = await (this.amcModel as any).findWithDeleted().lean();
+    const amcs = await (this.amcModel as any).findWithDeleted()
+      .populate({ path: 'order_id', model: 'Order' })
+      .lean();
     const clientIdsWithAMCPayments = new Set<string>();
 
     for (const amc of amcs) {
+      const order = amc.order_id as any;
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
+
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
         if (payment.status === 'proforma') continue;
@@ -758,6 +922,10 @@ export class RevenueCalculatorService {
 
     // AMC overdue payments
     for (const amc of amcs) {
+      const order = amc.order_id as any;
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
+
       const clientId = amc.client_id?.toString();
       if (!clientId) continue;
 
@@ -785,6 +953,10 @@ export class RevenueCalculatorService {
     let renewedAMCs = 0;
 
     for (const amc of amcs) {
+      const order = amc.order_id as any;
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
+
       const payments = amc.payments || [];
       if (payments.length <= 0) continue;
 
@@ -840,7 +1012,7 @@ export class RevenueCalculatorService {
     // FIX 4: New sales revenue - iterate payment_terms directly instead of calculateNewSaleOrderRevenue
     const orders = await this.orderModel
       .find({
-        purchased_date: { $gte: start, $lte: end },
+        'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
         deleted: { $ne: true },
       })
       .lean();
@@ -852,6 +1024,8 @@ export class RevenueCalculatorService {
       if (this.isNewSaleOrder(order)) {
         for (const term of order.payment_terms || []) {
           if (!term.invoice_date) continue;
+          const termInvoiceDate = new Date(term.invoice_date);
+          if (termInvoiceDate < start || termInvoiceDate > end) continue;
           if (term.status === 'proforma') continue;
           if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
@@ -864,6 +1038,48 @@ export class RevenueCalculatorService {
       }
     }
 
+    // Include standalone customizations
+    const customizations = await this.customizationModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const cust of customizations) {
+      if (cust.payment_status === 'proforma') continue;
+      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      const revenue = cust.cost || 0;
+      const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
+      existing.newSales += revenue;
+      existing.orderCount++;
+      currentFYRevenue.set(clientId, existing);
+    }
+
+    // Include standalone licenses
+    const licenses = await this.licenseModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const license of licenses) {
+      if (license.payment_status === 'proforma') continue;
+      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      const costPerLicense = this.getLicenseCostPerLicense(order);
+      const revenue = (license.total_license || 0) * costPerLicense;
+      if (revenue === 0) continue;
+      const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
+      existing.newSales += revenue;
+      existing.orderCount++;
+      currentFYRevenue.set(clientId, existing);
+    }
+
     // AMC revenue
     const amcs = await (this.amcModel as any).findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
@@ -873,6 +1089,8 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       const order = amc.order_id as any;
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
@@ -894,7 +1112,7 @@ export class RevenueCalculatorService {
 
     const prevOrders = await this.orderModel
       .find({
-        purchased_date: { $gte: prevStart, $lte: prevEnd },
+        'payment_terms.invoice_date': { $gte: prevStart.toISOString(), $lte: prevEnd.toISOString() },
         deleted: { $ne: true },
       })
       .lean();
@@ -907,6 +1125,8 @@ export class RevenueCalculatorService {
       if (this.isNewSaleOrder(order)) {
         for (const term of order.payment_terms || []) {
           if (!term.invoice_date) continue;
+          const termInvoiceDate = new Date(term.invoice_date);
+          if (termInvoiceDate < prevStart || termInvoiceDate > prevEnd) continue;
           if (term.status === 'proforma') continue;
           if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
@@ -916,11 +1136,48 @@ export class RevenueCalculatorService {
       }
     }
 
+    // Include standalone customizations for previous FY
+    const prevCustomizations = await this.customizationModel
+      .find({
+        invoice_date: { $gte: prevStart, $lte: prevEnd },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const cust of prevCustomizations) {
+      if (cust.payment_status === 'proforma') continue;
+      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + (cust.cost || 0));
+    }
+
+    // Include standalone licenses for previous FY
+    const prevLicenses = await this.licenseModel
+      .find({
+        invoice_date: { $gte: prevStart, $lte: prevEnd },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const license of prevLicenses) {
+      if (license.payment_status === 'proforma') continue;
+      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      const costPerLicense = this.getLicenseCostPerLicense(order);
+      const revenue = (license.total_license || 0) * costPerLicense;
+      if (revenue === 0) continue;
+      prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+    }
+
     for (const amc of amcs) {
       const clientId = amc.client_id?.toString();
       if (!clientId) continue;
 
       const order = amc.order_id as any;
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
@@ -1014,10 +1271,14 @@ export class RevenueCalculatorService {
       let hasRecentActivity = false;
 
       for (const order of clientOrders) {
-        if (new Date(order.purchased_date) >= sixMonthsAgo) {
-          hasRecentActivity = true;
-          break;
+        for (const term of order.payment_terms || []) {
+          if (!term.invoice_date) continue;
+          if (new Date(term.invoice_date) >= sixMonthsAgo) {
+            hasRecentActivity = true;
+            break;
+          }
         }
+        if (hasRecentActivity) break;
       }
 
       if (!hasRecentActivity) {
@@ -1086,7 +1347,7 @@ export class RevenueCalculatorService {
     // FIX 5: New sales - iterate payment_terms directly instead of calculateNewSaleOrderRevenue
     const orders = await this.orderModel
       .find({
-        purchased_date: { $gte: start, $lte: end },
+        'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
         deleted: { $ne: true },
       })
       .lean();
@@ -1098,6 +1359,8 @@ export class RevenueCalculatorService {
       if (this.isNewSaleOrder(order)) {
         for (const term of order.payment_terms || []) {
           if (!term.invoice_date) continue;
+          const termInvoiceDate = new Date(term.invoice_date);
+          if (termInvoiceDate < start || termInvoiceDate > end) continue;
           if (term.status === 'proforma') continue;
           if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
@@ -1105,6 +1368,41 @@ export class RevenueCalculatorService {
           clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
         }
       }
+    }
+
+    // Include standalone customizations
+    const customizations = await this.customizationModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const cust of customizations) {
+      if (cust.payment_status === 'proforma') continue;
+      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + (cust.cost || 0));
+    }
+
+    // Include standalone licenses
+    const licenses = await this.licenseModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const license of licenses) {
+      if (license.payment_status === 'proforma') continue;
+      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      const costPerLicense = this.getLicenseCostPerLicense(order);
+      const revenue = (license.total_license || 0) * costPerLicense;
+      if (revenue === 0) continue;
+      clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
     }
 
     // AMC
@@ -1116,6 +1414,8 @@ export class RevenueCalculatorService {
       if (!clientId) continue;
 
       const order = amc.order_id as any;
+      // Skip AMCs linked to inactive orders
+      if (order?.status === 'inactive') continue;
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
@@ -1235,7 +1535,7 @@ export class RevenueCalculatorService {
     if (includeNew) {
       const orders = await this.orderModel
         .find({
-          purchased_date: { $gte: start, $lte: end },
+          'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
           deleted: { $ne: true },
         })
         .lean();
@@ -1247,6 +1547,8 @@ export class RevenueCalculatorService {
 
         for (const term of order.payment_terms || []) {
           if (!term.invoice_date) continue;
+          const termInvoiceDate = new Date(term.invoice_date);
+          if (termInvoiceDate < start || termInvoiceDate > end) continue;
           if (term.status === 'proforma') continue;
           if (term.status !== 'paid' && term.status !== 'invoice') continue;
 
@@ -1255,6 +1557,45 @@ export class RevenueCalculatorService {
           existing.newSales += revenue;
           perClient.set(clientId, existing);
         }
+      }
+
+      // Include standalone customizations
+      const customizations = await this.customizationModel
+        .find({
+          invoice_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+      for (const cust of customizations) {
+        if (cust.payment_status === 'proforma') continue;
+        if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
+        const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
+        const clientId = order?.client_id?.toString();
+        if (!clientId) continue;
+        const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
+        existing.newSales += cust.cost || 0;
+        perClient.set(clientId, existing);
+      }
+
+      // Include standalone licenses
+      const licenses = await this.licenseModel
+        .find({
+          invoice_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+      for (const license of licenses) {
+        if (license.payment_status === 'proforma') continue;
+        if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
+        const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+        const clientId = order?.client_id?.toString();
+        if (!clientId) continue;
+        const costPerLicense = this.getLicenseCostPerLicense(order);
+        const revenue = (license.total_license || 0) * costPerLicense;
+        if (revenue === 0) continue;
+        const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
+        existing.newSales += revenue;
+        perClient.set(clientId, existing);
       }
     }
 
@@ -1267,6 +1608,10 @@ export class RevenueCalculatorService {
       for (const amc of amcs) {
         const clientId = amc.client_id?.toString();
         if (!clientId) continue;
+
+        const order = amc.order_id as any;
+        // Skip AMCs linked to inactive orders
+        if (order?.status === 'inactive') continue;
 
         for (const payment of amc.payments || []) {
           if (payment.status === 'proforma') continue;
