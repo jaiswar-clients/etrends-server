@@ -1468,6 +1468,7 @@ export class OrderService {
       let licenseOrderIds: Types.ObjectId[] | null = null;
       let customizationOrderIds: Types.ObjectId[] | null = null;
       let amcOrderIds: Types.ObjectId[] | null = null;
+      let additionalServiceOrderIds: Types.ObjectId[] | null = null;
 
       if (Object.keys(subItemDateQuery).length > 0) {
         if (typeValues.includes('auditor_license')) {
@@ -1510,6 +1511,17 @@ export class OrderService {
             .select('order_id')
             .lean<{ order_id: Types.ObjectId }[]>();
           amcOrderIds = [...new Set(amcs.map((a) => String(a.order_id)))]
+            .filter((id) => Types.ObjectId.isValid(id))
+            .map((id) => new Types.ObjectId(id));
+        }
+        if (typeValues.includes('additional_service')) {
+          const additionalServices = await this.additionalServiceModel
+            .find({ purchased_date: subItemDateQuery })
+            .select('order_id')
+            .lean<{ order_id: Types.ObjectId }[]>();
+          additionalServiceOrderIds = [
+            ...new Set(additionalServices.map((s) => String(s.order_id))),
+          ]
             .filter((id) => Types.ObjectId.isValid(id))
             .map((id) => new Types.ObjectId(id));
         }
@@ -1578,6 +1590,22 @@ export class OrderService {
         } else {
           typeConditions.push({
             licenses: { $exists: true, $ne: [] },
+          });
+        }
+      }
+      if (typeValues.includes('additional_service')) {
+        if (
+          Object.keys(subItemDateQuery).length > 0 &&
+          additionalServiceOrderIds
+        ) {
+          if (additionalServiceOrderIds.length > 0) {
+            typeConditions.push({ _id: { $in: additionalServiceOrderIds } });
+          } else {
+            typeConditions.push({ _id: { $in: [] } });
+          }
+        } else {
+          typeConditions.push({
+            additional_services: { $exists: true, $ne: [] },
           });
         }
       }
@@ -1886,6 +1914,23 @@ export class OrderService {
               .filter((s) => s !== null);
           } else {
             orderObj.additional_services = [];
+          }
+
+          // Filter additional services by date range when type is selected
+          if (
+            typeValues.includes('additional_service') &&
+            (parsedStartDate || parsedEndDate)
+          ) {
+            orderObj.additional_services = orderObj.additional_services.filter(
+              (s: any) => {
+                if (!s.purchased_date) return false;
+                const d = new Date(s.purchased_date);
+                return (
+                  (!parsedStartDate || d >= parsedStartDate) &&
+                  (!parsedEndDate || d <= parsedEndDate)
+                );
+              },
+            );
           }
 
           return orderObj;
@@ -6946,6 +6991,21 @@ export class OrderService {
                 );
               },
             );
+          }
+          if (
+            typeValues.includes('additional_service') &&
+            (parsedStartDate || parsedEndDate)
+          ) {
+            orderObj.additional_services = (
+              orderObj.additional_services || []
+            ).filter((s: any) => {
+              if (!s.purchased_date) return false;
+              const d = new Date(s.purchased_date);
+              return (
+                (!parsedStartDate || d >= parsedStartDate) &&
+                (!parsedEndDate || d <= parsedEndDate)
+              );
+            });
           }
 
           return orderObj;

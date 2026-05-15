@@ -5,6 +5,7 @@ import { SoftDeleteModel } from 'mongoose-delete';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { License, LicenseDocument } from '@/db/schema/order/license.schema';
 import { Customization, CustomizationDocument } from '@/db/schema/order/customization.schema';
+import { AdditionalService, AdditionalServiceDocument } from '@/db/schema/order/additional-service.schema';
 import { Product, ProductDocument } from '@/db/schema/product.schema';
 import { Client, ClientDocument } from '@/db/schema/client.schema';
 import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
@@ -37,6 +38,8 @@ export class RevenueCalculatorService {
     private licenseModel: SoftDeleteModel<LicenseDocument>,
     @InjectModel(Customization.name)
     private customizationModel: SoftDeleteModel<CustomizationDocument>,
+    @InjectModel(AdditionalService.name)
+    private additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>,
     @InjectModel(Product.name)
     private productModel: SoftDeleteModel<ProductDocument>,
     @InjectModel(Client.name)
@@ -172,6 +175,42 @@ export class RevenueCalculatorService {
   }
 
   /**
+   * Calculate Additional Service Revenue by period
+   * Standalone additional services purchased separately from initial order
+   * Revenue = cost
+   */
+  async calculateAdditionalServiceRevenue(
+    startDate: Date,
+    endDate: Date,
+    filter: string = 'monthly',
+  ): Promise<Map<string, number>> {
+    const additionalServices = await this.additionalServiceModel
+      .find({
+        invoice_date: { $gte: startDate, $lte: endDate },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    const revenueByPeriod = new Map<string, number>();
+
+    for (const service of additionalServices) {
+      if (service.payment_status === 'proforma') continue;
+      if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+
+      const revenue = service.cost || 0;
+      if (revenue === 0) continue;
+
+      const date = service.invoice_date;
+      if (!date) continue;
+
+      const period = this.getPeriodLabel(new Date(date), filter);
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    }
+
+    return revenueByPeriod;
+  }
+
+  /**
    * Compute effective cost per license for standalone license purchases.
    * Fallback to base_cost / licenses_with_base_price when cost_per_license is 0.
    */
@@ -228,7 +267,7 @@ export class RevenueCalculatorService {
 
   /**
    * Calculate New Sales Revenue by period
-   * Includes: orders, standalone customizations, standalone licenses
+   * Includes: orders, standalone customizations, standalone licenses, additional services
    */
   async calculateNewSalesRevenue(
     startDate: Date,
@@ -271,6 +310,12 @@ export class RevenueCalculatorService {
     // Include standalone licenses
     const licenseRevenue = await this.calculateLicenseRevenue(startDate, endDate, filter);
     for (const [period, revenue] of licenseRevenue) {
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    }
+
+    // Include standalone additional services
+    const additionalServiceRevenue = await this.calculateAdditionalServiceRevenue(startDate, endDate, filter);
+    for (const [period, revenue] of additionalServiceRevenue) {
       revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
     }
 
@@ -321,8 +366,7 @@ export class RevenueCalculatorService {
         if (paymentFromDate < startDate || paymentFromDate > endDate) continue;
 
         const revenue = payment.amc_rate_amount || 0;
-        const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
-        const period = this.getPeriodLabel(groupDate, filter);
+        const period = this.getPeriodLabel(paymentFromDate, filter);
         revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
       }
     }
@@ -565,6 +609,31 @@ export class RevenueCalculatorService {
         }
       }
 
+      // Include standalone additional services
+      const additionalServices = await this.additionalServiceModel
+        .find({
+          invoice_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+      for (const service of additionalServices) {
+        if (service.payment_status === 'proforma') continue;
+        if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+        const revenue = service.cost || 0;
+        if (revenue === 0) continue;
+        const isPaid = service.payment_status === 'paid';
+        newSalesExpected += revenue;
+        if (isPaid) newSalesCollected += revenue;
+        const date = service.invoice_date;
+        if (date) {
+          const period = this.getPeriodLabel(new Date(date), filter);
+          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
+          existing.expected += revenue;
+          if (isPaid) existing.collected += revenue;
+          newSalesByPeriod.set(period, existing);
+        }
+      }
+
       // Convert to array
       const sortedPeriods = this.sortPeriods([...newSalesByPeriod.keys()]);
       for (const period of sortedPeriods) {
@@ -614,9 +683,7 @@ export class RevenueCalculatorService {
             amcExpected += expected;
             amcCollected += collected;
 
-            // Group by order.amc_start_date when available, fallback to payment.from_date
-            const groupDate = order?.amc_start_date ? new Date(order.amc_start_date) : paymentFromDate;
-            const period = this.getPeriodLabel(groupDate, filter);
+            const period = this.getPeriodLabel(paymentFromDate, filter);
             const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
             existing.expected += expected;
             existing.collected += collected;
@@ -788,6 +855,31 @@ export class RevenueCalculatorService {
       });
     }
 
+    // Include standalone additional services
+    const additionalServices = await this.additionalServiceModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const service of additionalServices) {
+      if (service.payment_status === 'proforma') continue;
+      if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+      const revenue = service.cost || 0;
+      if (revenue === 0) continue;
+      newSalesTotal += revenue;
+      const order = await this.orderModel.findById(service.order_id).select('client_id').lean();
+      const client = order?.client_id as any;
+      newSalesDetails.push({
+        orderId: service._id.toString(),
+        clientName: client?.name || 'Unknown',
+        productName: service.name || 'Additional Service',
+        amount: revenue,
+        status: service.payment_status || 'unknown',
+        date: service.invoice_date,
+      });
+    }
+
     // AMC Details
     const amcs = await (this.amcModel as any).findWithDeleted()
       .populate('client_id')
@@ -825,7 +917,7 @@ export class RevenueCalculatorService {
             productName: 'AMC',
             amount: revenue,
             status: payment.status || 'unknown',
-            date: order?.amc_start_date || payment.from_date,
+            date: payment.from_date,
           });
         }
       }
@@ -1080,6 +1172,26 @@ export class RevenueCalculatorService {
       currentFYRevenue.set(clientId, existing);
     }
 
+    // Include additional services
+    const additionalServices = await this.additionalServiceModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const service of additionalServices) {
+      if (service.payment_status === 'proforma') continue;
+      if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(service.order_id).select('client_id').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      const revenue = service.cost || 0;
+      const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
+      existing.newSales += revenue;
+      existing.orderCount++;
+      currentFYRevenue.set(clientId, existing);
+    }
+
     // AMC revenue
     const amcs = await (this.amcModel as any).findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
@@ -1169,6 +1281,22 @@ export class RevenueCalculatorService {
       const revenue = (license.total_license || 0) * costPerLicense;
       if (revenue === 0) continue;
       prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+    }
+
+    // Include additional services for previous FY
+    const prevAdditionalServices = await this.additionalServiceModel
+      .find({
+        invoice_date: { $gte: prevStart, $lte: prevEnd },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const service of prevAdditionalServices) {
+      if (service.payment_status === 'proforma') continue;
+      if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(service.order_id).select('client_id').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + (service.cost || 0));
     }
 
     for (const amc of amcs) {
@@ -1405,6 +1533,22 @@ export class RevenueCalculatorService {
       clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
     }
 
+    // Include additional services
+    const additionalServices = await this.additionalServiceModel
+      .find({
+        invoice_date: { $gte: start, $lte: end },
+        deleted: { $ne: true },
+      })
+      .lean();
+    for (const service of additionalServices) {
+      if (service.payment_status === 'proforma') continue;
+      if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+      const order = await this.orderModel.findById(service.order_id).select('client_id').lean();
+      const clientId = order?.client_id?.toString();
+      if (!clientId) continue;
+      clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + (service.cost || 0));
+    }
+
     // AMC
     const amcs = await (this.amcModel as any).findWithDeleted()
       .populate({ path: 'order_id', model: 'Order' })
@@ -1595,6 +1739,24 @@ export class RevenueCalculatorService {
         if (revenue === 0) continue;
         const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
         existing.newSales += revenue;
+        perClient.set(clientId, existing);
+      }
+
+      // Include additional services
+      const additionalServices = await this.additionalServiceModel
+        .find({
+          invoice_date: { $gte: start, $lte: end },
+          deleted: { $ne: true },
+        })
+        .lean();
+      for (const service of additionalServices) {
+        if (service.payment_status === 'proforma') continue;
+        if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+        const order = await this.orderModel.findById(service.order_id).select('client_id').lean();
+        const clientId = order?.client_id?.toString();
+        if (!clientId) continue;
+        const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
+        existing.newSales += service.cost || 0;
         perClient.set(clientId, existing);
       }
     }

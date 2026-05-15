@@ -6,6 +6,7 @@ import { SoftDeleteModel } from 'mongoose-delete';
 import { Order, OrderDocument } from '@/db/schema/order/product-order.schema';
 import { License, LicenseDocument } from '@/db/schema/order/license.schema';
 import { Customization, CustomizationDocument } from '@/db/schema/order/customization.schema';
+import { AdditionalService, AdditionalServiceDocument } from '@/db/schema/order/additional-service.schema';
 import { Product, ProductDocument } from '@/db/schema/product.schema';
 import { Client, ClientDocument } from '@/db/schema/client.schema';
 import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
@@ -16,6 +17,7 @@ describe('RevenueCalculatorService', () => {
   let licenseModel: SoftDeleteModel<LicenseDocument>;
   let customizationModel: SoftDeleteModel<CustomizationDocument>;
   let productModel: SoftDeleteModel<ProductDocument>;
+  let additionalServiceModel: SoftDeleteModel<AdditionalServiceDocument>;
   let clientModel: SoftDeleteModel<ClientDocument>;
   let amcModel: SoftDeleteModel<AMCDocument>;
 
@@ -41,6 +43,13 @@ describe('RevenueCalculatorService', () => {
         },
         {
           provide: getModelToken(Customization.name),
+          useValue: {
+            find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+            lean: jest.fn().mockReturnThis(),
+          },
+        },
+        {
+          provide: getModelToken(AdditionalService.name),
           useValue: {
             find: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
             lean: jest.fn().mockReturnThis(),
@@ -89,6 +98,7 @@ describe('RevenueCalculatorService', () => {
     licenseModel = module.get<SoftDeleteModel<LicenseDocument>>(getModelToken(License.name));
     customizationModel = module.get<SoftDeleteModel<CustomizationDocument>>(getModelToken(Customization.name));
     productModel = module.get<SoftDeleteModel<ProductDocument>>(getModelToken(Product.name));
+    additionalServiceModel = module.get<SoftDeleteModel<AdditionalServiceDocument>>(getModelToken(AdditionalService.name));
     clientModel = module.get<SoftDeleteModel<ClientDocument>>(getModelToken(Client.name));
     amcModel = module.get<SoftDeleteModel<AMCDocument>>(getModelToken(AMC.name));
   });

@@ -4,11 +4,12 @@
 
 ### New Sales Revenue
 
-New sales revenue includes THREE sources. All must be summed:
+New sales revenue includes FOUR sources. All must be summed:
 
 1. **Orders** (`productorders` collection): Query by `'payment_terms.invoice_date'` in range. Inside loop, check `termInvoiceDate` is within range. Iterate `payment_terms` where `status` is `paid` or `invoice`. Revenue = `term.calculated_amount`.
 2. **Standalone Customizations** (`customizations` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `cost`. Group by `invoice_date`.
 3. **Standalone Licenses** (`licenses` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `total_license * order.cost_per_license` (look up linked order). Group by `invoice_date`.
+4. **Additional Services** (`additionalservices` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `cost`. Group by `invoice_date`. Client resolved via `order_id` (no `client_id` on document).
 
 **Strict rule**: Use `invoice_date` ONLY for all new sales queries. Do NOT use `purchased_date`, `purchase_date`, or `purchased_date` anywhere for revenue date filtering or grouping.
 
@@ -55,4 +56,5 @@ This applies to ALL AMC iteration sites:
 
 - `customizationModel` does NOT have a `client_id` field. Client must be resolved via `customization.order_id -> order.client_id`.
 - `licenseModel` also lacks `client_id`. Same resolution path.
+- `additionalServiceModel` also lacks `client_id`. Same resolution path.
 - `getClientHealthMetrics` previously did NOT populate `order_id` on AMCs. Must add `.populate({ path: 'order_id', model: 'Order' })` to check order status.
