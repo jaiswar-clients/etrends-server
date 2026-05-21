@@ -1851,6 +1851,220 @@ export class ReportService {
   // ) {}
 
   /**
+   * Parse a FY string like "FY2025-2026" into a date range (Apr 1 - Mar 31).
+   */
+  private fyStringToDateRange(fy: string): { startDate: Date; endDate: Date } {
+    const match = fy.match(/^FY(\d{4})-(\d{4})$/);
+    if (!match) throw new Error(`Invalid FY string: ${fy}`);
+    const startYear = parseInt(match[1], 10);
+    const endYear = parseInt(match[2], 10);
+    const startDate = new Date(Date.UTC(startYear, 3, 1, 0, 0, 0, 0));
+    const endDate = new Date(Date.UTC(endYear, 2, 31, 23, 59, 59, 999));
+    return { startDate, endDate };
+  }
+
+  /**
+   * Get pending-payment breakdown for a given Indian Financial Year,
+   * bucketed by Monthly / Quarterly / Half-Yearly / Yearly granularity.
+   */
+  async getPendingBreakdownByPeriod(args: {
+    fy: string;
+    granularity: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly';
+  }): Promise<{
+    fy: string;
+    granularity: string;
+    buckets: Array<{ label: string; pending_amount: number; count: number }>;
+    totals: { pending_amount: number; count: number };
+  }> {
+    const { fy, granularity } = args;
+    const { startDate, endDate } = this.fyStringToDateRange(fy);
+
+    // Pre-initialize buckets based on granularity
+    const monthNames = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
+    const startYear = startDate.getUTCFullYear();
+    const endYear = endDate.getUTCFullYear();
+
+    let labels: string[] = [];
+    switch (granularity) {
+      case 'monthly': {
+        for (let i = 0; i < 12; i++) {
+          const yr = i < 9 ? startYear : endYear;
+          labels.push(`${monthNames[i]} ${yr}`);
+        }
+        break;
+      }
+      case 'quarterly': {
+        const fyShort = `FY${startYear}-${endYear.toString().slice(-2)}`;
+        labels = [`Q1 ${fyShort}`, `Q2 ${fyShort}`, `Q3 ${fyShort}`, `Q4 ${fyShort}`];
+        break;
+      }
+      case 'half-yearly': {
+        const fyShort = `FY${startYear}-${endYear.toString().slice(-2)}`;
+        labels = [`H1 ${fyShort}`, `H2 ${fyShort}`];
+        break;
+      }
+      case 'yearly': {
+        const fyShort = `FY${startYear}-${endYear.toString().slice(-2)}`;
+        labels = [fyShort];
+        break;
+      }
+    }
+
+    const buckets = new Map<string, { pending_amount: number; count: number }>();
+    for (const label of labels) {
+      buckets.set(label, { pending_amount: 0, count: 0 });
+    }
+
+    const getLabel = (date: Date): string => {
+      const month = date.getUTCMonth();
+      const year = date.getUTCFullYear();
+      switch (granularity) {
+        case 'monthly': {
+          const yr = month >= 3 ? year : year;
+          return `${monthNames[month >= 3 ? month - 3 : month + 9]} ${yr}`;
+        }
+        case 'quarterly': {
+          const fyStart = month < 3 ? year - 1 : year;
+          const fyEnd = fyStart + 1;
+          const fyShort = `FY${fyStart}-${fyEnd.toString().slice(-2)}`;
+          if (month >= 3 && month <= 5) return `Q1 ${fyShort}`;
+          if (month >= 6 && month <= 8) return `Q2 ${fyShort}`;
+          if (month >= 9 && month <= 11) return `Q3 ${fyShort}`;
+          return `Q4 ${fyShort}`;
+        }
+        case 'half-yearly': {
+          const fyStart = month < 3 ? year - 1 : year;
+          const fyEnd = fyStart + 1;
+          const fyShort = `FY${fyStart}-${fyEnd.toString().slice(-2)}`;
+          if (month >= 3 && month <= 8) return `H1 ${fyShort}`;
+          return `H2 ${fyShort}`;
+        }
+        case 'yearly': {
+          const fyStart = month < 3 ? year - 1 : year;
+          const fyEnd = fyStart + 1;
+          return `FY${fyStart}-${fyEnd.toString().slice(-2)}`;
+        }
+      }
+      return '';
+    };
+
+    const addToBucket = (date: Date, amount: number) => {
+      if (date < startDate || date > endDate) return;
+      const label = getLabel(date);
+      const bucket = buckets.get(label);
+      if (bucket) {
+        bucket.pending_amount += amount;
+        bucket.count += 1;
+      }
+    };
+
+    // ── 1. Orders (payment_terms.invoice_date is BSON STRING) ──
+    const orders = await this.orderModel
+      .find({
+        'payment_terms.invoice_date': { $gte: startDate.toISOString(), $lte: endDate.toISOString() },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    for (const order of orders) {
+      if (order.status !== 'active') continue;
+      for (const term of order.payment_terms || []) {
+        if (!term.invoice_date) continue;
+        if (term.status === 'proforma') continue;
+        if (term.status !== 'pending') continue;
+        const termDate = new Date(term.invoice_date);
+        if (isNaN(termDate.getTime())) continue;
+        addToBucket(termDate, term.calculated_amount || 0);
+      }
+    }
+
+    // ── 2. Standalone Customizations ──
+    const customizations = await this.customizationModel
+      .find({
+        invoice_date: { $gte: startDate, $lte: endDate },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    for (const cust of customizations) {
+      if (cust.payment_status === 'proforma') continue;
+      if (cust.payment_status !== 'pending') continue;
+      if (!cust.invoice_date) continue;
+      addToBucket(new Date(cust.invoice_date), cust.cost || 0);
+    }
+
+    // ── 3. Standalone Licenses ──
+    const licenses = await this.licenseModel
+      .find({
+        invoice_date: { $gte: startDate, $lte: endDate },
+        deleted: { $ne: true },
+      })
+      .lean();
+
+    for (const license of licenses) {
+      if (license.payment_status === 'proforma') continue;
+      if (license.payment_status !== 'pending') continue;
+      if (!license.invoice_date) continue;
+
+      const order = await this.orderModel
+        .findById(license.order_id)
+        .select('cost_per_license base_cost licenses_with_base_price status')
+        .lean();
+
+      if (!order || order.status !== 'active') continue;
+
+      let costPerLicense = order.cost_per_license || 0;
+      if (costPerLicense === 0 && order.licenses_with_base_price > 0 && order.base_cost > 0) {
+        costPerLicense = order.base_cost / order.licenses_with_base_price;
+      }
+      const amount = (license.total_license || 0) * costPerLicense;
+      if (amount === 0) continue;
+
+      addToBucket(new Date(license.invoice_date), amount);
+    }
+
+    // ── 4. AMC payments ──
+    const amcs = await (this.amcModel as any)
+      .findWithDeleted()
+      .populate({ path: 'order_id', model: 'Order' })
+      .lean();
+
+    for (const amc of amcs) {
+      const order = amc.order_id as any;
+      if (order?.status === 'inactive') continue;
+
+      for (const payment of amc.payments || []) {
+        if (payment.status === 'proforma') continue;
+        if (payment.status !== 'pending') continue;
+        if (!payment.invoice_date) continue;
+        const paymentDate = new Date(payment.invoice_date);
+        if (isNaN(paymentDate.getTime())) continue;
+        addToBucket(paymentDate, payment.amc_rate_amount || 0);
+      }
+    }
+
+    const bucketsArray = labels.map((label) => ({
+      label,
+      ...buckets.get(label)!,
+    }));
+
+    const totals = bucketsArray.reduce(
+      (acc, b) => ({
+        pending_amount: acc.pending_amount + b.pending_amount,
+        count: acc.count + b.count,
+      }),
+      { pending_amount: 0, count: 0 },
+    );
+
+    return {
+      fy,
+      granularity,
+      buckets: bucketsArray,
+      totals,
+    };
+  }
+
+  /**
    * Helper method to determine the Indian financial year and quarter information from a date
    * @param date Date to analyze
    * @returns Object with financial year and quarter information

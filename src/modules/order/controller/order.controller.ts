@@ -33,6 +33,7 @@ import {
   PAYMENT_STATUS_ENUM,
 } from '@/common/types/enums/order.enum';
 import { Response } from 'express';
+import { PendingPaymentService } from '../services/pending-payment.service';
 
 export type UpdateOrderType = CreateOrderDto;
 
@@ -41,6 +42,7 @@ export type UpdateOrderType = CreateOrderDto;
 export class OrderController {
   constructor(
     private orderService: OrderService,
+    private pendingPaymentService: PendingPaymentService,
     private loggerService: LoggerService,
   ) {}
 
@@ -446,9 +448,8 @@ export class OrderController {
     @Query('endDate') endDate?: string,
     @Query('clientId') clientId?: string,
     @Query('clientName') clientName?: string,
-    @Query('type') type?: 'order' | 'amc' | 'all',
+    @Query('type') type?: 'order' | 'amc' | 'license' | 'customization' | 'all',
   ) {
-    // Ensure page and limit are positive integers, defaulting if necessary
     const finalPage = Math.max(1, page || 1);
     const finalLimit = Math.max(1, limit || 20);
 
@@ -458,12 +459,60 @@ export class OrderController {
         data: { page: finalPage, limit: finalLimit, startDate, endDate, clientId, clientName, type },
       }),
     );
-    return this.orderService.getAllPendingPayments(finalPage, finalLimit, {
+    return this.pendingPaymentService.getPendingPayments({
+      page: finalPage,
+      limit: finalLimit,
       startDate,
       endDate,
       clientId,
       clientName,
       type,
+    });
+  }
+
+  @Get('/pending-payments/export')
+  async exportPendingPaymentsToExcel(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('clientId') clientId?: string,
+    @Query('clientName') clientName?: string,
+    @Query('type') type?: 'order' | 'amc' | 'license' | 'customization' | 'all',
+    @Res() res?: Response,
+  ) {
+    const excelBuffer =
+      await this.pendingPaymentService.exportPendingPaymentsToExcel({
+        startDate,
+        endDate,
+        clientId,
+        clientName,
+        type,
+      });
+
+    const date = new Date().toISOString().split('T')[0];
+    const fileName = `PendingPayments_Export_${date}.xlsx`;
+
+    res!.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': excelBuffer.length,
+    });
+
+    return res!.send(excelBuffer);
+  }
+
+  @Get('/pending-payments/amc-start-missing')
+  async getAmcStartMissing(
+    @Query('page') page = 1,
+    @Query('limit') limit = 20,
+    @Query('clientId') clientId?: string,
+    @Query('clientName') clientName?: string,
+  ) {
+    return this.pendingPaymentService.getAmcStartMissing({
+      page: Math.max(1, +page),
+      limit: Math.max(1, +limit),
+      clientId,
+      clientName,
     });
   }
 
@@ -609,7 +658,7 @@ export class OrderController {
     @Param('id') id: string,
     @Body() body: UpdatePendingPaymentDto,
   ) {
-    return this.orderService.updatePendingPayment(
+    return this.pendingPaymentService.updatePendingPaymentStatus(
       id,
       body.type,
       body.payment_identifier,

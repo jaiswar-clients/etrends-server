@@ -86,6 +86,10 @@ describe('OrderService', () => {
           },
         },
         {
+          provide: getModelToken('Reminder'),
+          useValue: jest.fn().mockImplementation((data: any) => createMockDoc(data)),
+        },
+        {
           provide: LoggerService,
           useValue: { log: jest.fn(), error: jest.fn() },
         },
@@ -1220,6 +1224,126 @@ describe('OrderService', () => {
       expect(loggerService.error).toHaveBeenCalledWith(
         expect.stringContaining('Error creating AMC payments')
       );
+    });
+  });
+
+  // ─── createOrder pending_balance ─────────────────────────────────────────
+  describe('createOrder pending_balance', () => {
+    const clientId = '507f1f77bcf86cd799439099';
+
+    let capturedOrderPayload: any;
+    let capturedAmcPayload: any;
+    let testService: OrderService;
+    let testClientModel: any;
+    let testProductModel: any;
+    let testOrderModel: any;
+    let testAmcModel: any;
+
+    beforeEach(async () => {
+      capturedOrderPayload = null;
+      capturedAmcPayload = null;
+
+      // Order model: constructor captures payload, returns instance with save()
+      testOrderModel = jest.fn().mockImplementation((data: any) => {
+        capturedOrderPayload = data;
+        const doc = {
+          _id: new Types.ObjectId(),
+          ...data,
+          save: jest.fn().mockResolvedValue(true),
+        };
+        return doc;
+      });
+
+      // AMC model: constructor captures payload
+      testAmcModel = jest.fn().mockImplementation((data: any) => {
+        capturedAmcPayload = data;
+        return {
+          _id: new Types.ObjectId(),
+          ...data,
+          save: jest.fn().mockResolvedValue(true),
+        };
+      });
+      (testAmcModel as any).find = jest.fn();
+      (testAmcModel as any).findByIdAndUpdate = jest.fn().mockResolvedValue(null);
+      (testAmcModel as any).findById = jest.fn();
+      (testAmcModel as any).findOne = jest.fn();
+
+      // Client model: findById().select() returns a client
+      testClientModel = {
+        findById: jest.fn().mockReturnValue({
+          select: jest.fn().mockResolvedValue({
+            _id: clientId,
+            amc_frequency_in_months: 12,
+          }),
+        }),
+        findOneAndUpdate: jest.fn().mockResolvedValue({ _id: clientId }),
+      };
+
+      // Product model: find() returns matching products
+      testProductModel = {
+        find: jest.fn(),
+      };
+
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          OrderService,
+          { provide: getModelToken('Order'), useValue: testOrderModel },
+          {
+            provide: getModelToken('License'),
+            useValue: jest.fn().mockImplementation((d: any) => createMockDoc(d)),
+          },
+          {
+            provide: getModelToken('Customization'),
+            useValue: jest.fn().mockImplementation((d: any) => createMockDoc(d)),
+          },
+          { provide: getModelToken('Product'), useValue: testProductModel },
+          { provide: getModelToken('Client'), useValue: testClientModel },
+          {
+            provide: getModelToken('AdditionalService'),
+            useValue: jest.fn().mockImplementation((d: any) => createMockDoc(d)),
+          },
+          { provide: getModelToken('AMC'), useValue: testAmcModel },
+          {
+            provide: getModelToken('Reminder'),
+            useValue: jest.fn().mockImplementation((d: any) => createMockDoc(d)),
+          },
+          {
+            provide: LoggerService,
+            useValue: { log: jest.fn(), error: jest.fn() },
+          },
+          { provide: StorageService, useValue: {} },
+          {
+            provide: CACHE_MANAGER,
+            useValue: {
+              get: jest.fn(),
+              set: jest.fn(),
+              del: jest.fn(),
+              reset: jest.fn(),
+            },
+          },
+        ],
+      }).compile();
+
+      testService = module.get<OrderService>(OrderService);
+    });
+
+    it('should set pending_balance to base_cost and total_paid to 0 on order creation', async () => {
+      const productId = new Types.ObjectId();
+      testProductModel.find.mockResolvedValue([{ _id: productId }]);
+
+      const body: any = {
+        products: [productId],
+        base_cost: 100000,
+        amc_rate: { percentage: 20, amount: 20000 },
+        purchased_date: '2024-06-01',
+        payment_terms: [],
+      };
+
+      await testService.createOrder(clientId, body);
+
+      expect(capturedOrderPayload).toBeDefined();
+      expect(capturedOrderPayload.pending_balance).toBe(100000);
+      expect(capturedOrderPayload.total_paid).toBe(0);
     });
   });
 });

@@ -182,6 +182,16 @@ export class ReportController {
     );
   }
 
+  // ==================== PENDING PAYMENT BREAKDOWN ENDPOINT ====================
+
+  @Get('pending-breakdown')
+  async getPendingBreakdown(
+    @Query('fy') fy: string,
+    @Query('granularity') granularity: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' = 'monthly',
+  ) {
+    return this.reportService.getPendingBreakdownByPeriod({ fy, granularity });
+  }
+
   // ==================== EXCEL EXPORT ENDPOINT ====================
 
   @Get('export-excel')
