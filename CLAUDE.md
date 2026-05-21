@@ -8,14 +8,12 @@ New sales revenue includes FOUR sources. All must be summed:
 
 1. **Orders** (`productorders` collection): Query by `'payment_terms.invoice_date'` in range. Inside loop, check `termInvoiceDate` is within range. Iterate `payment_terms` where `status` is `paid` or `invoice`. Revenue = `term.calculated_amount`.
 2. **Standalone Customizations** (`customizations` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `cost`. Group by `invoice_date`.
-3. **Standalone Licenses** (`licenses` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `total_license * order.cost_per_license` (look up linked order). Group by `invoice_date`.
+3. **Standalone Licenses** (`licenses` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `license.rate.amount * total_license`. Group by `invoice_date`.
 4. **Additional Services** (`additionalservices` collection): Query by `invoice_date` in range, `payment_status` in (`paid`, `invoice`), `deleted != true`. Revenue = `cost`. Group by `invoice_date`. Client resolved via `order_id` (no `client_id` on document).
 
 **Strict rule**: Use `invoice_date` ONLY for all new sales queries. Do NOT use `purchased_date`, `purchase_date`, or `purchased_date` anywhere for revenue date filtering or grouping.
 
 **Important**: Customizations and licenses are stored in separate collections. The `order.customizations` and `order.licenses` arrays in the Order schema are rarely populated in practice. Always query the standalone collections.
-
-**License cost fallback**: When `order.cost_per_license` is 0 or undefined, compute from `order.base_cost / order.licenses_with_base_price` (when `licenses_with_base_price > 0`). This applies to ALL license revenue lookups.
 
 **License order_id**: `license.order_id` is stored as a STRING in MongoDB, not ObjectId. Mongoose `findById()` casts it automatically.
 
