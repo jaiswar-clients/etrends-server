@@ -785,6 +785,7 @@ export class OrderService {
         .findById(orderId)
         .populate([{ path: 'customizations', model: Customization.name }])
         .populate({ path: 'licenses', model: License.name })
+        .populate({ path: 'additional_services', model: AdditionalService.name })
         .populate({ path: 'amc_id', select: 'amount', model: AMC.name });
 
       if (!order) {
@@ -2252,6 +2253,232 @@ export class OrderService {
       this.loggerService.error(
         JSON.stringify({
           message: 'deleteAmcPaymentById: Error deleting AMC payment',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async deleteLicenseById(id: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteLicenseById: Starting deletion',
+          id,
+        }),
+      );
+
+      const license = await this.licenseModel.findById(id);
+      if (!license) {
+        throw new HttpException('License not found', HttpStatus.NOT_FOUND);
+      }
+
+      const order = await this.orderModel
+        .findById(license.order_id)
+        .populate('amc_id');
+      if (!order) {
+        throw new HttpException('Parent order not found', HttpStatus.NOT_FOUND);
+      }
+
+      const cost = (license.rate?.amount ?? 0) * (license.total_license ?? 0);
+      const amcRate = license.amc_rate?.percentage ?? 0;
+      const amcAmount = (cost / 100) * amcRate;
+
+      if (order.amc_id) {
+        const amc: any = order.amc_id;
+        await this.amcModel.findByIdAndUpdate(amc._id, {
+          total_cost: Math.max(0, (amc.total_cost ?? 0) - cost),
+          amount: Math.max(0, (amc.amount ?? 0) - amcAmount),
+        });
+      }
+
+      await this.orderModel.findByIdAndUpdate(order._id, {
+        $pull: { licenses: new Types.ObjectId(id) },
+      });
+
+      await this.reminderModel.deleteMany({ license_id: id });
+
+      if (license.purchase_order_document) {
+        const key = extractFileKey(license.purchase_order_document);
+        this.storageService.delete(key);
+      }
+      if (license.invoice_document) {
+        const key = extractFileKey(license.invoice_document);
+        this.storageService.delete(key);
+      }
+
+      await this.licenseModel.findByIdAndDelete(id);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteLicenseById: License deleted successfully',
+          id,
+        }),
+      );
+
+      return { message: 'License deleted successfully', id };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'deleteLicenseById: Error deleting license',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async deleteCustomizationById(id: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteCustomizationById: Starting deletion',
+          id,
+        }),
+      );
+
+      const customization = await this.customizationModel.findById(id);
+      if (!customization) {
+        throw new HttpException(
+          'Customization not found',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const order = await this.orderModel
+        .findById(customization.order_id)
+        .populate('amc_id');
+      if (!order) {
+        throw new HttpException('Parent order not found', HttpStatus.NOT_FOUND);
+      }
+
+      const cost = customization.cost ?? 0;
+      const amcRate = customization.amc_rate?.percentage ?? 0;
+      const amcAmount = (cost / 100) * amcRate;
+
+      if (order.amc_id) {
+        const amc: any = order.amc_id;
+        await this.amcModel.findByIdAndUpdate(amc._id, {
+          total_cost: Math.max(0, (amc.total_cost ?? 0) - cost),
+          amount: Math.max(0, (amc.amount ?? 0) - amcAmount),
+        });
+      }
+
+      await this.orderModel.findByIdAndUpdate(order._id, {
+        $pull: { customizations: new Types.ObjectId(id) },
+      });
+
+      await this.reminderModel.deleteMany({ customization_id: id });
+
+      if (customization.purchase_order_document) {
+        const key = extractFileKey(customization.purchase_order_document);
+        this.storageService.delete(key);
+      }
+      if (customization.invoice_document) {
+        const key = extractFileKey(customization.invoice_document);
+        this.storageService.delete(key);
+      }
+
+      await this.customizationModel.findByIdAndDelete(id);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteCustomizationById: Customization deleted successfully',
+          id,
+        }),
+      );
+
+      return { message: 'Customization deleted successfully', id };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'deleteCustomizationById: Error deleting customization',
+          error: error.message,
+        }),
+      );
+      throw new HttpException(
+        error.message || 'Server error',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async deleteAdditionalServiceById(id: string) {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'deleteAdditionalServiceById: Starting deletion',
+          id,
+        }),
+      );
+
+      const additionalService = await this.additionalServiceModel.findById(id);
+      if (!additionalService) {
+        throw new HttpException(
+          'Additional service not found',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const order = await this.orderModel
+        .findById(additionalService.order_id)
+        .populate('amc_id');
+      if (!order) {
+        throw new HttpException('Parent order not found', HttpStatus.NOT_FOUND);
+      }
+
+      const cost = additionalService.cost ?? 0;
+      const amcRate = additionalService.amc_rate?.percentage ?? 0;
+      const amcAmount = (cost / 100) * amcRate;
+
+      if (order.amc_id) {
+        const amc: any = order.amc_id;
+        await this.amcModel.findByIdAndUpdate(amc._id, {
+          total_cost: Math.max(0, (amc.total_cost ?? 0) - cost),
+          amount: Math.max(0, (amc.amount ?? 0) - amcAmount),
+        });
+      }
+
+      await this.orderModel.findByIdAndUpdate(order._id, {
+        $pull: { additional_services: new Types.ObjectId(id) },
+      });
+
+      if (additionalService.purchase_order_document) {
+        const key = extractFileKey(additionalService.purchase_order_document);
+        this.storageService.delete(key);
+      }
+      if (additionalService.invoice_document) {
+        const key = extractFileKey(additionalService.invoice_document);
+        this.storageService.delete(key);
+      }
+      if (additionalService.service_document) {
+        const key = extractFileKey(additionalService.service_document);
+        this.storageService.delete(key);
+      }
+
+      await this.additionalServiceModel.findByIdAndDelete(id);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'deleteAdditionalServiceById: Additional service deleted successfully',
+          id,
+        }),
+      );
+
+      return { message: 'Additional service deleted successfully', id };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message:
+            'deleteAdditionalServiceById: Error deleting additional service',
           error: error.message,
         }),
       );
