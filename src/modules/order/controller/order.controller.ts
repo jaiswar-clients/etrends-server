@@ -623,6 +623,21 @@ export class OrderController {
     return this.orderService.updateAdditionalServiceById(id, body);
   }
 
+  @Delete('/license/:id')
+  async deleteLicenseById(@Param('id') id: string) {
+    return this.orderService.deleteLicenseById(id);
+  }
+
+  @Delete('/customization/:id')
+  async deleteCustomizationById(@Param('id') id: string) {
+    return this.orderService.deleteCustomizationById(id);
+  }
+
+  @Delete('/additional-service/:id')
+  async deleteAdditionalServiceById(@Param('id') id: string) {
+    return this.orderService.deleteAdditionalServiceById(id);
+  }
+
   @Patch('/amc/:id')
   async updateAMCById(@Param('id') id: string, @Body() body: UpdateAMCDto) {
     return this.orderService.updateAMCById(id, body);

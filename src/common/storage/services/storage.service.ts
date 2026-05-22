@@ -32,6 +32,28 @@ export class StorageService {
     return `${this.configService.get('APP_URL')}/v1/files/${filename}`;
   }
 
+  delete(filename: string): void {
+    if (!filename) {
+      return;
+    }
+    try {
+      const filePath = path.join(this.filesPath, filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        this.loggerService.log(
+          `File deleted: ${filePath}`,
+          'StorageService',
+        );
+      }
+    } catch (error: any) {
+      this.loggerService.error(
+        `Error deleting file: ${error.message}`,
+        error.stack,
+        'StorageService',
+      );
+    }
+  }
+
   async uploadFile(file: Express.Multer.File, fileName: string): Promise<string> {
     if (!fileName) {
       throw new BadRequestException('Filename is required');

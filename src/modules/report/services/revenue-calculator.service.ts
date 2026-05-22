@@ -154,14 +154,7 @@ export class RevenueCalculatorService {
       if (license.payment_status === 'proforma') continue;
       if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
 
-      // Look up linked order for cost_per_license
-      const order = await this.orderModel
-        .findById(license.order_id)
-        .select('cost_per_license base_cost licenses_with_base_price')
-        .lean();
-
-      const costPerLicense = this.getLicenseCostPerLicense(order);
-      const revenue = (license.total_license || 0) * costPerLicense;
+      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
       if (revenue === 0) continue;
 
       const date = license.invoice_date;
@@ -210,17 +203,6 @@ export class RevenueCalculatorService {
     return revenueByPeriod;
   }
 
-  /**
-   * Compute effective cost per license for standalone license purchases.
-   * Fallback to base_cost / licenses_with_base_price when cost_per_license is 0.
-   */
-  private getLicenseCostPerLicense(order: any): number {
-    if (order?.cost_per_license > 0) return order.cost_per_license;
-    if (order?.licenses_with_base_price > 0 && order?.base_cost > 0) {
-      return order.base_cost / order.licenses_with_base_price;
-    }
-    return 0;
-  }
 
   /**
    * Get date range for a fiscal year (April 1 to March 31)
@@ -396,7 +378,7 @@ export class RevenueCalculatorService {
           if (p.includes('Q3')) return 3;
           if (p.includes('Q4')) return 4;
 
-          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
           for (let i = 0; i < months.length; i++) {
             if (p.includes(months[i])) return i + 10;
           }
@@ -592,9 +574,7 @@ export class RevenueCalculatorService {
       for (const license of licenses) {
         if (license.payment_status === 'proforma') continue;
         if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-        const order = await this.orderModel.findById(license.order_id).select('cost_per_license base_cost licenses_with_base_price').lean();
-        const costPerLicense = this.getLicenseCostPerLicense(order);
-        const revenue = (license.total_license || 0) * costPerLicense;
+        const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
         if (revenue === 0) continue;
         const isPaid = license.payment_status === 'paid';
         newSalesExpected += revenue;
@@ -839,9 +819,8 @@ export class RevenueCalculatorService {
     for (const license of licenses) {
       if (license.payment_status === 'proforma') continue;
       if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('cost_per_license base_cost licenses_with_base_price client_id').populate('client_id').lean();
-      const costPerLicense = this.getLicenseCostPerLicense(order);
-      const revenue = (license.total_license || 0) * costPerLicense;
+      const order = await this.orderModel.findById(license.order_id).select('client_id').populate('client_id').lean();
+      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
       if (revenue === 0) continue;
       newSalesTotal += revenue;
       const client = order?.client_id as any;
@@ -1160,11 +1139,10 @@ export class RevenueCalculatorService {
     for (const license of licenses) {
       if (license.payment_status === 'proforma') continue;
       if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+      const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
       const clientId = order?.client_id?.toString();
       if (!clientId) continue;
-      const costPerLicense = this.getLicenseCostPerLicense(order);
-      const revenue = (license.total_license || 0) * costPerLicense;
+      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
       if (revenue === 0) continue;
       const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
       existing.newSales += revenue;
@@ -1274,11 +1252,10 @@ export class RevenueCalculatorService {
     for (const license of prevLicenses) {
       if (license.payment_status === 'proforma') continue;
       if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+      const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
       const clientId = order?.client_id?.toString();
       if (!clientId) continue;
-      const costPerLicense = this.getLicenseCostPerLicense(order);
-      const revenue = (license.total_license || 0) * costPerLicense;
+      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
       if (revenue === 0) continue;
       prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
     }
@@ -1524,11 +1501,10 @@ export class RevenueCalculatorService {
     for (const license of licenses) {
       if (license.payment_status === 'proforma') continue;
       if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+      const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
       const clientId = order?.client_id?.toString();
       if (!clientId) continue;
-      const costPerLicense = this.getLicenseCostPerLicense(order);
-      const revenue = (license.total_license || 0) * costPerLicense;
+      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
       if (revenue === 0) continue;
       clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
     }
@@ -1731,11 +1707,10 @@ export class RevenueCalculatorService {
       for (const license of licenses) {
         if (license.payment_status === 'proforma') continue;
         if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-        const order = await this.orderModel.findById(license.order_id).select('client_id cost_per_license base_cost licenses_with_base_price').lean();
+        const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
         const clientId = order?.client_id?.toString();
         if (!clientId) continue;
-        const costPerLicense = this.getLicenseCostPerLicense(order);
-        const revenue = (license.total_license || 0) * costPerLicense;
+        const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
         if (revenue === 0) continue;
         const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
         existing.newSales += revenue;
