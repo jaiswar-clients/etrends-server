@@ -27,13 +27,14 @@ export interface PendingPaymentRow {
   payment_identifier: string;
   type: 'order' | 'amc' | 'license' | 'customization';
   client_name: string;
+  client_id: string;
+  order_id: string;
   product_name: string;
   invoice_number?: string;
   invoice_date?: Date;
   payment_date?: Date;
   pending_amount: number;
   order_total: number;
-  balance: number;
   status: PAYMENT_STATUS_ENUM;
 }
 
@@ -165,7 +166,6 @@ export class PendingPaymentService {
       { header: 'Invoice Date', key: 'invoice_date', width: 15 },
       { header: 'Pending Amount', key: 'pending_amount', width: 15 },
       { header: 'Order Total', key: 'order_total', width: 15 },
-      { header: 'Balance', key: 'balance', width: 12 },
       { header: 'Status', key: 'status', width: 12 },
     ];
 
@@ -180,7 +180,6 @@ export class PendingPaymentService {
           : '-',
         pending_amount: row.pending_amount,
         order_total: row.order_total,
-        balance: row.balance,
         status: row.status,
       });
     }
@@ -296,6 +295,8 @@ export class PendingPaymentService {
       payment_identifier: `${d._id.toString()}::${d.termIndex}`,
       type: 'order' as const,
       client_name: d.client?.[0]?.name ?? 'N/A',
+      client_id: d.client_id?.toString() ?? '',
+      order_id: d._id.toString(),
       product_name: (d.productDetails || [])
         .map((p: any) => p.short_name)
         .join(', '),
@@ -308,9 +309,6 @@ export class PendingPaymentService {
         : undefined,
       pending_amount: d.payment_terms.calculated_amount,
       order_total: d.base_cost,
-      balance: d.base_cost
-        ? d.payment_terms.calculated_amount / d.base_cost
-        : 0,
       status: d.payment_terms.status,
     }));
   }
@@ -366,6 +364,8 @@ export class PendingPaymentService {
       payment_identifier: `${d._id.toString()}::${d.paymentIndex}`,
       type: 'amc' as const,
       client_name: d.client?.[0]?.name ?? 'N/A',
+      client_id: d.client_id?.toString() ?? '',
+      order_id: d.order_id?.toString() ?? '',
       product_name: (d.productDetails || [])
         .map((p: any) => p.short_name)
         .join(', '),
@@ -374,7 +374,6 @@ export class PendingPaymentService {
       payment_date: d.payments.from_date,
       pending_amount: d.payments.amc_rate_amount ?? 0,
       order_total: d.amount,
-      balance: d.amount ? (d.payments.amc_rate_amount ?? 0) / d.amount : 0,
       status: d.payments.status,
     }));
   }
@@ -430,13 +429,14 @@ export class PendingPaymentService {
         payment_identifier: l._id.toString(),
         type: 'license' as const,
         client_name: (order?.client_id as any)?.name ?? 'N/A',
+        client_id: (order?.client_id as any)?._id?.toString() ?? '',
+        order_id: order?._id?.toString() ?? '',
         product_name: product?.short_name ?? 'N/A',
         invoice_number: l.invoice_number,
         invoice_date: l.invoice_date,
         payment_date: l.invoice_date,
         pending_amount: l.cost,
         order_total: l.cost,
-        balance: 1,
         status: l.payment_status,
       };
     });
@@ -493,13 +493,14 @@ export class PendingPaymentService {
         payment_identifier: c._id.toString(),
         type: 'customization' as const,
         client_name: (order?.client_id as any)?.name ?? 'N/A',
+        client_id: (order?.client_id as any)?._id?.toString() ?? '',
+        order_id: order?._id?.toString() ?? '',
         product_name: product?.short_name ?? 'N/A',
         invoice_number: c.invoice_number,
         invoice_date: c.invoice_date,
         payment_date: c.invoice_date,
         pending_amount: c.cost,
         order_total: c.cost,
-        balance: 1,
         status: c.payment_status,
       };
     });

@@ -236,6 +236,14 @@ export class RevenueCalculatorService {
         const fyLabel = `FY${(fiscalYear % 100).toString().padStart(2, '0')}-${((fiscalYear + 1) % 100).toString().padStart(2, '0')}`;
         return `Q${quarter} ${fyLabel}`;
       }
+      case 'half-yearly': {
+        const month = date.getMonth();
+        const year = date.getFullYear();
+        const fiscalYear = month >= 3 ? year : year - 1;
+        const fyLabel = `FY${(fiscalYear % 100).toString().padStart(2, '0')}-${((fiscalYear + 1) % 100).toString().padStart(2, '0')}`;
+        const half = month >= 3 && month <= 8 ? 'H1' : 'H2';
+        return `${half} ${fyLabel}`;
+      }
       case 'yearly': {
         const month = date.getMonth();
         const year = date.getFullYear();
@@ -373,10 +381,12 @@ export class RevenueCalculatorService {
 
         // Same fiscal year - sort by quarter/month
         const getSortOrder = (p: string) => {
-          if (p.includes('Q1')) return 1;
-          if (p.includes('Q2')) return 2;
-          if (p.includes('Q3')) return 3;
-          if (p.includes('Q4')) return 4;
+          if (p.includes('H1')) return 1;
+          if (p.includes('H2')) return 2;
+          if (p.includes('Q1')) return 3;
+          if (p.includes('Q2')) return 4;
+          if (p.includes('Q3')) return 5;
+          if (p.includes('Q4')) return 6;
 
           const months = ['Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
           for (let i = 0; i < months.length; i++) {

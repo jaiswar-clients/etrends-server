@@ -237,7 +237,8 @@ describe('PendingPaymentService', () => {
       const result = await service.getPendingPayments({ page: 1, limit: 20 });
 
       expect(result.pending_payments).toHaveLength(1);
-      expect(result.pending_payments[0].balance).toBeCloseTo(0.25, 5);
+      expect(result.pending_payments[0].pending_amount).toBe(25000);
+      expect(result.pending_payments[0].order_total).toBe(100000);
     });
   });
 
@@ -710,7 +711,8 @@ describe('PendingPaymentService', () => {
 
       const result = await service.getPendingPayments({ page: 1, limit: 20 });
 
-      expect(result.pending_payments[0].balance).toBe(0);
+      expect(result.pending_payments[0].pending_amount).toBe(5000);
+      expect(result.pending_payments[0].order_total).toBe(0);
     });
 
     it('excludes proforma payment_terms explicitly', async () => {

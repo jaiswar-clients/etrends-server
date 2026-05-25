@@ -115,7 +115,7 @@ export class ReportController {
 
   @Get('revenue-dashboard')
   async getRevenueDashboard(
-    @Query('filter') filter: 'monthly' | 'quarterly' | 'yearly' | 'all',
+    @Query('filter') filter: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' | 'all',
     @Query('year') year: string,
     @Query('quarter') quarter: string,
     @Query('startDate') startDate: string,
@@ -137,7 +137,7 @@ export class ReportController {
   @Get('expected-vs-collected')
   async getExpectedVsCollected(
     @Query('fiscalYear') fiscalYear: string,
-    @Query('filter') filter: 'monthly' | 'quarterly' | 'yearly',
+    @Query('filter') filter: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly',
     @Query('orderTypes') orderTypes?: string,
   ) {
     const currentMonth = new Date().getMonth();
@@ -197,7 +197,7 @@ export class ReportController {
   @Get('export-excel')
   async exportExcelReport(
     @Query('fiscalYear') fiscalYear: string,
-    @Query('filter') filter: 'monthly' | 'quarterly',
+    @Query('filter') filter: 'monthly' | 'quarterly' | 'half-yearly',
     @Query('orderTypes') orderTypes: string,
     @Res() res: Response,
   ) {

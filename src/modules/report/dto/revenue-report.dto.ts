@@ -68,7 +68,7 @@ export interface IMonthlyBreakdown {
 
 // Query DTOs
 export interface IRevenueDashboardQuery {
-  filter?: 'monthly' | 'quarterly' | 'yearly' | 'all';
+  filter?: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' | 'all';
   year?: number;
   quarter?: string;
   startDate?: Date;
@@ -78,7 +78,7 @@ export interface IRevenueDashboardQuery {
 
 export interface IExpectedVsCollectedQuery {
   fiscalYear: number; // Start year of fiscal year (e.g., 2024 for FY24-25)
-  filter?: 'monthly' | 'quarterly' | 'yearly';
+  filter?: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly';
   orderTypes?: string; // comma-separated: 'new','amc','customization','auditor'
 }
 
