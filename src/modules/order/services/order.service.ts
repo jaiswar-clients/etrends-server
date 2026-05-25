@@ -6612,8 +6612,6 @@ export class OrderService {
       };
       total_amount: {
         total: number;
-        invoice: number;
-        pending: number;
         new_order: number;
         customization: number;
         auditor_licence: number;
@@ -7129,7 +7127,6 @@ export class OrderService {
         { header: 'Invoice #', key: 'invoiceNumber', width: 20 },
         { header: 'Invoice Date', key: 'invoiceDate', width: 15 },
         { header: 'Amount', key: 'amount', width: 15 },
-        { header: 'Scenario', key: 'scenario', width: 18 },
       ];
 
       const workbook = new ExcelJS.Workbook();
@@ -7206,7 +7203,6 @@ export class OrderService {
           row.invoice_number || '—',
           formattedDate,
           row.amount || 0,
-          row.status === 'invoice' ? 'Invoice Raised' : 'PO Balance',
         ]);
       });
 
