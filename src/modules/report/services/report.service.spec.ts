@@ -57,6 +57,12 @@ describe('ReportService', () => {
               }),
               lean: jest.fn().mockResolvedValue([]),
             }),
+            findWithDeleted: jest.fn().mockReturnValue({
+              populate: jest.fn().mockReturnValue({
+                lean: jest.fn().mockResolvedValue([]),
+              }),
+              lean: jest.fn().mockResolvedValue([]),
+            }),
             findByIdAndUpdate: jest.fn().mockResolvedValue(null),
           },
         },
@@ -110,6 +116,12 @@ describe('ReportService', () => {
 
   const mockAmcFind = (data: any[]) => {
     (amcModel.find as jest.Mock).mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(data),
+      }),
+      lean: jest.fn().mockResolvedValue(data),
+    });
+    (amcModel as any).findWithDeleted.mockReturnValue({
       populate: jest.fn().mockReturnValue({
         lean: jest.fn().mockResolvedValue(data),
       }),
@@ -625,4 +637,6 @@ describe('ReportService', () => {
       expect(result.length).toBeGreaterThan(0);
     });
   });
+
 });
+

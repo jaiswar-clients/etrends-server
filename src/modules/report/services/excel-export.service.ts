@@ -60,7 +60,7 @@ export class ExcelExportService {
     clientHealth: IClientHealthDashboardResponse;
     clientWiseRevenue: IClientWiseRevenueResponse;
     fiscalYear: number;
-    filter: 'monthly' | 'quarterly';
+    filter: 'monthly' | 'quarterly' | 'half-yearly';
   }): Promise<Workbook> {
     const workbook = new Workbook();
     workbook.creator = 'AMC Management System';

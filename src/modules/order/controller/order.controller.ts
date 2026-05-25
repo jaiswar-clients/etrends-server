@@ -25,7 +25,6 @@ import {
 } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
-import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 import { CancelOrderDto } from '../dto/cancel-order.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import {
@@ -438,35 +437,6 @@ export class OrderController {
     return res.send(excelBuffer);
   }
 
-  @Get('/pending-payments')
-  async getAllPendingPayments(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('clientId') clientId?: string,
-    @Query('clientName') clientName?: string,
-    @Query('type') type?: 'order' | 'amc' | 'all',
-  ) {
-    // Ensure page and limit are positive integers, defaulting if necessary
-    const finalPage = Math.max(1, page || 1);
-    const finalLimit = Math.max(1, limit || 20);
-
-    this.loggerService.log(
-      JSON.stringify({
-        message: 'getAllPendingPayments: Controller called',
-        data: { page: finalPage, limit: finalLimit, startDate, endDate, clientId, clientName, type },
-      }),
-    );
-    return this.orderService.getAllPendingPayments(finalPage, finalLimit, {
-      startDate,
-      endDate,
-      clientId,
-      clientName,
-      type,
-    });
-  }
-
   @Get('/:id')
   async getOrderById(@Param('id') orderId: string) {
     return this.orderService.getOrderById(orderId);
@@ -617,22 +587,6 @@ export class OrderController {
     @Param('paymentId') paymentId: string,
   ) {
     return this.orderService.deleteAmcPaymentById(amcId, paymentId);
-  }
-
-  @Patch('/pending-payments/:id')
-  async updatePendingPaymentStatus(
-    @Param('id') id: string,
-    @Body() body: UpdatePendingPaymentDto,
-  ) {
-    return this.orderService.updatePendingPayment(
-      id,
-      body.type,
-      body.payment_identifier,
-      {
-        payment_receive_date: body.payment_receive_date,
-        status: body.status,
-      },
-    );
   }
 
   @Post('/:id/cancel')

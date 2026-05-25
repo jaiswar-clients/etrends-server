@@ -68,6 +68,12 @@ export class Order extends Document {
   @Prop({ type: Number })
   base_cost: number;
 
+  @Prop({ type: Number, default: 0 })
+  pending_balance: number; // Updated on payment_term status changes and on AMC assignment
+
+  @Prop({ type: Number, default: 0 })
+  total_paid: number; // Sum of all PAID payment_terms.calculated_amount
+
   @Prop({
     type: [
       {

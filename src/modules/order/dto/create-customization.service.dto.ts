@@ -46,11 +46,11 @@ export class CreateCustomizationDto {
   purchase_order_number: string;
 
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   invoice_number: string;
 
   @IsString()
-  @IsOptional()
+  @IsNotEmpty()
   invoice_date: string;
 
   @IsString()
