@@ -38,7 +38,6 @@ import {
   UpdateAMCPaymentDto,
 } from '../dto/update-amc.dto';
 import { extractFileKey } from '@/utils/misc';
-import { IPendingPaymentTypes } from '../dto/update-pending-payment';
 import { Cache } from 'cache-manager';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import {

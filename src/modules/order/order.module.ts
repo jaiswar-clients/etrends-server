@@ -3,7 +3,6 @@ import { OrderController } from './controller/order.controller';
 import { OrderAiController } from './controller/order.ai.controller';
 import { OrderService } from './services/order.service';
 import { OrderAiService } from './services/order.ai.service';
-import { PendingPaymentService } from './services/pending-payment.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { StorageModule } from '@/common/storage/storage.module';
 import {
@@ -49,8 +48,8 @@ import {
     }),
   ],
   controllers: [OrderController, OrderAiController],
-  providers: [OrderService, MailService, OrderAiService, PendingPaymentService],
-  exports: [OrderService, OrderAiService, PendingPaymentService],
+  providers: [OrderService, MailService, OrderAiService],
+  exports: [OrderService, OrderAiService],
 })
 export class OrderModule implements OnModuleInit {
   constructor(private orderService: OrderService) {}

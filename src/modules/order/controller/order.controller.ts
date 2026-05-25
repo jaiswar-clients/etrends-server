@@ -25,7 +25,6 @@ import {
 } from '../dto/update-amc.dto';
 import { AMC_FILTER } from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
-import { UpdatePendingPaymentDto } from '../dto/update-pending-payment';
 import { CancelOrderDto } from '../dto/cancel-order.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
 import {
@@ -33,7 +32,6 @@ import {
   PAYMENT_STATUS_ENUM,
 } from '@/common/types/enums/order.enum';
 import { Response } from 'express';
-import { PendingPaymentService } from '../services/pending-payment.service';
 
 export type UpdateOrderType = CreateOrderDto;
 
@@ -42,7 +40,6 @@ export type UpdateOrderType = CreateOrderDto;
 export class OrderController {
   constructor(
     private orderService: OrderService,
-    private pendingPaymentService: PendingPaymentService,
     private loggerService: LoggerService,
   ) {}
 
@@ -440,82 +437,6 @@ export class OrderController {
     return res.send(excelBuffer);
   }
 
-  @Get('/pending-payments')
-  async getAllPendingPayments(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('clientId') clientId?: string,
-    @Query('clientName') clientName?: string,
-    @Query('type') type?: 'order' | 'amc' | 'license' | 'customization' | 'all',
-  ) {
-    const finalPage = Math.max(1, page || 1);
-    const finalLimit = Math.max(1, limit || 20);
-
-    this.loggerService.log(
-      JSON.stringify({
-        message: 'getAllPendingPayments: Controller called',
-        data: { page: finalPage, limit: finalLimit, startDate, endDate, clientId, clientName, type },
-      }),
-    );
-    return this.pendingPaymentService.getPendingPayments({
-      page: finalPage,
-      limit: finalLimit,
-      startDate,
-      endDate,
-      clientId,
-      clientName,
-      type,
-    });
-  }
-
-  @Get('/pending-payments/export')
-  async exportPendingPaymentsToExcel(
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('clientId') clientId?: string,
-    @Query('clientName') clientName?: string,
-    @Query('type') type?: 'order' | 'amc' | 'license' | 'customization' | 'all',
-    @Res() res?: Response,
-  ) {
-    const excelBuffer =
-      await this.pendingPaymentService.exportPendingPaymentsToExcel({
-        startDate,
-        endDate,
-        clientId,
-        clientName,
-        type,
-      });
-
-    const date = new Date().toISOString().split('T')[0];
-    const fileName = `PendingPayments_Export_${date}.xlsx`;
-
-    res!.set({
-      'Content-Type':
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${fileName}"`,
-      'Content-Length': excelBuffer.length,
-    });
-
-    return res!.send(excelBuffer);
-  }
-
-  @Get('/pending-payments/amc-start-missing')
-  async getAmcStartMissing(
-    @Query('page') page = 1,
-    @Query('limit') limit = 20,
-    @Query('clientId') clientId?: string,
-    @Query('clientName') clientName?: string,
-  ) {
-    return this.pendingPaymentService.getAmcStartMissing({
-      page: Math.max(1, +page),
-      limit: Math.max(1, +limit),
-      clientId,
-      clientName,
-    });
-  }
-
   @Get('/:id')
   async getOrderById(@Param('id') orderId: string) {
     return this.orderService.getOrderById(orderId);
@@ -666,22 +587,6 @@ export class OrderController {
     @Param('paymentId') paymentId: string,
   ) {
     return this.orderService.deleteAmcPaymentById(amcId, paymentId);
-  }
-
-  @Patch('/pending-payments/:id')
-  async updatePendingPaymentStatus(
-    @Param('id') id: string,
-    @Body() body: UpdatePendingPaymentDto,
-  ) {
-    return this.pendingPaymentService.updatePendingPaymentStatus(
-      id,
-      body.type,
-      body.payment_identifier,
-      {
-        payment_receive_date: body.payment_receive_date,
-        status: body.status,
-      },
-    );
   }
 
   @Post('/:id/cancel')
