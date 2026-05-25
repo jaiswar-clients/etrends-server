@@ -6588,4 +6588,655 @@ export class OrderService {
 
     return await workbook.xlsx.writeBuffer();
   }
+
+  async getPendingPayments(
+    page: number,
+    limit: number,
+    filters: {
+      startDate?: Date | string;
+      endDate?: Date | string;
+      clientId?: string;
+      productId?: string;
+      type?: string;
+    } = {},
+  ): Promise<{
+    data: {
+      data: any[];
+      pagination: {
+        total: number;
+        page: number;
+        limit: number;
+        pages: number;
+        hasNextPage: boolean;
+        hasPreviousPage: boolean;
+      };
+      total_amount: {
+        total: number;
+        invoice: number;
+        pending: number;
+        new_order: number;
+        customization: number;
+        auditor_licence: number;
+        amc: number;
+      };
+    };
+  }> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getPendingPayments: Fetching pending payments',
+          page,
+          limit,
+          filters,
+        }),
+      );
+
+      const parsedStartDate = filters.startDate
+        ? new Date(filters.startDate)
+        : null;
+      const parsedEndDate = filters.endDate
+        ? new Date(filters.endDate)
+        : null;
+
+      // Parse type filter
+      const allowedTypes = [
+        'new_order',
+        'customization',
+        'auditor_licence',
+        'amc',
+      ];
+      const typeFilter: string[] = filters.type
+        ? filters.type.split(',').map((t) => t.trim().toLowerCase())
+        : [];
+      if (typeFilter.length > 0) {
+        const invalid = typeFilter.filter((t) => !allowedTypes.includes(t));
+        if (invalid.length > 0) {
+          throw new HttpException(
+            `Invalid type value(s): ${invalid.join(', ')}`,
+            HttpStatus.BAD_REQUEST,
+          );
+        }
+      }
+
+      // Get active order IDs (for filtering AMCs and checking order status)
+      const activeOrders = await this.orderModel
+        .find({ status: ORDER_STATUS_ENUM.ACTIVE })
+        .distinct('_id');
+
+      // Helper to safely convert any date-like to ISO string
+      const toISO = (val: any): string | null => {
+        if (!val) return null;
+        return new Date(val).toISOString();
+      };
+
+      // Parse product filter
+      let productObjectIds: Types.ObjectId[] | null = null;
+      if (filters.productId) {
+        const identifiers = filters.productId
+          .split(',')
+          .map((id) => id.trim());
+        productObjectIds = [];
+        const shortNames: string[] = [];
+        for (const identifier of identifiers) {
+          if (Types.ObjectId.isValid(identifier)) {
+            productObjectIds.push(new Types.ObjectId(identifier));
+          } else {
+            shortNames.push(identifier);
+          }
+        }
+        if (shortNames.length > 0) {
+          const products = await this.productModel
+            .find({ short_name: { $in: shortNames } })
+            .select('_id')
+            .lean<{ _id: Types.ObjectId }[]>();
+          products.forEach((p) => productObjectIds!.push(p._id));
+        }
+      }
+
+      // Build base query for orders
+      const orderQuery: any = { status: ORDER_STATUS_ENUM.ACTIVE };
+      if (filters.clientId) {
+        orderQuery.client_id = new Types.ObjectId(filters.clientId);
+      }
+      if (productObjectIds) {
+        orderQuery.products = { $in: productObjectIds };
+      }
+
+      // Fetch active orders with populations
+      const orders = await this.orderModel
+        .find(orderQuery)
+        .sort({ createdAt: -1 })
+        .populate([
+          { path: 'client_id', select: 'name' },
+          { path: 'products', select: 'short_name' },
+        ])
+        .lean();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getPendingPayments: Active orders fetched',
+          count: orders.length,
+        }),
+      );
+
+      const allRows: any[] = [];
+      const orderClientMap = new Map<string, any>();
+
+      // Process New Orders
+      for (const order of orders) {
+        const client = order.client_id as any;
+        const clientName = client?.name || 'Unknown';
+        const productNames = (order.products as any[])?.map(
+          (p: any) => p.short_name,
+        ) || [];
+        const productIds = (order.products as any[])?.map(
+          (p: any) => p._id?.toString(),
+        ) || [];
+        const orderId = order._id.toString();
+        orderClientMap.set(orderId, {
+          clientName,
+          clientId: client?._id?.toString(),
+          productNames,
+          productIds,
+        });
+
+        if (!order.payment_terms || !Array.isArray(order.payment_terms))
+          continue;
+
+        // Sum up pending+invoice payment terms
+        let pendingInvoiceSum = 0;
+
+        for (let i = 0; i < order.payment_terms.length; i++) {
+          const pt = order.payment_terms[i];
+          if (
+            pt.status === PAYMENT_STATUS_ENUM.PAID ||
+            pt.status === PAYMENT_STATUS_ENUM.PROFORMA
+          )
+            continue;
+
+          const rowDate = pt.invoice_date
+            ? new Date(pt.invoice_date)
+            : new Date(order.purchased_date);
+          const dateInRange =
+            (!parsedStartDate || rowDate >= parsedStartDate) &&
+            (!parsedEndDate || rowDate <= parsedEndDate);
+
+          if (!dateInRange) continue;
+
+          pendingInvoiceSum += pt.calculated_amount || 0;
+
+          allRows.push({
+            _id: `new_order_${orderId}_${i}`,
+            type: 'new_order',
+            type_sub: pt.status === PAYMENT_STATUS_ENUM.INVOICE
+              ? 'payment_term'
+              : 'po_balance',
+            client_id: client?._id?.toString(),
+            client_name: clientName,
+            product_ids: productIds,
+            product_names: productNames,
+            order_id: orderId,
+            purchase_order_number: order.purchase_order_number,
+            amount: pt.calculated_amount || 0,
+            status: pt.status === PAYMENT_STATUS_ENUM.INVOICE
+              ? 'invoice'
+              : 'pending',
+            invoice_date: pt.invoice_date
+              ? toISO(pt.invoice_date)
+              : toISO(order.purchased_date) || null,
+            invoice_number: pt.invoice_number || null,
+            entity_id: orderId,
+          });
+        }
+
+        // Check for PO balance gap (Scenario 3)
+        const pendingBalance = order.pending_balance || 0;
+        if (pendingBalance > pendingInvoiceSum && pendingInvoiceSum > 0) {
+          const gap = pendingBalance - pendingInvoiceSum;
+          allRows.push({
+            _id: `new_order_${orderId}_gap`,
+            type: 'new_order',
+            type_sub: 'po_balance',
+            client_id: client?._id?.toString(),
+            client_name: clientName,
+            product_ids: productIds,
+            product_names: productNames,
+            order_id: orderId,
+            purchase_order_number: order.purchase_order_number,
+            amount: gap,
+            status: 'pending',
+            invoice_date: toISO(order.purchased_date) || null,
+            invoice_number: null,
+            entity_id: orderId,
+          });
+        }
+      }
+
+      // Process Customizations
+      const customizationQuery: any = {
+        payment_status: {
+          $in: [PAYMENT_STATUS_ENUM.PENDING, PAYMENT_STATUS_ENUM.INVOICE],
+        },
+      };
+      if (filters.clientId) {
+        // Customizations don't have client_id directly, need to filter by order's client
+        // We'll filter post-query
+      }
+
+      const customizations = await this.customizationModel
+        .find(customizationQuery)
+        .populate([
+          { path: 'order_id', select: 'client_id products status purchased_date' },
+        ])
+        .lean();
+
+      for (const cust of customizations) {
+        const order = cust.order_id as any;
+        if (!order || order.status !== ORDER_STATUS_ENUM.ACTIVE) continue;
+
+        const orderId = order._id.toString();
+        if (filters.clientId && order.client_id?.toString() !== filters.clientId)
+          continue;
+        if (
+          productObjectIds &&
+          !order.products?.some((pId: any) =>
+            productObjectIds!.some(
+              (fId) => fId.toString() === pId.toString(),
+            ),
+          )
+        )
+          continue;
+
+        const rowDate = cust.invoice_date
+          ? new Date(cust.invoice_date)
+          : cust.purchased_date
+            ? new Date(cust.purchased_date)
+            : null;
+        if (!rowDate) continue;
+        const dateInRange =
+          (!parsedStartDate || rowDate >= parsedStartDate) &&
+          (!parsedEndDate || rowDate <= parsedEndDate);
+        if (!dateInRange) continue;
+
+        const existing = orderClientMap.get(orderId);
+        const clientName = existing?.clientName || 'Unknown';
+        const productNames = existing?.productNames || [];
+        const productIds = existing?.productIds || [];
+
+        allRows.push({
+          _id: `customization_${cust._id}`,
+          type: 'customization',
+          client_id: order.client_id?.toString(),
+          client_name: clientName,
+          product_ids: productIds,
+          product_names: productNames,
+          order_id: orderId,
+          purchase_order_number: cust.purchase_order_number,
+          amount: cust.cost || 0,
+          status:
+            cust.payment_status === PAYMENT_STATUS_ENUM.INVOICE
+              ? 'invoice'
+              : 'pending',
+          invoice_date: toISO(rowDate),
+          invoice_number: cust.invoice_number || null,
+          entity_id: cust._id.toString(),
+        });
+      }
+
+      // Process Auditor Licences
+      const licenseQuery: any = {
+        payment_status: {
+          $in: [PAYMENT_STATUS_ENUM.PENDING, PAYMENT_STATUS_ENUM.INVOICE],
+        },
+      };
+      const licenses = await this.licenseModel
+        .find(licenseQuery)
+        .populate([
+          { path: 'order_id', select: 'client_id products status purchased_date' },
+        ])
+        .lean();
+
+      for (const lic of licenses) {
+        const order = lic.order_id as any;
+        if (!order || order.status !== ORDER_STATUS_ENUM.ACTIVE) continue;
+
+        const orderId = order._id.toString();
+        if (filters.clientId && order.client_id?.toString() !== filters.clientId)
+          continue;
+        if (
+          productObjectIds &&
+          !order.products?.some((pId: any) =>
+            productObjectIds!.some(
+              (fId) => fId.toString() === pId.toString(),
+            ),
+          )
+        )
+          continue;
+
+        const rowDate = lic.invoice_date
+          ? new Date(lic.invoice_date)
+          : lic.purchase_date
+            ? new Date(lic.purchase_date)
+            : null;
+        if (!rowDate) continue;
+        const dateInRange =
+          (!parsedStartDate || rowDate >= parsedStartDate) &&
+          (!parsedEndDate || rowDate <= parsedEndDate);
+        if (!dateInRange) continue;
+
+        const existing = orderClientMap.get(orderId);
+        const clientName = existing?.clientName || 'Unknown';
+        const productNames = existing?.productNames || [];
+        const productIds = existing?.productIds || [];
+        const licenseAmount =
+          (lic.rate?.amount || 0) * (lic.total_license || 0);
+
+        allRows.push({
+          _id: `auditor_licence_${lic._id}`,
+          type: 'auditor_licence',
+          client_id: order.client_id?.toString(),
+          client_name: clientName,
+          product_ids: productIds,
+          product_names: productNames,
+          order_id: orderId,
+          purchase_order_number: lic.purchase_order_number,
+          amount: licenseAmount,
+          status:
+            lic.payment_status === PAYMENT_STATUS_ENUM.INVOICE
+              ? 'invoice'
+              : 'pending',
+          invoice_date: toISO(rowDate),
+          invoice_number: lic.invoice_number || null,
+          entity_id: lic._id.toString(),
+        });
+      }
+
+      // Process AMCs
+      const amcQuery: any = {
+        payments: { $exists: true, $not: { $size: 0 } },
+        order_id: { $in: activeOrders },
+      };
+      if (filters.clientId) {
+        amcQuery.client_id = new Types.ObjectId(filters.clientId);
+      }
+      if (productObjectIds) {
+        amcQuery.products = { $in: productObjectIds };
+      }
+
+      const amcs = await this.amcModel
+        .find(amcQuery)
+        .populate([
+          { path: 'client_id', select: 'name' },
+          { path: 'order_id', select: 'products' },
+          { path: 'products', select: 'short_name' },
+        ])
+        .lean();
+
+      for (const amc of amcs) {
+        if (!amc.payments || !Array.isArray(amc.payments)) continue;
+
+        const client = amc.client_id as any;
+        const clientName = client?.name || 'Unknown';
+        const order = amc.order_id as any;
+        const orderId = order?._id?.toString();
+        const amcProducts = (amc.products as any[])?.map(
+          (p: any) => p.short_name,
+        ) || [];
+        const amcProductIds = (amc.products as any[])?.map(
+          (p: any) => p._id?.toString(),
+        ) || [];
+
+        for (let i = 0; i < amc.payments.length; i++) {
+          const payment = amc.payments[i];
+          if (
+            payment.status === PAYMENT_STATUS_ENUM.PAID ||
+            payment.status === PAYMENT_STATUS_ENUM.PROFORMA
+          )
+            continue;
+
+          const rowDate = payment.from_date
+            ? new Date(payment.from_date)
+            : null;
+          if (!rowDate) continue;
+          const dateInRange =
+            (!parsedStartDate || rowDate >= parsedStartDate) &&
+            (!parsedEndDate || rowDate <= parsedEndDate);
+          if (!dateInRange) continue;
+
+          allRows.push({
+            _id: `amc_${amc._id}_${i}`,
+            type: 'amc',
+            client_id: client?._id?.toString(),
+            client_name: clientName,
+            product_ids: amcProductIds,
+            product_names: amcProducts,
+            order_id: orderId,
+            purchase_order_number: payment.purchase_order_number,
+            amount: payment.amc_rate_amount || 0,
+            status:
+              payment.status === PAYMENT_STATUS_ENUM.INVOICE
+                ? 'invoice'
+                : 'pending',
+            invoice_date: toISO(payment.invoice_date || payment.from_date),
+            invoice_number: payment.invoice_number || null,
+            entity_id: amc._id.toString(),
+          });
+        }
+      }
+
+      // Filter by type
+      let filteredRows = allRows;
+      if (typeFilter.length > 0) {
+        filteredRows = allRows.filter((row) => typeFilter.includes(row.type));
+      }
+
+      // Sort by invoice_date descending
+      filteredRows.sort((a, b) => {
+        const dateA = a.invoice_date ? new Date(a.invoice_date).getTime() : 0;
+        const dateB = b.invoice_date ? new Date(b.invoice_date).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      // Calculate total amounts
+      const totalAmount = {
+        total: 0,
+        invoice: 0,
+        pending: 0,
+        new_order: 0,
+        customization: 0,
+        auditor_licence: 0,
+        amc: 0,
+      };
+
+      for (const row of filteredRows) {
+        const amt = row.amount || 0;
+        totalAmount.total += amt;
+        if (row.status === 'invoice') totalAmount.invoice += amt;
+        if (row.status === 'pending') totalAmount.pending += amt;
+        if (row.type === 'new_order') totalAmount.new_order += amt;
+        if (row.type === 'customization') totalAmount.customization += amt;
+        if (row.type === 'auditor_licence') totalAmount.auditor_licence += amt;
+        if (row.type === 'amc') totalAmount.amc += amt;
+      }
+
+      // Paginate
+      const total = filteredRows.length;
+      const totalPages = Math.ceil(total / limit);
+      const startIdx = (page - 1) * limit;
+      const paginatedRows = filteredRows.slice(startIdx, startIdx + limit);
+
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'getPendingPayments: Completed',
+          totalRows: total,
+          returnedRows: paginatedRows.length,
+          totalAmount,
+        }),
+      );
+
+      return {
+        data: {
+          pagination: {
+            total,
+            page,
+            limit,
+            pages: totalPages,
+            hasNextPage: page < totalPages,
+            hasPreviousPage: page > 1,
+          },
+          total_amount: totalAmount,
+          data: paginatedRows,
+        },
+      };
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'getPendingPayments: Error',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      if (error instanceof HttpException) throw error;
+      throw new HttpException(
+        'Failed to fetch pending payments: ' + error.message,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async exportPendingPaymentsToExcel(
+    filters: {
+      startDate?: Date | string;
+      endDate?: Date | string;
+      clientId?: string;
+      productId?: string;
+      type?: string;
+    } = {},
+  ): Promise<Buffer> {
+    try {
+      this.loggerService.log(
+        JSON.stringify({
+          message: 'exportPendingPaymentsToExcel: Generating Excel export',
+          filters,
+        }),
+      );
+
+      const columns = [
+        { header: 'Sr. No.', key: 'srNo', width: 8 },
+        { header: 'Client', key: 'client', width: 30 },
+        { header: 'Type', key: 'type', width: 18 },
+        { header: 'Products', key: 'products', width: 25 },
+        { header: 'Invoice #', key: 'invoiceNumber', width: 20 },
+        { header: 'Invoice Date', key: 'invoiceDate', width: 15 },
+        { header: 'Amount', key: 'amount', width: 15 },
+        { header: 'Scenario', key: 'scenario', width: 18 },
+      ];
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Pending Payments Management';
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      const worksheet = workbook.addWorksheet('Pending Payments', {
+        properties: { tabColor: { argb: '4F81BD' } },
+        pageSetup: {
+          paperSize: 9,
+          orientation: 'landscape',
+          fitToPage: true,
+          fitToHeight: 0,
+          fitToWidth: 1,
+        },
+      });
+
+      // Fetch all pending payments (no pagination)
+      const result = await this.getPendingPayments(1, 100000, filters);
+      const allRows = result.data.data;
+
+      if (allRows.length === 0) {
+        return this.generateEmptyExcelBuffer(workbook, worksheet, columns);
+      }
+
+      // Add header row
+      const headerRow = worksheet.addRow(columns.map((c) => c.header));
+      headerRow.eachCell((cell) => {
+        cell.style = {
+          font: { bold: true, color: { argb: 'FFFFFF' }, size: 11 },
+          fill: {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: '4F81BD' },
+          } as any,
+          border: {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          },
+          alignment: { horizontal: 'center', vertical: 'middle' },
+        };
+      });
+
+      // Set column widths
+      columns.forEach((col, idx) => {
+        worksheet.getColumn(idx + 1).width = col.width;
+      });
+
+      // Add data rows
+      const typeLabels: Record<string, string> = {
+        new_order: 'New Order',
+        customization: 'Customization',
+        auditor_licence: 'Auditor Licence',
+        amc: 'AMC',
+      };
+
+      allRows.forEach((row, index) => {
+        const formattedDate = row.invoice_date
+          ? new Date(row.invoice_date).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })
+          : '—';
+
+        worksheet.addRow([
+          index + 1,
+          row.client_name,
+          typeLabels[row.type] || row.type,
+          row.product_names?.join(', ') || '—',
+          row.invoice_number || '—',
+          formattedDate,
+          row.amount || 0,
+          row.status === 'invoice' ? 'Invoice Raised' : 'PO Balance',
+        ]);
+      });
+
+      // Format amount column
+      const amountCol = worksheet.getColumn(7);
+      amountCol.numFmt = '#,##0.00';
+
+      const buffer = await workbook.xlsx.writeBuffer();
+
+      this.loggerService.log(
+        JSON.stringify({
+          message:
+            'exportPendingPaymentsToExcel: Excel export generated successfully',
+          rowCount: allRows.length,
+        }),
+      );
+
+      return buffer as any;
+    } catch (error: any) {
+      this.loggerService.error(
+        JSON.stringify({
+          message: 'exportPendingPaymentsToExcel: Error',
+          error: error.message,
+          stack: error.stack,
+        }),
+      );
+      throw new HttpException(
+        'Failed to generate Excel export: ' + error.message,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
