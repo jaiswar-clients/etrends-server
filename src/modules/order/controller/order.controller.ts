@@ -437,6 +437,105 @@ export class OrderController {
     return res.send(excelBuffer);
   }
 
+  @Get('/pending-payments')
+  async getPendingPayments(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('client_id') clientId?: string,
+    @Query('product_id') productId?: string,
+    @Query('type') type?: string,
+  ) {
+    const parsedPage = Math.max(1, parseInt(String(page)) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(String(limit)) || 10));
+
+    let parsedStartDate: Date | undefined = undefined;
+    let parsedEndDate: Date | undefined = undefined;
+
+    if (startDate && startDate !== 'undefined') {
+      parsedStartDate = new Date(startDate);
+      if (isNaN(parsedStartDate.getTime())) {
+        throw new HttpException('Invalid start date format', HttpStatus.BAD_REQUEST);
+      }
+    }
+
+    if (endDate && endDate !== 'undefined') {
+      parsedEndDate = new Date(endDate);
+      if (isNaN(parsedEndDate.getTime())) {
+        throw new HttpException('Invalid end date format', HttpStatus.BAD_REQUEST);
+      }
+    }
+
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      throw new HttpException('Start date cannot be after end date', HttpStatus.BAD_REQUEST);
+    }
+
+    return this.orderService.getPendingPayments(parsedPage, parsedLimit, {
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
+      clientId,
+      productId,
+      type,
+    });
+  }
+
+  @Get('/export-pending-payments')
+  async exportPendingPayments(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('client_id') clientId?: string,
+    @Query('product_id') productId?: string,
+    @Query('type') type?: string,
+    @Res() res?: Response,
+  ) {
+    let parsedStartDate: Date | undefined = undefined;
+    let parsedEndDate: Date | undefined = undefined;
+
+    if (startDate && startDate !== 'undefined') {
+      parsedStartDate = new Date(startDate);
+      if (isNaN(parsedStartDate.getTime())) {
+        throw new HttpException('Invalid start date format', HttpStatus.BAD_REQUEST);
+      }
+    }
+
+    if (endDate && endDate !== 'undefined') {
+      parsedEndDate = new Date(endDate);
+      if (isNaN(parsedEndDate.getTime())) {
+        throw new HttpException('Invalid end date format', HttpStatus.BAD_REQUEST);
+      }
+    }
+
+    if (parsedStartDate && parsedEndDate && parsedStartDate > parsedEndDate) {
+      throw new HttpException('Start date cannot be after end date', HttpStatus.BAD_REQUEST);
+    }
+
+    this.loggerService.log(
+      JSON.stringify({
+        message: 'exportPendingPayments: Requested export',
+        filters: { startDate, endDate, clientId, productId, type },
+      }),
+    );
+
+    const excelBuffer = await this.orderService.exportPendingPaymentsToExcel({
+      startDate: parsedStartDate,
+      endDate: parsedEndDate,
+      clientId,
+      productId,
+      type,
+    });
+
+    const date = new Date().toISOString().split('T')[0];
+    const fileName = `Pending_Payments_Export_${date}.xlsx`;
+    res!.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${fileName}"`,
+      'Content-Length': excelBuffer.length,
+    });
+
+    return res!.send(excelBuffer);
+  }
+
   @Get('/:id')
   async getOrderById(@Param('id') orderId: string) {
     return this.orderService.getOrderById(orderId);
