@@ -86,7 +86,7 @@ export class RevenueCalculatorService {
   async calculateNewSaleOrderRevenue(order: any): Promise<number> {
     let totalRevenue = 0;
 
-    // Sum payment_terms where status is 'paid' or 'invoice'
+                                                                                                                                                                                                                                                    // Sum payment_terms where status is 'paid' or 'invoice'
     const revenuePaymentTerms = (order.payment_terms || []).filter(
       (term: any) => term.status === 'paid' || term.status === 'invoice'
     );
