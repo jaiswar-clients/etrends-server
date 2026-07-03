@@ -347,8 +347,8 @@ export class RevenueCalculatorService {
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
-        // Skip proforma payments
-        if (payment.status === 'proforma') continue;
+        // Only include paid or invoice payments in revenue
+        if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
 
         const paymentFromDate = new Date(payment.from_date);
 
@@ -658,8 +658,8 @@ export class RevenueCalculatorService {
         const allPayments = amc.payments || [];
 
         for (const payment of allPayments) {
-          // Skip proforma payments
-          if (payment.status === 'proforma') continue;
+          // Only include paid or invoice payments in revenue
+          if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
 
           const paymentFromDate = new Date(payment.from_date);
 
@@ -888,8 +888,8 @@ export class RevenueCalculatorService {
       const allPayments = amc.payments || [];
 
       for (const payment of allPayments) {
-        // Skip proforma payments
-        if (payment.status === 'proforma') continue;
+        // Only include paid or invoice payments in revenue
+        if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
 
         const paymentFromDate = new Date(payment.from_date);
 
@@ -1194,8 +1194,8 @@ export class RevenueCalculatorService {
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
-        // Skip proforma payments
-        if (payment.status === 'proforma') continue;
+        // Only include paid or invoice payments in revenue
+        if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
 
         const paymentFromDate = new Date(payment.from_date);
         if (paymentFromDate >= start && paymentFromDate <= end) {
@@ -1296,8 +1296,8 @@ export class RevenueCalculatorService {
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
-        // Skip proforma payments
-        if (payment.status === 'proforma') continue;
+        // Only include paid or invoice payments in revenue
+        if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
 
         const paymentFromDate = new Date(payment.from_date);
         if (paymentFromDate >= prevStart && paymentFromDate <= prevEnd) {
@@ -1549,7 +1549,8 @@ export class RevenueCalculatorService {
 
       const allPayments = amc.payments || [];
       for (const payment of allPayments) {
-        if (payment.status === 'proforma') continue;
+        // Only include paid or invoice payments in revenue
+        if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
 
         const paymentDate = new Date(payment.from_date);
         if (paymentDate >= start && paymentDate <= end) {
@@ -1761,7 +1762,8 @@ export class RevenueCalculatorService {
         if (order?.status === 'inactive') continue;
 
         for (const payment of amc.payments || []) {
-          if (payment.status === 'proforma') continue;
+          // Only include paid or invoice payments in revenue
+          if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
           const paymentFromDate = new Date(payment.from_date);
           if (paymentFromDate < start || paymentFromDate > end) continue;
 
