@@ -59,6 +59,7 @@ interface OrderFilterOptions {
   types?: string;
   includeCancelled?: boolean;
   paymentStatus?: PAYMENT_STATUS_ENUM;
+  amcPending?: boolean;
 }
 
 @Injectable()
@@ -1701,6 +1702,18 @@ export class OrderService {
         filterQuery.$and = filterQuery.$and || [];
         filterQuery.$and.push({ $or: paymentStatusConditions });
       }
+    }
+
+    // 9. Filter by AMC Start Date Pending
+    if (filters.amcPending === true) {
+      filterQuery.$and = filterQuery.$and || [];
+      filterQuery.$and.push({
+        amc_id: { $exists: true, $ne: null },
+        $or: [
+          { amc_start_date: { $exists: false } },
+          { amc_start_date: null },
+        ],
+      });
     }
 
     // Normalize client_id to strings for consistency

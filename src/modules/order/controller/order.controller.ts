@@ -57,6 +57,7 @@ export class OrderController {
     @Query('types') types?: string,
     @Query('include_cancelled') includeCancelled?: string,
     @Query('payment_status') paymentStatus?: PAYMENT_STATUS_ENUM,
+    @Query('amc_pending') amcPending?: string,
   ) {
     // Ensure valid pagination parameters
     const parsedPage = Math.max(1, parseInt(String(page)) || 1);
@@ -83,6 +84,9 @@ export class OrderController {
 
     // Parse include_cancelled to boolean
     const parsedIncludeCancelled = includeCancelled?.toLowerCase() === 'true';
+
+    // Parse amc_pending to boolean
+    const parsedAmcPending = amcPending?.toLowerCase() === 'true';
 
     // Validate payment_status if provided
     if (
@@ -111,6 +115,7 @@ export class OrderController {
           types,
           includeCancelled: parsedIncludeCancelled,
           paymentStatus,
+          amcPending: parsedAmcPending,
         },
       }),
     );
@@ -129,6 +134,7 @@ export class OrderController {
         types,
         includeCancelled: parsedIncludeCancelled,
         paymentStatus,
+        amcPending: parsedAmcPending,
       },
     );
   }
@@ -339,6 +345,7 @@ export class OrderController {
     @Query('types') types?: string,
     @Query('include_cancelled') includeCancelled?: string,
     @Query('payment_status') paymentStatus?: PAYMENT_STATUS_ENUM,
+    @Query('amc_pending') amcPending?: string,
     @Res() res?: Response,
   ) {
     // Validate status if provided
@@ -381,6 +388,9 @@ export class OrderController {
     // Parse include_cancelled to boolean
     const parsedIncludeCancelled = includeCancelled?.toLowerCase() === 'true';
 
+    // Parse amc_pending to boolean
+    const parsedAmcPending = amcPending?.toLowerCase() === 'true';
+
     // Validate payment_status if provided
     if (
       paymentStatus &&
@@ -406,6 +416,7 @@ export class OrderController {
           types,
           includeCancelled: parsedIncludeCancelled,
           paymentStatus,
+          amcPending: parsedAmcPending,
         },
       }),
     );
@@ -422,6 +433,7 @@ export class OrderController {
       types,
       includeCancelled: parsedIncludeCancelled,
       paymentStatus,
+      amcPending: parsedAmcPending,
     });
 
     // Set headers for file download
