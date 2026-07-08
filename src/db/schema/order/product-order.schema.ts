@@ -54,7 +54,7 @@ export class Order extends Document {
   @Prop({
     type: [
       {
-        type: Types.ObjectId,
+        type: MongooseSchema.Types.ObjectId,
         ref: 'Product',
       },
     ],
@@ -117,7 +117,7 @@ export class Order extends Document {
   @Prop({ type: [PaymentTerms] })
   payment_terms: PaymentTerms[];
 
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'License' }] })
+  @Prop({ type: [{ type: MongooseSchema.Types.ObjectId, ref: 'License' }] })
   licenses: Types.ObjectId[]; // array of license IDs
 
   @Prop({ type: Number, default: 0 })
@@ -163,13 +163,13 @@ export class Order extends Document {
     url: string;
   }[]; // cdn url
 
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'Customization' }] })
+  @Prop({ type: [{ type: MongooseSchema.Types.ObjectId, ref: 'Customization' }] })
   customizations: Types.ObjectId[]; // array of customization IDs
 
   @Prop({ type: Number, default: 0 })
   amc_rate_change_frequency_in_years: number; // Number of years after which AMC rate changes
 
-  @Prop({ type: [{ type: Types.ObjectId, ref: 'Additional' }] })
+  @Prop({ type: [{ type: MongooseSchema.Types.ObjectId, ref: 'Additional' }] })
   additional_services: Types.ObjectId[]; // array of additional service IDs
 
   @Prop({ type: Date })

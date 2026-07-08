@@ -6754,9 +6754,6 @@ export class OrderService {
         if (!order.payment_terms || !Array.isArray(order.payment_terms))
           continue;
 
-        // Sum up pending+invoice payment terms
-        let pendingInvoiceSum = 0;
-
         for (let i = 0; i < order.payment_terms.length; i++) {
           const pt = order.payment_terms[i];
           if (
@@ -6773,8 +6770,6 @@ export class OrderService {
             (!parsedEndDate || rowDate <= parsedEndDate);
 
           if (!dateInRange) continue;
-
-          pendingInvoiceSum += pt.calculated_amount || 0;
 
           allRows.push({
             _id: `new_order_${orderId}_${i}`,
@@ -6796,28 +6791,6 @@ export class OrderService {
               ? toISO(pt.invoice_date)
               : toISO(order.purchased_date) || null,
             invoice_number: pt.invoice_number || null,
-            entity_id: orderId,
-          });
-        }
-
-        // Check for PO balance gap (Scenario 3)
-        const pendingBalance = order.pending_balance || 0;
-        if (pendingBalance > pendingInvoiceSum && pendingInvoiceSum > 0) {
-          const gap = pendingBalance - pendingInvoiceSum;
-          allRows.push({
-            _id: `new_order_${orderId}_gap`,
-            type: 'new_order',
-            type_sub: 'po_balance',
-            client_id: client?._id?.toString(),
-            client_name: clientName,
-            product_ids: productIds,
-            product_names: productNames,
-            order_id: orderId,
-            purchase_order_number: order.purchase_order_number,
-            amount: gap,
-            status: 'pending',
-            invoice_date: toISO(order.purchased_date) || null,
-            invoice_number: null,
             entity_id: orderId,
           });
         }
