@@ -56,3 +56,48 @@ This applies to ALL AMC iteration sites:
 - `licenseModel` also lacks `client_id`. Same resolution path.
 - `additionalServiceModel` also lacks `client_id`. Same resolution path.
 - `getClientHealthMetrics` previously did NOT populate `order_id` on AMCs. Must add `.populate({ path: 'order_id', model: 'Order' })` to check order status.
+
+## Schema Pitfalls
+
+### Array-of-ObjectId refs: use `MongooseSchema.Types.ObjectId`, NOT `Types.ObjectId`
+
+NestJS `@Prop` for array-of-ref fields MUST use `mongoose.Schema.Types.ObjectId` (the SchemaType), NOT `mongoose.Types.ObjectId` (the BSON type). `@nestjs/mongoose`'s `DefinitionsFactory.inspectTypeDefinition` only recognizes types whose prototype extends `mongoose.SchemaType` (via `isMongooseSchemaType()`). `Types.ObjectId` (BSON) does NOT — it compiles to a `Mixed` caster with no `ref`, so `.populate()` silently no-ops and returns raw string ids. `MongooseSchema.Types.ObjectId` (SchemaType) compiles correctly to an `ObjectId` caster with `ref` preserved.
+
+```typescript
+// WRONG — caster.instance = Mixed, ref = undefined, populate no-ops
+@Prop({ type: [{ type: Types.ObjectId, ref: 'Product' }] })
+products: Types.ObjectId[];
+
+// CORRECT — caster.instance = ObjectId, ref = 'Product', populate works
+@Prop({ type: [{ type: MongooseSchema.Types.ObjectId, ref: 'Product' }] })
+products: Types.ObjectId[];
+```
+
+This was the root cause of `product_names: [null]` in pending-payments: `.populate('products')` returned raw string ids, then `p.short_name` on a string returned `undefined`, serializing to `[null]`.
+
+Affected props in `product-order.schema.ts` (all fixed 2026-07-08): `products`, `licenses`, `customizations`, `additional_services`. Single-ref props (`client_id`, `amc_id`) used `Types.ObjectId` and worked because `@nestjs/mongoose` treats them differently (no nested array unwrap).
+
+Note: DB stores these refs as STRINGS, not ObjectIds (all 157 product refs are strings). Mongoose casts strings to ObjectId for populate automatically once the caster is correct — no data migration needed.
+
+## Pending Payments
+
+### Calculation source
+
+Pending payments for new orders come SOLELY from `order.payment_terms` entries with `status` of `pending` or `invoice` (one row per term, `amount = pt.calculated_amount`). This is the only correct source.
+
+### `pending_balance` / `total_paid` are STALE — do not trust
+
+`order.pending_balance` and `order.total_paid` are set ONLY at order creation (`order.service.ts:402-403`) and NEVER updated afterwards, despite the schema comment claiming "Updated on payment_term status changes and on AMC assignment." The update code does not exist anywhere in `src/` — only the `backfill-pending-balance.ts` script computes them, and it was never run for most orders.
+
+Example (Suzlon order `6a4778dc00ebc8a39bcb5556`): `total_paid=0`, `pending_balance=650000` while `payment_terms[0]` (375000) is `status: 'paid'`. Real values should be `total_paid=375000`, `pending_balance=275000`.
+
+Do NOT use `pending_balance` for any pending calculation. Derive from `payment_terms` directly:
+```typescript
+const paid    = payment_terms.filter(t => t.status === 'paid').reduce((s,t) => s + t.calculated_amount, 0);
+const pending = payment_terms.filter(t => ['pending','invoice'].includes(t.status)).reduce((s,t) => s + t.calculated_amount, 0);
+const remaining = base_cost - paid; // = pending + any unscheduled gap
+```
+
+### Removed: "PO balance gap" row (Scenario 3)
+
+Previously `getPendingPayments` (order.service.ts) synthesized an extra `_gap` row when `pending_balance > pendingInvoiceSum`. This was removed 2026-07-08 because: (a) it depended on the stale `pending_balance` field, producing phantom rows (275000 ghost row for Suzlon); (b) 0/128 active orders legitimately triggered it; (c) `payment_terms` already represents all scheduled payments — anything outside a term is unscheduled, not "pending payment."
