@@ -6884,13 +6884,15 @@ export class OrderService {
         }
       }
 
+      // String-safe product filter set (DB stores product refs as strings)
+      const productIdStringSet = productObjectIds
+        ? new Set(productObjectIds.map((id) => id.toString()))
+        : null;
+
       // Build base query for orders
       const orderQuery: any = { status: ORDER_STATUS_ENUM.ACTIVE };
       if (filters.clientId) {
         orderQuery.client_id = new Types.ObjectId(filters.clientId);
-      }
-      if (productObjectIds) {
-        orderQuery.products = { $in: productObjectIds };
       }
 
       // Fetch active orders with populations
@@ -6930,6 +6932,12 @@ export class OrderService {
           productNames,
           productIds,
         });
+
+        if (
+          productIdStringSet &&
+          !productIds.some((id) => productIdStringSet.has(id))
+        )
+          continue;
 
         if (!order.payment_terms || !Array.isArray(order.payment_terms))
           continue;
@@ -6991,6 +6999,7 @@ export class OrderService {
         .find(customizationQuery)
         .populate([
           { path: 'order_id', select: 'client_id products status purchased_date' },
+          { path: 'product_id', select: 'short_name' },
         ])
         .lean();
 
@@ -7001,13 +7010,11 @@ export class OrderService {
         const orderId = order._id.toString();
         if (filters.clientId && order.client_id?.toString() !== filters.clientId)
           continue;
+
+        const custProductId = (cust.product_id as any)?.toString?.() ?? null;
         if (
-          productObjectIds &&
-          !order.products?.some((pId: any) =>
-            productObjectIds!.some(
-              (fId) => fId.toString() === pId.toString(),
-            ),
-          )
+          productIdStringSet &&
+          (!custProductId || !productIdStringSet.has(custProductId))
         )
           continue;
 
@@ -7024,8 +7031,13 @@ export class OrderService {
 
         const existing = orderClientMap.get(orderId);
         const clientName = existing?.clientName || 'Unknown';
-        const productNames = existing?.productNames || [];
-        const productIds = existing?.productIds || [];
+        const custProductShortName = (cust.product_id as any)?.short_name;
+        const productNames = custProductShortName
+          ? [custProductShortName]
+          : existing?.productNames || [];
+        const productIds = custProductId
+          ? [custProductId]
+          : existing?.productIds || [];
 
         allRows.push({
           _id: `customization_${cust._id}`,
@@ -7057,6 +7069,7 @@ export class OrderService {
         .find(licenseQuery)
         .populate([
           { path: 'order_id', select: 'client_id products status purchased_date' },
+          { path: 'product_id', select: 'short_name' },
         ])
         .lean();
 
@@ -7067,13 +7080,11 @@ export class OrderService {
         const orderId = order._id.toString();
         if (filters.clientId && order.client_id?.toString() !== filters.clientId)
           continue;
+
+        const licProductId = (lic.product_id as any)?.toString?.() ?? null;
         if (
-          productObjectIds &&
-          !order.products?.some((pId: any) =>
-            productObjectIds!.some(
-              (fId) => fId.toString() === pId.toString(),
-            ),
-          )
+          productIdStringSet &&
+          (!licProductId || !productIdStringSet.has(licProductId))
         )
           continue;
 
@@ -7090,8 +7101,13 @@ export class OrderService {
 
         const existing = orderClientMap.get(orderId);
         const clientName = existing?.clientName || 'Unknown';
-        const productNames = existing?.productNames || [];
-        const productIds = existing?.productIds || [];
+        const licProductShortName = (lic.product_id as any)?.short_name;
+        const productNames = licProductShortName
+          ? [licProductShortName]
+          : existing?.productNames || [];
+        const productIds = licProductId
+          ? [licProductId]
+          : existing?.productIds || [];
         const licenseAmount =
           (lic.rate?.amount || 0) * (lic.total_license || 0);
 
@@ -7123,9 +7139,6 @@ export class OrderService {
       if (filters.clientId) {
         amcQuery.client_id = new Types.ObjectId(filters.clientId);
       }
-      if (productObjectIds) {
-        amcQuery.products = { $in: productObjectIds };
-      }
 
       const amcs = await this.amcModel
         .find(amcQuery)
@@ -7149,6 +7162,12 @@ export class OrderService {
         const amcProductIds = (amc.products as any[])?.map(
           (p: any) => p._id?.toString(),
         ) || [];
+
+        if (
+          productIdStringSet &&
+          !amcProductIds.some((id) => productIdStringSet.has(id))
+        )
+          continue;
 
         for (let i = 0; i < amc.payments.length; i++) {
           const payment = amc.payments[i];
