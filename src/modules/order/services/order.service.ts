@@ -1496,47 +1496,40 @@ export class OrderService {
         .map((t) => t.trim().toLowerCase())
         .filter((t) => t.length > 0);
 
-      // Build date query for sub-collection lookups
-      const subItemDateQuery: any = {};
-      if (parsedStartDate && parsedEndDate) {
-        subItemDateQuery.$gte = parsedStartDate;
-        subItemDateQuery.$lte = parsedEndDate;
-      } else if (parsedStartDate) {
-        subItemDateQuery.$gte = parsedStartDate;
-      } else if (parsedEndDate) {
-        subItemDateQuery.$lte = parsedEndDate;
-      }
-
-      // Fetch order IDs from sub-collections when date range is provided
+      // Fetch order IDs from sub-collections when date range is provided.
+      // Standalone sub-items use invoice_date (with purchase_date/purchased_date fallback)
+      // and order_id is stored as a string in legacy rows.
       let licenseOrderIds: Types.ObjectId[] | null = null;
       let customizationOrderIds: Types.ObjectId[] | null = null;
       let amcOrderIds: Types.ObjectId[] | null = null;
       let additionalServiceOrderIds: Types.ObjectId[] | null = null;
 
-      if (Object.keys(subItemDateQuery).length > 0) {
+      if (
+        typeValues.includes('auditor_license') ||
+        typeValues.includes('customization') ||
+        typeValues.includes('additional_service')
+      ) {
+        const subItemOrderIds = await this.getOrderIdsBySubItemDateRange(
+          parsedStartDate,
+          parsedEndDate,
+        );
         if (typeValues.includes('auditor_license')) {
-          const licenses = await this.licenseModel
-            .find({ purchase_date: subItemDateQuery })
-            .select('order_id')
-            .lean<{ order_id: Types.ObjectId }[]>();
-          licenseOrderIds = [
-            ...new Set(licenses.map((l) => String(l.order_id))),
-          ]
-            .filter((id) => Types.ObjectId.isValid(id))
-            .map((id) => new Types.ObjectId(id));
+          licenseOrderIds = subItemOrderIds.licenseOrderIds;
         }
         if (typeValues.includes('customization')) {
-          const customizations = await this.customizationModel
-            .find({ purchased_date: subItemDateQuery })
-            .select('order_id')
-            .lean<{ order_id: Types.ObjectId }[]>();
-          customizationOrderIds = [
-            ...new Set(customizations.map((c) => String(c.order_id))),
-          ]
-            .filter((id) => Types.ObjectId.isValid(id))
-            .map((id) => new Types.ObjectId(id));
+          customizationOrderIds = subItemOrderIds.customizationOrderIds;
         }
-        if (typeValues.includes('amc')) {
+        if (typeValues.includes('additional_service')) {
+          additionalServiceOrderIds = subItemOrderIds.additionalServiceOrderIds;
+        }
+      }
+
+      if (typeValues.includes('amc')) {
+        const subItemDateQuery = this.buildDateRangeQuery(
+          parsedStartDate,
+          parsedEndDate,
+        );
+        if (Object.keys(subItemDateQuery).length > 0) {
           const amcs = await this.amcModel
             .find({
               $or: [
@@ -1557,19 +1550,9 @@ export class OrderService {
             .filter((id) => Types.ObjectId.isValid(id))
             .map((id) => new Types.ObjectId(id));
         }
-        if (typeValues.includes('additional_service')) {
-          const additionalServices = await this.additionalServiceModel
-            .find({ purchased_date: subItemDateQuery })
-            .select('order_id')
-            .lean<{ order_id: Types.ObjectId }[]>();
-          additionalServiceOrderIds = [
-            ...new Set(additionalServices.map((s) => String(s.order_id))),
-          ]
-            .filter((id) => Types.ObjectId.isValid(id))
-            .map((id) => new Types.ObjectId(id));
-        }
       }
 
+      const hasDateRange = !!(parsedStartDate || parsedEndDate);
       const typeConditions: any[] = [];
 
       if (typeValues.includes('new')) {
@@ -1589,15 +1572,10 @@ export class OrderService {
         typeConditions.push(newCond);
       }
       if (typeValues.includes('amc')) {
-        if (
-          Object.keys(subItemDateQuery).length > 0 &&
-          amcOrderIds
-        ) {
-          if (amcOrderIds.length > 0) {
-            typeConditions.push({ _id: { $in: amcOrderIds } });
-          } else {
-            typeConditions.push({ _id: { $in: [] } });
-          }
+        if (hasDateRange && amcOrderIds) {
+          typeConditions.push({
+            _id: { $in: amcOrderIds.length > 0 ? amcOrderIds : [] },
+          });
         } else {
           typeConditions.push({
             amc_id: { $exists: true, $ne: null },
@@ -1605,15 +1583,13 @@ export class OrderService {
         }
       }
       if (typeValues.includes('customization')) {
-        if (
-          Object.keys(subItemDateQuery).length > 0 &&
-          customizationOrderIds
-        ) {
-          if (customizationOrderIds.length > 0) {
-            typeConditions.push({ _id: { $in: customizationOrderIds } });
-          } else {
-            typeConditions.push({ _id: { $in: [] } });
-          }
+        if (hasDateRange) {
+          typeConditions.push({
+            _id: {
+              $in:
+                customizationOrderIds.length > 0 ? customizationOrderIds : [],
+            },
+          });
         } else {
           typeConditions.push({
             customizations: { $exists: true, $ne: [] },
@@ -1621,15 +1597,10 @@ export class OrderService {
         }
       }
       if (typeValues.includes('auditor_license')) {
-        if (
-          Object.keys(subItemDateQuery).length > 0 &&
-          licenseOrderIds
-        ) {
-          if (licenseOrderIds.length > 0) {
-            typeConditions.push({ _id: { $in: licenseOrderIds } });
-          } else {
-            typeConditions.push({ _id: { $in: [] } });
-          }
+        if (hasDateRange) {
+          typeConditions.push({
+            _id: { $in: licenseOrderIds.length > 0 ? licenseOrderIds : [] },
+          });
         } else {
           typeConditions.push({
             licenses: { $exists: true, $ne: [] },
@@ -1637,15 +1608,15 @@ export class OrderService {
         }
       }
       if (typeValues.includes('additional_service')) {
-        if (
-          Object.keys(subItemDateQuery).length > 0 &&
-          additionalServiceOrderIds
-        ) {
-          if (additionalServiceOrderIds.length > 0) {
-            typeConditions.push({ _id: { $in: additionalServiceOrderIds } });
-          } else {
-            typeConditions.push({ _id: { $in: [] } });
-          }
+        if (hasDateRange) {
+          typeConditions.push({
+            _id: {
+              $in:
+                additionalServiceOrderIds.length > 0
+                  ? additionalServiceOrderIds
+                  : [],
+            },
+          });
         } else {
           typeConditions.push({
             additional_services: { $exists: true, $ne: [] },
@@ -1661,17 +1632,60 @@ export class OrderService {
           filterQuery.$or = typeConditions;
         }
       }
-    } else {
-      // No types filter: apply date range to purchase_date
+    } else if (parsedStartDate || parsedEndDate) {
+      // No types filter: include orders whose main purchase OR any sub-item
+      // (customization/license/additional service) falls in the FY.
+      const orderDateQuery: any = {};
       if (parsedStartDate && parsedEndDate) {
-        filterQuery.purchased_date = {
-          $gte: parsedStartDate,
-          $lte: parsedEndDate,
-        };
+        orderDateQuery.$gte = parsedStartDate;
+        orderDateQuery.$lte = parsedEndDate;
       } else if (parsedStartDate) {
-        filterQuery.purchased_date = { $gte: parsedStartDate };
+        orderDateQuery.$gte = parsedStartDate;
       } else if (parsedEndDate) {
-        filterQuery.purchased_date = { $lte: parsedEndDate };
+        orderDateQuery.$lte = parsedEndDate;
+      }
+
+      const [ordersInRange, subItemOrderIds] = await Promise.all([
+        this.orderModel.collection
+          .find({ purchased_date: orderDateQuery })
+          .project({ _id: 1 })
+          .toArray(),
+        this.getOrderIdsBySubItemDateRange(parsedStartDate, parsedEndDate),
+      ]);
+
+      const matchingOrderIdStrings = new Set<string>(
+        ordersInRange.map((o) => o._id.toString()),
+      );
+      subItemOrderIds.customizationOrderIds.forEach((id) =>
+        matchingOrderIdStrings.add(id.toString()),
+      );
+      subItemOrderIds.licenseOrderIds.forEach((id) =>
+        matchingOrderIdStrings.add(id.toString()),
+      );
+      subItemOrderIds.additionalServiceOrderIds.forEach((id) =>
+        matchingOrderIdStrings.add(id.toString()),
+      );
+
+      if (matchingOrderIdStrings.size === 0) {
+        filterQuery._id = { $in: [] };
+      } else if (
+        filterQuery._id &&
+        filterQuery._id.$in &&
+        Array.isArray(filterQuery._id.$in)
+      ) {
+        const existingIds = new Set(
+          filterQuery._id.$in.map((id: any) => id.toString()),
+        );
+        const intersectedIds = Array.from(matchingOrderIdStrings)
+          .filter((id) => existingIds.has(id))
+          .map((id) => new Types.ObjectId(id));
+        filterQuery._id = { $in: intersectedIds };
+      } else {
+        filterQuery._id = {
+          $in: Array.from(matchingOrderIdStrings).map(
+            (id) => new Types.ObjectId(id),
+          ),
+        };
       }
     }
 
@@ -1765,6 +1779,136 @@ export class OrderService {
     }
 
     return { filterQuery, parsedStartDate, parsedEndDate };
+  }
+
+  private buildDateRangeQuery(startDate?: Date, endDate?: Date): any {
+    const query: any = {};
+    if (startDate && endDate) {
+      query.$gte = startDate;
+      query.$lte = endDate;
+    } else if (startDate) {
+      query.$gte = startDate;
+    } else if (endDate) {
+      query.$lte = endDate;
+    }
+    return query;
+  }
+
+  private async getOrderIdsBySubItemDateRange(
+    startDate?: Date,
+    endDate?: Date,
+  ): Promise<{
+    customizationOrderIds: Types.ObjectId[];
+    licenseOrderIds: Types.ObjectId[];
+    additionalServiceOrderIds: Types.ObjectId[];
+  }> {
+    const dateQuery = this.buildDateRangeQuery(startDate, endDate);
+    const empty = {
+      customizationOrderIds: [],
+      licenseOrderIds: [],
+      additionalServiceOrderIds: [],
+    };
+
+    if (Object.keys(dateQuery).length === 0) return empty;
+
+    // Legacy rows may store dates in invoice_date, purchase_date or purchased_date.
+    // Use raw collection queries so string order_id values are not cast away.
+    const dateOr = [
+      { invoice_date: dateQuery },
+      { purchase_date: dateQuery },
+      { purchased_date: dateQuery },
+    ];
+
+    const [customizations, licenses, additionalServices] = await Promise.all([
+      this.customizationModel.collection
+        .find(dateOr)
+        .project({ order_id: 1 })
+        .toArray(),
+      this.licenseModel.collection.find(dateOr).project({ order_id: 1 }).toArray(),
+      this.additionalServiceModel.collection
+        .find(dateOr)
+        .project({ order_id: 1 })
+        .toArray(),
+    ]);
+
+    const toObjectIds = (items: any[]): Types.ObjectId[] =>
+      [
+        ...new Set(
+          items
+            .map((item) => String(item.order_id))
+            .filter((id) => Types.ObjectId.isValid(id)),
+        ),
+      ].map((id) => new Types.ObjectId(id));
+
+    return {
+      customizationOrderIds: toObjectIds(customizations),
+      licenseOrderIds: toObjectIds(licenses),
+      additionalServiceOrderIds: toObjectIds(additionalServices),
+    };
+  }
+
+  private toPlainSubItem(doc: any): any {
+    if (!doc) return null;
+    return typeof doc.toObject === 'function' ? doc.toObject() : doc;
+  }
+
+  private mapSubItem(
+    subItem: any,
+    orderStatus: string,
+    type: 'license' | 'customization' | 'additional_service',
+  ): any {
+    const obj = this.toPlainSubItem(subItem);
+    if (!obj) return null;
+    obj.status = orderStatus;
+    if (obj.purchase_order_document) {
+      obj.purchase_order_document = this.storageService.get(
+        obj.purchase_order_document,
+      );
+    }
+    if (type === 'license' && obj.invoice_document) {
+      obj.invoice_document = this.storageService.get(obj.invoice_document);
+    }
+    if (type === 'additional_service' && obj.service_document) {
+      obj.service_document = this.storageService.get(obj.service_document);
+    }
+    return obj;
+  }
+
+  private mergeSubItems(existing: any[], standalone: any[]): any[] {
+    const map = new Map<string, any>();
+    for (const item of existing) {
+      const plain = this.toPlainSubItem(item);
+      if (plain && plain._id) map.set(plain._id.toString(), plain);
+    }
+    for (const item of standalone) {
+      const plain = this.toPlainSubItem(item);
+      if (plain && plain._id && !map.has(plain._id.toString())) {
+        map.set(plain._id.toString(), plain);
+      }
+    }
+    return Array.from(map.values());
+  }
+
+  private getSubItemEffectiveDate(item: any): Date | null {
+    if (!item) return null;
+    const raw =
+      item.invoice_date || item.purchase_date || item.purchased_date || null;
+    return raw ? new Date(raw) : null;
+  }
+
+  private filterSubItemsByDate(
+    items: any[],
+    startDate?: Date,
+    endDate?: Date,
+  ): any[] {
+    if (!startDate && !endDate) return items;
+    return items.filter((item) => {
+      const d = this.getSubItemEffectiveDate(item);
+      if (!d) return false;
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
   }
 
   async loadAllOrdersWithAttributes(
@@ -1875,6 +2019,36 @@ export class OrderService {
         ? filters.types.split(',').map((t) => t.trim().toLowerCase())
         : [];
 
+      // Fetch standalone sub-items in one batch. They live in separate
+      // collections and are often missing from the order's embedded arrays.
+      const orderIds = orders.map((o: any) => o._id.toString());
+      const [standaloneLicenses, standaloneCustomizations, standaloneAdditionalServices] =
+        await Promise.all([
+          this.licenseModel.collection
+            .find({ order_id: { $in: orderIds } })
+            .toArray(),
+          this.customizationModel.collection
+            .find({ order_id: { $in: orderIds } })
+            .toArray(),
+          this.additionalServiceModel.collection
+            .find({ order_id: { $in: orderIds } })
+            .toArray(),
+        ]);
+
+      const groupByOrderId = (items: any[]) => {
+        const map = new Map<string, any[]>();
+        for (const item of items) {
+          const oid = String(item.order_id);
+          if (!map.has(oid)) map.set(oid, []);
+          map.get(oid)!.push(item);
+        }
+        return map;
+      };
+
+      const licenseMap = groupByOrderId(standaloneLicenses);
+      const customizationMap = groupByOrderId(standaloneCustomizations);
+      const additionalServiceMap = groupByOrderId(standaloneAdditionalServices);
+
       // Process Orders
       const processedOrders = await Promise.all(
         orders.map(async (order: any) => {
@@ -1930,123 +2104,54 @@ export class OrderService {
             orderObj.agreements = [];
           }
 
-          // Add has_* flags based on raw ObjectId array lengths (before populate filtering)
-          orderObj.has_customizations =
-            Array.isArray(order.customizations) && order.customizations.length > 0;
-          orderObj.has_licenses =
-            Array.isArray(order.licenses) && order.licenses.length > 0;
+          // Add has_* flags based on merged standalone + populated sub-items
+          const orderId = orderObj._id.toString();
+
+          orderObj.licenses = this.mergeSubItems(
+            order.licenses || [],
+            licenseMap.get(orderId) || [],
+          )
+            .map((item) => this.mapSubItem(item, order.status, 'license'))
+            .filter(Boolean);
+
+          orderObj.customizations = this.mergeSubItems(
+            order.customizations || [],
+            customizationMap.get(orderId) || [],
+          )
+            .map((item) => this.mapSubItem(item, order.status, 'customization'))
+            .filter(Boolean);
+
+          orderObj.additional_services = this.mergeSubItems(
+            order.additional_services || [],
+            additionalServiceMap.get(orderId) || [],
+          )
+            .map((item) =>
+              this.mapSubItem(item, order.status, 'additional_service'),
+            )
+            .filter(Boolean);
+
+          // Filter sub-items by effective date (invoice_date fallback to purchase dates)
+          if (parsedStartDate || parsedEndDate) {
+            orderObj.licenses = this.filterSubItemsByDate(
+              orderObj.licenses,
+              parsedStartDate,
+              parsedEndDate,
+            );
+            orderObj.customizations = this.filterSubItemsByDate(
+              orderObj.customizations,
+              parsedStartDate,
+              parsedEndDate,
+            );
+            orderObj.additional_services = this.filterSubItemsByDate(
+              orderObj.additional_services,
+              parsedStartDate,
+              parsedEndDate,
+            );
+          }
+
+          orderObj.has_licenses = orderObj.licenses.length > 0;
+          orderObj.has_customizations = orderObj.customizations.length > 0;
           orderObj.has_amc = order.amc_id != null;
-
-          // Process licenses
-          if (order.licenses && order.licenses.length) {
-            orderObj.licenses = order.licenses
-              .map((license: any) => {
-                if (!license) return null;
-                const licenseObj: any = license;
-                licenseObj.status = order.status;
-                licenseObj.purchase_order_document =
-                  license.purchase_order_document
-                    ? this.storageService.get(license.purchase_order_document)
-                    : null;
-                licenseObj.invoice_document = license.invoice_document
-                  ? this.storageService.get(license.invoice_document)
-                  : null;
-                return licenseObj;
-              })
-              .filter((l) => l !== null);
-          } else {
-            orderObj.licenses = [];
-          }
-
-          // Process customizations
-          if (order.customizations && order.customizations.length) {
-            orderObj.customizations = order.customizations
-              .map((customization) => {
-                if (!customization) return null;
-                const customizationObj: any = customization.toObject();
-                customizationObj.status = order.status;
-                customizationObj.purchase_order_document =
-                  customization.purchase_order_document
-                    ? this.storageService.get(
-                        customization.purchase_order_document,
-                      )
-                    : null;
-                return customizationObj;
-              })
-              .filter((c) => c !== null);
-          } else {
-            orderObj.customizations = [];
-          }
-
-          // Filter sub-items by date range when corresponding type is selected
-          if (
-            typeValues.includes('auditor_license') &&
-            (parsedStartDate || parsedEndDate)
-          ) {
-            orderObj.licenses = orderObj.licenses.filter((license: any) => {
-              if (!license.purchase_date) return false;
-              const d = new Date(license.purchase_date);
-              return (
-                (!parsedStartDate || d >= parsedStartDate) &&
-                (!parsedEndDate || d <= parsedEndDate)
-              );
-            });
-            orderObj.has_licenses = orderObj.licenses.length > 0;
-          }
-          if (
-            typeValues.includes('customization') &&
-            (parsedStartDate || parsedEndDate)
-          ) {
-            orderObj.customizations = orderObj.customizations.filter(
-              (c: any) => {
-                if (!c.purchased_date) return false;
-                const d = new Date(c.purchased_date);
-                return (
-                  (!parsedStartDate || d >= parsedStartDate) &&
-                  (!parsedEndDate || d <= parsedEndDate)
-                );
-              },
-            );
-            orderObj.has_customizations = orderObj.customizations.length > 0;
-          }
-
-          // Process additional services
-          if (order.additional_services && order.additional_services.length) {
-            orderObj.additional_services = order.additional_services
-              .map((service) => {
-                if (!service) return null;
-                const serviceObj: any = service.toObject();
-                serviceObj.status = order.status;
-                serviceObj.purchase_order_document =
-                  service.purchase_order_document
-                    ? this.storageService.get(service.purchase_order_document)
-                    : null;
-                serviceObj.service_document = service.service_document
-                  ? this.storageService.get(service.service_document)
-                  : null;
-                return serviceObj;
-              })
-              .filter((s) => s !== null);
-          } else {
-            orderObj.additional_services = [];
-          }
-
-          // Filter additional services by date range when type is selected
-          if (
-            typeValues.includes('additional_service') &&
-            (parsedStartDate || parsedEndDate)
-          ) {
-            orderObj.additional_services = orderObj.additional_services.filter(
-              (s: any) => {
-                if (!s.purchased_date) return false;
-                const d = new Date(s.purchased_date);
-                return (
-                  (!parsedStartDate || d >= parsedStartDate) &&
-                  (!parsedEndDate || d <= parsedEndDate)
-                );
-              },
-            );
-          }
 
           return orderObj;
         }),
@@ -6219,6 +6324,35 @@ export class OrderService {
         ? filters.types.split(',').map((t) => t.trim().toLowerCase())
         : [];
 
+      // Fetch standalone sub-items in one batch.
+      const orderIds = orders.map((o: any) => o._id.toString());
+      const [standaloneLicenses, standaloneCustomizations, standaloneAdditionalServices] =
+        await Promise.all([
+          this.licenseModel.collection
+            .find({ order_id: { $in: orderIds } })
+            .toArray(),
+          this.customizationModel.collection
+            .find({ order_id: { $in: orderIds } })
+            .toArray(),
+          this.additionalServiceModel.collection
+            .find({ order_id: { $in: orderIds } })
+            .toArray(),
+        ]);
+
+      const groupByOrderId = (items: any[]) => {
+        const map = new Map<string, any[]>();
+        for (const item of items) {
+          const oid = String(item.order_id);
+          if (!map.has(oid)) map.set(oid, []);
+          map.get(oid)!.push(item);
+        }
+        return map;
+      };
+
+      const licenseMap = groupByOrderId(standaloneLicenses);
+      const customizationMap = groupByOrderId(standaloneCustomizations);
+      const additionalServiceMap = groupByOrderId(standaloneAdditionalServices);
+
       // Process orders similar to loadAllOrdersWithAttributes
       const processedOrders = await Promise.all(
         orders.map(async (order: any) => {
@@ -6250,51 +6384,38 @@ export class OrderService {
             }
           }
 
-          // Filter sub-items by date range when corresponding type is selected
-          if (
-            typeValues.includes('auditor_license') &&
-            (parsedStartDate || parsedEndDate)
-          ) {
-            orderObj.licenses = (orderObj.licenses || []).filter(
-              (license: any) => {
-                if (!license.purchase_date) return false;
-                const d = new Date(license.purchase_date);
-                return (
-                  (!parsedStartDate || d >= parsedStartDate) &&
-                  (!parsedEndDate || d <= parsedEndDate)
-                );
-              },
+          // Merge standalone sub-items and filter by effective date
+          const orderId = orderObj._id.toString();
+
+          orderObj.licenses = this.mergeSubItems(
+            orderObj.licenses || [],
+            licenseMap.get(orderId) || [],
+          );
+          orderObj.customizations = this.mergeSubItems(
+            orderObj.customizations || [],
+            customizationMap.get(orderId) || [],
+          );
+          orderObj.additional_services = this.mergeSubItems(
+            orderObj.additional_services || [],
+            additionalServiceMap.get(orderId) || [],
+          );
+
+          if (parsedStartDate || parsedEndDate) {
+            orderObj.licenses = this.filterSubItemsByDate(
+              orderObj.licenses,
+              parsedStartDate,
+              parsedEndDate,
             );
-          }
-          if (
-            typeValues.includes('customization') &&
-            (parsedStartDate || parsedEndDate)
-          ) {
-            orderObj.customizations = (orderObj.customizations || []).filter(
-              (c: any) => {
-                if (!c.purchased_date) return false;
-                const d = new Date(c.purchased_date);
-                return (
-                  (!parsedStartDate || d >= parsedStartDate) &&
-                  (!parsedEndDate || d <= parsedEndDate)
-                );
-              },
+            orderObj.customizations = this.filterSubItemsByDate(
+              orderObj.customizations,
+              parsedStartDate,
+              parsedEndDate,
             );
-          }
-          if (
-            typeValues.includes('additional_service') &&
-            (parsedStartDate || parsedEndDate)
-          ) {
-            orderObj.additional_services = (
-              orderObj.additional_services || []
-            ).filter((s: any) => {
-              if (!s.purchased_date) return false;
-              const d = new Date(s.purchased_date);
-              return (
-                (!parsedStartDate || d >= parsedStartDate) &&
-                (!parsedEndDate || d <= parsedEndDate)
-              );
-            });
+            orderObj.additional_services = this.filterSubItemsByDate(
+              orderObj.additional_services,
+              parsedStartDate,
+              parsedEndDate,
+            );
           }
 
           return orderObj;
