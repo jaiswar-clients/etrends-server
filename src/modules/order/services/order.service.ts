@@ -1821,12 +1821,15 @@ export class OrderService {
 
     const [customizations, licenses, additionalServices] = await Promise.all([
       this.customizationModel.collection
-        .find(dateOr)
+        .find({ $or: dateOr })
         .project({ order_id: 1 })
         .toArray(),
-      this.licenseModel.collection.find(dateOr).project({ order_id: 1 }).toArray(),
+      this.licenseModel.collection
+        .find({ $or: dateOr })
+        .project({ order_id: 1 })
+        .toArray(),
       this.additionalServiceModel.collection
-        .find(dateOr)
+        .find({ $or: dateOr })
         .project({ order_id: 1 })
         .toArray(),
     ]);
