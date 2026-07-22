@@ -1315,40 +1315,43 @@ export class OrderService {
         const parentCompanyObjectId = new Types.ObjectId(
           filters.parentCompanyId,
         );
-        const childClients = await this.clientModel
+
+        // Legacy rows store parent_company_id as strings, not ObjectIds.
+        // Query the raw collection so string values are not cast away.
+        const childClients = await this.clientModel.collection
           .find({
-            parent_company_id: parentCompanyObjectId,
+            parent_company_id: {
+              $in: [parentCompanyObjectId, parentCompanyObjectId.toString()],
+            },
           })
-          .select('_id')
-          .lean<{ _id: Types.ObjectId }[]>();
+          .project({ _id: 1 })
+          .toArray();
 
-        const childClientIds: Types.ObjectId[] = childClients.map((c) => c._id);
+        const childClientIdStrings = new Set(
+          childClients.map((c) => c._id.toString()),
+        );
 
-        if (
+        if (childClientIdStrings.size === 0) {
+          filterQuery.client_id = { $in: [] };
+        } else if (
           filterQuery.client_id &&
           filterQuery.client_id.$in &&
           Array.isArray(filterQuery.client_id.$in)
         ) {
-          const existingClientIds = filterQuery.client_id.$in
-            .map((id) =>
-              id instanceof Types.ObjectId
-                ? id
-                : Types.ObjectId.isValid(id)
-                  ? new Types.ObjectId(id)
-                  : null,
-            )
-            .filter((id) => id !== null);
-
-          clientIdsForFilter = existingClientIds.filter((id: Types.ObjectId) =>
-            childClientIds.some((childId) => childId.equals(id)),
+          const existingClientIdStrings = filterQuery.client_id.$in.map(
+            (id: any) => id.toString(),
           );
+          const intersectedIds = existingClientIdStrings.filter((id: string) =>
+            childClientIdStrings.has(id),
+          );
+          clientIdsForFilter = intersectedIds.map(
+            (id: string) => new Types.ObjectId(id),
+          );
+          filterQuery.client_id = { $in: clientIdsForFilter };
         } else {
-          clientIdsForFilter = childClientIds;
-        }
-
-        if (clientIdsForFilter.length === 0) {
-          filterQuery.client_id = { $in: [] };
-        } else {
+          clientIdsForFilter = Array.from(childClientIdStrings).map(
+            (id) => new Types.ObjectId(id),
+          );
           filterQuery.client_id = { $in: clientIdsForFilter };
         }
       } catch (error: any) {
@@ -1428,8 +1431,44 @@ export class OrderService {
         });
       }
 
-      filterQuery.products =
-        objectIds.length > 0 ? { $in: objectIds } : { $in: [] };
+      if (objectIds.length > 0) {
+        // order.products is stored as strings in old rows, so query raw
+        // collection to avoid Mongoose casting the filter to ObjectId.
+        const ordersWithProducts = await this.orderModel.collection
+          .find({ products: { $in: objectIds } })
+          .project({ _id: 1 })
+          .toArray();
+
+        const productOrderIdStrings = new Set(
+          ordersWithProducts.map((order) => order._id.toString()),
+        );
+
+        if (productOrderIdStrings.size === 0) {
+          filterQuery._id = { $in: [] };
+        } else if (
+          filterQuery._id &&
+          filterQuery._id.$in &&
+          Array.isArray(filterQuery._id.$in)
+        ) {
+          const existingOrderIdStrings = filterQuery._id.$in.map((id: any) =>
+            id.toString(),
+          );
+          const intersectedIds = existingOrderIdStrings
+            .filter((id: string) => productOrderIdStrings.has(id))
+            .map((id: string) => new Types.ObjectId(id));
+          filterQuery._id = { $in: intersectedIds };
+        } else {
+          filterQuery._id = {
+            $in: Array.from(productOrderIdStrings).map(
+              (id) => new Types.ObjectId(id),
+            ),
+          };
+        }
+      } else {
+        filterQuery._id = { $in: [] };
+      }
+
+      delete filterQuery.products;
 
       this.loggerService.log(
         JSON.stringify({
@@ -1439,7 +1478,7 @@ export class OrderService {
             identifiers,
             shortNames,
             objectIds: objectIds.map((id) => id.toString()),
-            filterQuery: filterQuery.products,
+            matchedOrders: filterQuery._id?.$in?.length ?? 0,
           },
         }),
       );
@@ -4828,14 +4867,15 @@ export class OrderService {
         }),
       );
 
-      // Fetch all clients, selecting only necessary fields and populating parent name
-      const clients = await this.clientModel
+      // Fetch all clients via raw collection to avoid Mongoose casting mixed-type refs
+      const clients = await this.clientModel.collection
         .find()
-        .select('_id name parent_company_id')
-        .lean(); // Use lean for performance
+        .project({ _id: 1, name: 1, parent_company_id: 1 })
+        .toArray();
 
       const clientCompanyMap = new Map<string, { _id: string; name: string }>();
       const parentCompanyMap = new Map<string, { _id: string; name: string }>();
+      const parentCompanyIds = new Set<string>();
 
       for (const client of clients) {
         // Ensure client has a valid _id before adding to map
@@ -4850,20 +4890,36 @@ export class OrderService {
           }
         }
 
-        // Add parent company to parent list if it exists and has valid _id
-        if (client.parent_company_id && client.parent_company_id._id) {
-          const parentCompany = await this.clientModel
-            .findById(client.parent_company_id._id)
-            .select('name')
-            .lean();
-          if (parentCompany) {
-            const parentIdStr = client.parent_company_id._id.toString();
-            if (!parentCompanyMap.has(parentIdStr)) {
-              parentCompanyMap.set(parentIdStr, {
-                _id: parentIdStr,
-                name: parentCompany.name || 'Unnamed Parent Company',
-              });
-            }
+        // Collect parent company id (legacy data stores it as a string)
+        if (client.parent_company_id) {
+          const parentIdStr =
+            typeof client.parent_company_id === 'string'
+              ? client.parent_company_id
+              : client.parent_company_id.toString();
+          parentCompanyIds.add(parentIdStr);
+        }
+      }
+
+      // Fetch parent company names in one batch
+      if (parentCompanyIds.size > 0) {
+        const parentCompanies = await this.clientModel.collection
+          .find({
+            _id: {
+              $in: Array.from(parentCompanyIds).map(
+                (id) => new Types.ObjectId(id),
+              ),
+            },
+          })
+          .project({ _id: 1, name: 1 })
+          .toArray();
+
+        for (const parent of parentCompanies) {
+          const parentIdStr = parent._id.toString();
+          if (!parentCompanyMap.has(parentIdStr)) {
+            parentCompanyMap.set(parentIdStr, {
+              _id: parentIdStr,
+              name: parent.name || 'Unnamed Parent Company',
+            });
           }
         }
       }

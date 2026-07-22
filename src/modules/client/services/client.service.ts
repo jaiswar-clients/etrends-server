@@ -131,6 +131,7 @@ export class ClientService {
       );
 
       const filterQuery: any = { is_parent_company: false };
+      const idConditions: any[] = [];
       let orderIdsForFilter: Types.ObjectId[] | null = null;
 
       // Skip createdAt date filtering when financialYear is provided
@@ -159,7 +160,37 @@ export class ClientService {
           const parentCompanyObjectId = new Types.ObjectId(
             filters.parentCompanyId,
           );
-          filterQuery.parent_company_id = parentCompanyObjectId;
+
+          // Legacy rows store parent_company_id as strings, not ObjectIds.
+          // Query the raw collection so string values are not cast away.
+          const childCompanies = await this.clientModel.collection
+            .find({
+              parent_company_id: {
+                $in: [parentCompanyObjectId, parentCompanyObjectId.toString()],
+              },
+            })
+            .project({ _id: 1 })
+            .toArray();
+
+          if (childCompanies.length === 0) {
+            return {
+              clients: [],
+              pagination: fetchAll
+                ? undefined
+                : {
+                    total: 0,
+                    page,
+                    limit,
+                    pages: 0,
+                    hasNextPage: false,
+                    hasPreviousPage: false,
+                  },
+            };
+          }
+
+          idConditions.push({
+            _id: { $in: childCompanies.map((company) => company._id) },
+          });
         } catch (error: any) {
           this.loggerService.error(
             JSON.stringify({
@@ -206,10 +237,12 @@ export class ClientService {
         }
 
         if (objectIds.length > 0) {
-          const ordersWithProducts = await this.orderModel
+          // order.products is stored as strings in old rows, so query raw
+          // collection to avoid Mongoose casting the filter to ObjectId.
+          const ordersWithProducts = await this.orderModel.collection
             .find({ products: { $in: objectIds } })
-            .select('_id')
-            .lean<{ _id: Types.ObjectId }[]>();
+            .project({ _id: 1 })
+            .toArray();
 
           orderIdsForFilter = ordersWithProducts.map((order) => order._id);
 
@@ -246,7 +279,6 @@ export class ClientService {
 
       // 6. Filter by status (active/inactive derived from orders)
       let activeClientIds: Types.ObjectId[] = [];
-      const idConditions: any[] = [];
       if (filters.status && filters.status.trim() !== '') {
         const statuses = filters.status.split(',').map((s) => s.trim().toLowerCase());
         // Only query active orders if we need to differentiate
@@ -260,9 +292,9 @@ export class ClientService {
           );
 
           if (statuses.includes('active') && !statuses.includes('inactive')) {
-            idConditions.push({ $in: activeClientObjectIds });
+            idConditions.push({ _id: { $in: activeClientObjectIds } });
           } else if (statuses.includes('inactive') && !statuses.includes('active')) {
-            idConditions.push({ $nin: activeClientObjectIds });
+            idConditions.push({ _id: { $nin: activeClientObjectIds } });
           }
           // If both, no additional _id filter needed
         }
@@ -270,9 +302,9 @@ export class ClientService {
 
       // Merge _id conditions if any
       if (idConditions.length === 1) {
-        filterQuery._id = idConditions[0];
+        filterQuery._id = idConditions[0]._id;
       } else if (idConditions.length > 1) {
-        filterQuery._id = { $and: idConditions };
+        filterQuery.$and = idConditions;
       }
 
       this.loggerService.log(
