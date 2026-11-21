@@ -141,7 +141,7 @@ describe('RevenueCalculatorService', () => {
             { invoice_date: new Date('2023-06-15'), calculated_amount: 2000, status: 'invoice' },
             { invoice_date: null, calculated_amount: 500, status: 'paid' },
             { invoice_date: new Date('2023-07-01'), calculated_amount: 800, status: 'proforma' },
-            { invoice_date: new Date('2023-05-10'), calculated_amount: 300, status: 'pending' },
+            { invoice_date: new Date('2023-05-10'), calculated_amount: 300, status: 'to_be_created' },
           ],
         },
       ];

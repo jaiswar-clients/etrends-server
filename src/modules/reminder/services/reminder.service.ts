@@ -102,7 +102,7 @@ export class ReminderService {
         const client = amc.client_id as unknown as ClientDocument;
 
         const pendindPayment = amc.payments.find(
-          (payment) => payment.status === PAYMENT_STATUS_ENUM.PENDING,
+          (payment) => payment.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED,
         );
         const reminderId = `${client._id}-${amc._id}-${pendindPayment._id}`;
 
@@ -304,7 +304,7 @@ export class ReminderService {
 
   private async fetchPendingAMCs() {
     return this.amcModel
-      .find({ 'payments.status': PAYMENT_STATUS_ENUM.PENDING })
+      .find({ 'payments.status': PAYMENT_STATUS_ENUM.TO_BE_CREATED })
       .populate([
         { path: 'client_id', model: Client.name },
         { path: 'products', model: Product.name },
@@ -330,7 +330,7 @@ export class ReminderService {
     return amcs
       .map((amc) => {
         const pendingPayments = amc.payments.filter(
-          (p) => p.status === PAYMENT_STATUS_ENUM.PENDING,
+          (p) => p.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED,
         );
 
         return pendingPayments
@@ -404,7 +404,7 @@ export class ReminderService {
                 ),
               },
             },
-            { 'payments.status': PAYMENT_STATUS_ENUM.PENDING },
+            { 'payments.status': PAYMENT_STATUS_ENUM.TO_BE_CREATED },
           ],
         })
         .populate([

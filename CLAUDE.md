@@ -83,7 +83,7 @@ Note: DB stores these refs as STRINGS, not ObjectIds (all 157 product refs are s
 
 ### Calculation source
 
-Pending payments for new orders come SOLELY from `order.payment_terms` entries with `status` of `pending` or `invoice` (one row per term, `amount = pt.calculated_amount`). This is the only correct source.
+Pending payments for new orders come SOLELY from `order.payment_terms` entries with `status` of `to_be_created` or `invoice` (one row per term, `amount = pt.calculated_amount`). This is the only correct source.
 
 ### `pending_balance` / `total_paid` are STALE — do not trust
 
@@ -94,10 +94,16 @@ Example (Suzlon order `6a4778dc00ebc8a39bcb5556`): `total_paid=0`, `pending_bala
 Do NOT use `pending_balance` for any pending calculation. Derive from `payment_terms` directly:
 ```typescript
 const paid    = payment_terms.filter(t => t.status === 'paid').reduce((s,t) => s + t.calculated_amount, 0);
-const pending = payment_terms.filter(t => ['pending','invoice'].includes(t.status)).reduce((s,t) => s + t.calculated_amount, 0);
+const pending = payment_terms.filter(t => ['to_be_created','invoice'].includes(t.status)).reduce((s,t) => s + t.calculated_amount, 0);
 const remaining = base_cost - paid; // = pending + any unscheduled gap
 ```
 
 ### Removed: "PO balance gap" row (Scenario 3)
 
 Previously `getPendingPayments` (order.service.ts) synthesized an extra `_gap` row when `pending_balance > pendingInvoiceSum`. This was removed 2026-07-08 because: (a) it depended on the stale `pending_balance` field, producing phantom rows (275000 ghost row for Suzlon); (b) 0/128 active orders legitimately triggered it; (c) `payment_terms` already represents all scheduled payments — anything outside a term is unscheduled, not "pending payment."
+
+## Payment status lifecycle
+
+`PAYMENT_STATUS_ENUM`: `to_be_created` -> `proforma` -> `invoice` -> `paid`. Shared by `orders.payment_terms[].status`, `amcs.payments[].status`, and `payment_status` on licenses / customizations / additional services. Default for new rows is `to_be_created` (UI label "To be Created", see `PAYMENT_STATUS_LABELS`).
+
+`to_be_created` replaced the legacy `pending` value on 2026-11-21. Existing data is converted by `npm run migrate:payment-status` (see `MIGRATIONS.md`). Controllers still map a legacy `pending` in the `filter` / `payment_status` query params to `to_be_created` via `normalizePaymentStatus`. "Pending Payments" (the page/endpoint) is unchanged as a concept: it lists `to_be_created` + `invoice` rows.
