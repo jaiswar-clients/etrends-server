@@ -25,6 +25,7 @@ import {
   DEFAULT_AMC_CYCLE_IN_MONTHS,
   PURCHASE_TYPE,
   ORDER_STATUS_ENUM,
+  PAYMENT_STATUS_LABELS,
 } from '@/common/types/enums/order.enum';
 import {
   AMC,
@@ -3178,8 +3179,8 @@ export class OrderService {
               });
               break;
 
-            case AMC_FILTER.PENDING:
-              // Check if ANY payment is PENDING and matches date range
+            case AMC_FILTER.TO_BE_CREATED:
+              // Check if ANY payment is TO_BE_CREATED and matches date range
               matches = amc.payments.some((payment) => {
                 const paymentDate = new Date(payment.from_date);
                 const dateInRange =
@@ -3187,7 +3188,7 @@ export class OrderService {
                   (!endDate || paymentDate <= endDate);
 
                 return (
-                  payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                  payment.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED &&
                   ((!startDate && !endDate) || dateInRange)
                 );
               });
@@ -3273,8 +3274,8 @@ export class OrderService {
                 );
               break;
 
-            case AMC_FILTER.PENDING:
-              // Sum up amounts of PENDING payments within date range
+            case AMC_FILTER.TO_BE_CREATED:
+              // Sum up amounts of TO_BE_CREATED payments within date range
               amcAmount = amc.payments
                 .filter((payment) => {
                   const paymentDate = new Date(payment.from_date);
@@ -3282,7 +3283,7 @@ export class OrderService {
                     (!startDate || paymentDate >= startDate) &&
                     (!endDate || paymentDate <= endDate);
                   return (
-                    payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                    payment.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED &&
                     ((!startDate && !endDate) || dateInRange)
                   );
                 })
@@ -3626,7 +3627,7 @@ export class OrderService {
                 const newPayment = {
                   from_date: fromDate,
                   to_date: toDate,
-                  status: PAYMENT_STATUS_ENUM.PENDING,
+                  status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
                   amc_frequency: amc_frequency_in_months,
                   total_cost: totalCost,
                   amc_rate_applied: order.amc_rate.percentage,
@@ -3786,7 +3787,7 @@ export class OrderService {
         new Date(lastPayment.to_date),
         amc_frequency_in_months,
       ),
-      status: PAYMENT_STATUS_ENUM.PENDING,
+      status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
       amc_frequency: amc_frequency_in_months,
       total_cost: totalCost,
       amc_rate_applied: order.amc_rate.percentage,
@@ -4151,7 +4152,7 @@ export class OrderService {
         payments.push({
           from_date: from_date.toDateString(),
           to_date: to_date.toDateString(),
-          status: PAYMENT_STATUS_ENUM.PENDING, // First payment is pending by default
+          status: PAYMENT_STATUS_ENUM.TO_BE_CREATED, // First payment is pending by default
           amc_frequency: amc_frequency_in_months,
           is_inactive: false,
         });
@@ -4171,7 +4172,7 @@ export class OrderService {
 
       console.log(payments);
       // Ensure the most recent payment is marked as pending
-      payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.PENDING;
+      payments[payments.length - 1].status = PAYMENT_STATUS_ENUM.TO_BE_CREATED;
 
       this.loggerService.log(
         JSON.stringify({
@@ -5312,8 +5313,8 @@ export class OrderService {
               );
               break;
 
-            case AMC_FILTER.PENDING:
-              // Check for PENDING payments within date range
+            case AMC_FILTER.TO_BE_CREATED:
+              // Check for TO_BE_CREATED payments within date range
               const pendingPayments = amc.payments.filter((payment) => {
                 const paymentDate = new Date(payment.from_date);
                 const dateInRange =
@@ -5321,7 +5322,7 @@ export class OrderService {
                   (!endDate || paymentDate <= endDate);
 
                 return (
-                  payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                  payment.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED &&
                   ((!startDate && !endDate) || dateInRange)
                 );
               });
@@ -5509,7 +5510,10 @@ export class OrderService {
 
       // Add each filter amount
       Object.entries(totalAmountByFilter).forEach(([filter, amount]) => {
-        const row = worksheet.addRow([filter, amount]);
+        const row = worksheet.addRow([
+          PAYMENT_STATUS_LABELS[filter as PAYMENT_STATUS_ENUM] ?? filter,
+          amount,
+        ]);
         row.getCell(1).style = highlightStyle;
         row.getCell(2).style = amountStyle;
       });
@@ -5565,9 +5569,9 @@ export class OrderService {
                   payment.status === PAYMENT_STATUS_ENUM.PAID &&
                   ((!startDate && !endDate) || dateInRange);
                 break;
-              case AMC_FILTER.PENDING:
+              case AMC_FILTER.TO_BE_CREATED:
                 currentFilterLogicMatch =
-                  payment.status === PAYMENT_STATUS_ENUM.PENDING &&
+                  payment.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED &&
                   ((!startDate && !endDate) || dateInRange);
                 break;
               case AMC_FILTER.PROFORMA:
@@ -5621,7 +5625,7 @@ export class OrderService {
           product: rowData.product,
           purchaseDate: rowData.purchaseDate,
           amcStartDate: rowData.amcStartDate,
-          status: rowData.status,
+          status: PAYMENT_STATUS_LABELS[rowData.status] ?? rowData.status,
           paymentFrom: rowData.paymentFrom,
           paymentTo: rowData.paymentTo,
           amount: rowData.amount,
@@ -5649,7 +5653,7 @@ export class OrderService {
               fgColor: { argb: '10B981' },
             } as ExcelJS.FillPattern; // Tailwind green-700 (approx)
             break;
-          case PAYMENT_STATUS_ENUM.PENDING:
+          case PAYMENT_STATUS_ENUM.TO_BE_CREATED:
             statusCellStyle.font = { color: { argb: 'FFFFFF' } }; // White text
             statusCellStyle.fill = {
               type: 'pattern',
@@ -5986,7 +5990,7 @@ export class OrderService {
         const newPayment = {
           from_date: new Date(fromDate),
           to_date: toDate,
-          status: PAYMENT_STATUS_ENUM.PENDING,
+          status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
           amc_frequency: amc_frequency_in_months,
           total_cost: totalCost,
           amc_rate_applied: order.amc_rate.percentage,
@@ -6974,7 +6978,7 @@ export class OrderService {
             amount: pt.calculated_amount || 0,
             status: pt.status === PAYMENT_STATUS_ENUM.INVOICE
               ? 'invoice'
-              : 'pending',
+              : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
             invoice_date: pt.invoice_date
               ? toISO(pt.invoice_date)
               : toISO(order.purchased_date) || null,
@@ -6987,7 +6991,7 @@ export class OrderService {
       // Process Customizations
       const customizationQuery: any = {
         payment_status: {
-          $in: [PAYMENT_STATUS_ENUM.PENDING, PAYMENT_STATUS_ENUM.INVOICE],
+          $in: [PAYMENT_STATUS_ENUM.TO_BE_CREATED, PAYMENT_STATUS_ENUM.INVOICE],
         },
       };
       if (filters.clientId) {
@@ -7052,7 +7056,7 @@ export class OrderService {
           status:
             cust.payment_status === PAYMENT_STATUS_ENUM.INVOICE
               ? 'invoice'
-              : 'pending',
+              : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
           invoice_date: toISO(rowDate),
           invoice_number: cust.invoice_number || null,
           entity_id: cust._id.toString(),
@@ -7062,7 +7066,7 @@ export class OrderService {
       // Process Auditor Licences
       const licenseQuery: any = {
         payment_status: {
-          $in: [PAYMENT_STATUS_ENUM.PENDING, PAYMENT_STATUS_ENUM.INVOICE],
+          $in: [PAYMENT_STATUS_ENUM.TO_BE_CREATED, PAYMENT_STATUS_ENUM.INVOICE],
         },
       };
       const licenses = await this.licenseModel
@@ -7124,7 +7128,7 @@ export class OrderService {
           status:
             lic.payment_status === PAYMENT_STATUS_ENUM.INVOICE
               ? 'invoice'
-              : 'pending',
+              : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
           invoice_date: toISO(rowDate),
           invoice_number: lic.invoice_number || null,
           entity_id: lic._id.toString(),
@@ -7199,7 +7203,7 @@ export class OrderService {
             status:
               payment.status === PAYMENT_STATUS_ENUM.INVOICE
                 ? 'invoice'
-                : 'pending',
+                : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
             invoice_date: toISO(payment.invoice_date || payment.from_date),
             invoice_number: payment.invoice_number || null,
             entity_id: amc._id.toString(),
@@ -7224,7 +7228,7 @@ export class OrderService {
       const totalAmount = {
         total: 0,
         invoice: 0,
-        pending: 0,
+        to_be_created: 0,
         new_order: 0,
         customization: 0,
         auditor_licence: 0,
@@ -7235,7 +7239,8 @@ export class OrderService {
         const amt = row.amount || 0;
         totalAmount.total += amt;
         if (row.status === 'invoice') totalAmount.invoice += amt;
-        if (row.status === 'pending') totalAmount.pending += amt;
+        if (row.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED)
+          totalAmount.to_be_created += amt;
         if (row.type === 'new_order') totalAmount.new_order += amt;
         if (row.type === 'customization') totalAmount.customization += amt;
         if (row.type === 'auditor_licence') totalAmount.auditor_licence += amt;

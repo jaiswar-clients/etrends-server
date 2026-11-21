@@ -143,7 +143,7 @@ describe('OrderService', () => {
         total_license: 4,
         amc_percentage: 15,
         purchase_date: '2024-06-01',
-        payment_status: PAYMENT_STATUS_ENUM.PENDING,
+        payment_status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
       } as any;
 
       const result = await service.addLicense(orderId, dto);
@@ -486,7 +486,7 @@ describe('OrderService', () => {
             payments: expect.objectContaining({
               from_date: new Date('2025-01-01'),
               to_date: new Date('2026-01-01'),
-              status: PAYMENT_STATUS_ENUM.PENDING,
+              status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
               amc_frequency: 12,
               total_cost: 17000, // base_cost + customization + license costs
               amc_rate_applied: 20,
@@ -709,7 +709,7 @@ describe('OrderService', () => {
             payments: expect.objectContaining({
               from_date: new Date('2025-01-01'),
               to_date: new Date('2026-01-01'),
-              status: PAYMENT_STATUS_ENUM.PENDING,
+              status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
             })
           },
           amount: expect.any(Number),
@@ -748,7 +748,7 @@ describe('OrderService', () => {
             {
               from_date: new Date('2025-01-01'),
               to_date: new Date('2026-01-01'),
-              status: PAYMENT_STATUS_ENUM.PENDING,
+              status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
             }
           ]
         }
@@ -985,7 +985,7 @@ describe('OrderService', () => {
       });
 
       // Verify the last payment is pending
-      expect(result[result.length - 1].status).toBe(PAYMENT_STATUS_ENUM.PENDING);
+      expect(result[result.length - 1].status).toBe(PAYMENT_STATUS_ENUM.TO_BE_CREATED);
     });
   });
 
@@ -1073,7 +1073,7 @@ describe('OrderService', () => {
         expect.objectContaining({
           from_date: new Date('2025-01-01'),
           to_date: new Date('2026-01-01'),
-          status: PAYMENT_STATUS_ENUM.PENDING,
+          status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
           amc_rate_applied: 20,
           amc_rate_amount: 3400, // 20% of (10000 + 5000 + 2000)
           total_cost: 17000
@@ -1093,7 +1093,7 @@ describe('OrderService', () => {
           {
             from_date: new Date('2025-01-01'),
             to_date: new Date('2026-01-01'),
-            status: PAYMENT_STATUS_ENUM.PENDING,
+            status: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
           }
         ]
       } as any;

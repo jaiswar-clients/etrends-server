@@ -23,7 +23,10 @@ import {
   UpdateAMCDto,
   UpdateAMCPaymentDto,
 } from '../dto/update-amc.dto';
-import { AMC_FILTER } from '@/common/types/enums/order.enum';
+import {
+  AMC_FILTER,
+  normalizePaymentStatus,
+} from '@/common/types/enums/order.enum';
 import { AuthGuard } from '@/common/guards/auth.guard';
 import { CancelOrderDto } from '../dto/cancel-order.dto';
 import { LoggerService } from '@/common/logger/services/logger.service';
@@ -88,7 +91,8 @@ export class OrderController {
     // Parse amc_pending to boolean
     const parsedAmcPending = amcPending?.toLowerCase() === 'true';
 
-    // Validate payment_status if provided
+    // Validate payment_status if provided (legacy 'pending' -> 'to_be_created')
+    if (paymentStatus) paymentStatus = normalizePaymentStatus(paymentStatus);
     if (
       paymentStatus &&
       !Object.values(PAYMENT_STATUS_ENUM).includes(paymentStatus)
@@ -203,7 +207,7 @@ export class OrderController {
     if (filter) {
       filterValues = filter
         .split(',')
-        .map((f) => f.trim().toLowerCase() as AMC_FILTER);
+        .map((f) => normalizePaymentStatus(f.trim().toLowerCase()) as AMC_FILTER);
 
       // Validate that all filter values are valid
       const validFilters = Object.values(AMC_FILTER);
@@ -219,9 +223,9 @@ export class OrderController {
       }
     }
 
-    // Default to pending if no filter provided
+    // Default to to_be_created if no filter provided
     if (filterValues.length === 0) {
-      filterValues = [AMC_FILTER.PENDING];
+      filterValues = [AMC_FILTER.TO_BE_CREATED];
     }
 
     return this.orderService.loadAllAMC(parsedPage, parsedLimit, filterValues, {
@@ -278,7 +282,7 @@ export class OrderController {
     if (filter) {
       filterValues = filter
         .split(',')
-        .map((f) => f.trim().toLowerCase() as AMC_FILTER);
+        .map((f) => normalizePaymentStatus(f.trim().toLowerCase()) as AMC_FILTER);
 
       // Validate that all filter values are valid
       const validFilters = Object.values(AMC_FILTER);
@@ -294,9 +298,9 @@ export class OrderController {
       }
     }
 
-    // Default to pending if no filter provided
+    // Default to to_be_created if no filter provided
     if (filterValues.length === 0) {
-      filterValues = [AMC_FILTER.PENDING];
+      filterValues = [AMC_FILTER.TO_BE_CREATED];
     }
 
     // Log the export request
@@ -391,7 +395,8 @@ export class OrderController {
     // Parse amc_pending to boolean
     const parsedAmcPending = amcPending?.toLowerCase() === 'true';
 
-    // Validate payment_status if provided
+    // Validate payment_status if provided (legacy 'pending' -> 'to_be_created')
+    if (paymentStatus) paymentStatus = normalizePaymentStatus(paymentStatus);
     if (
       paymentStatus &&
       !Object.values(PAYMENT_STATUS_ENUM).includes(paymentStatus)

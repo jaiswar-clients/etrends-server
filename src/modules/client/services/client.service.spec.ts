@@ -84,7 +84,7 @@ describe('ClientService', () => {
             payments: [
               { status: PAYMENT_STATUS_ENUM.PAID },
               { status: PAYMENT_STATUS_ENUM.PAID },
-              { status: PAYMENT_STATUS_ENUM.PENDING },
+              { status: PAYMENT_STATUS_ENUM.TO_BE_CREATED },
             ],
             amount: 1500,
             total_cost: 2500,

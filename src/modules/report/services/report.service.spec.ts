@@ -346,7 +346,7 @@ describe('ReportService', () => {
         { invoice_date: new Date('2023-06-01'), rate: { amount: 200 }, total_license: 2, payment_status: 'paid', payment_receive_date: new Date('2023-06-18') },
       ]);
       mockSimpleFind(additionalServiceModel, [
-        { invoice_date: new Date('2023-06-03'), cost: 150, payment_status: 'pending', payment_receive_date: null },
+        { invoice_date: new Date('2023-06-03'), cost: 150, payment_status: 'to_be_created', payment_receive_date: null },
       ]);
       mockAmcFind([
         {
@@ -417,7 +417,7 @@ describe('ReportService', () => {
           amount: 500,
           payments: [
             { from_date: new Date('2023-06-01'), status: PAYMENT_STATUS_ENUM.PAID, amc_rate_amount: 500 },
-            { from_date: new Date('2023-06-01'), status: PAYMENT_STATUS_ENUM.PENDING, amc_rate_amount: 500 },
+            { from_date: new Date('2023-06-01'), status: PAYMENT_STATUS_ENUM.TO_BE_CREATED, amc_rate_amount: 500 },
             { from_date: new Date('2023-06-01'), status: PAYMENT_STATUS_ENUM.PROFORMA, amc_rate_amount: 100 },
           ],
           order_id: { amc_start_date: new Date('2023-06-01') },

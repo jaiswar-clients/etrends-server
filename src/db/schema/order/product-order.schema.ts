@@ -41,7 +41,7 @@ class PaymentTerms {
   @Prop({
     type: String,
     enum: PAYMENT_STATUS_ENUM,
-    default: PAYMENT_STATUS_ENUM.PENDING,
+    default: PAYMENT_STATUS_ENUM.TO_BE_CREATED,
   })
   status: PAYMENT_STATUS_ENUM;
 

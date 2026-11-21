@@ -974,7 +974,7 @@ export class RevenueCalculatorService {
     const inactiveClients = totalClients - activeClients;
     const activePercentage = totalClients > 0 ? (activeClients / totalClients) * 100 : 0;
 
-    // Calculate overdue payments from orders (payment_terms with status 'pending')
+    // Calculate overdue payments from orders (payment_terms with status 'to_be_created')
     const allOrders = await this.orderModel.find({ deleted: { $ne: true } }).lean();
     const now = new Date();
     const overdue30Days: Set<string> = new Set();
