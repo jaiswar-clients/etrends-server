@@ -395,6 +395,18 @@ describe('DashboardDrilldownService', () => {
     expect(licRows[0].dateBasis).toBe('PO date (not invoiced)');
   });
 
+  it('exports dates as the India calendar day (not one day early)', async () => {
+    const wb = await service.buildWorkbook({
+      card: 'total-revenue',
+      title: 'T',
+      columns: [{ key: 'd', label: 'Date', type: 'date' }],
+      rows: [{ d: '2026-05-13T18:30:00.000Z' }], // 14 May 2026 00:00 IST
+    } as any);
+    expect(wb.worksheets[0].getRow(4).getCell(1).value).toEqual(
+      new Date(Date.UTC(2026, 4, 14)),
+    );
+  });
+
   it('rejects unknown cards', async () => {
     await expect(
       service.getDrilldown({ card: 'nope' as any, fiscalYear: 2023 }),

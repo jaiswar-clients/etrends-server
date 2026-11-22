@@ -123,14 +123,35 @@ const toDate = (v: unknown): Date | null => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+const IST = 'Asia/Kolkata';
+
 const fmtShort = (d: Date | null) =>
   d
     ? d.toLocaleDateString('en-IN', {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
+        timeZone: IST,
       })
     : '';
+
+/**
+ * The India calendar day of a date, as UTC midnight. Dates are stored as IST
+ * midnight (e.g. 2026-05-13T18:30Z = 14 May) and ExcelJS writes Dates in UTC,
+ * so without this every exported date would show one day early.
+ */
+const istCalendarDay = (d: Date): Date => {
+  const [y, m, day] = new Intl.DateTimeFormat('en-CA', {
+    timeZone: IST,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(d)
+    .split('-')
+    .map(Number);
+  return new Date(Date.UTC(y, m - 1, day));
+};
 
 /**
  * Drill-down tables (and Excel dumps) behind every Revenue Dashboard card.
@@ -513,7 +534,7 @@ export class DashboardDrilldownService {
           Array.isArray(item.payment_terms) && item.payment_terms.length > 0;
         for (const term of effectivePaymentTerms(item, base)) {
           const placed = calc.newSalesRowDate(
-            term.status,
+            term.status || PAYMENT_STATUS_ENUM.TO_BE_CREATED,
             term.invoice_date,
             purchaseDate,
           );
@@ -831,8 +852,10 @@ export class DashboardDrilldownService {
           const v = r[c.key];
           if (v === null || v === undefined || v === '') return null;
           switch (c.type) {
-            case 'date':
-              return toDate(v);
+            case 'date': {
+              const d = toDate(v);
+              return d ? istCalendarDay(d) : null;
+            }
             case 'status':
               return PAYMENT_STATUS_LABELS[v as PAYMENT_STATUS_ENUM] ?? v;
             case 'percent':

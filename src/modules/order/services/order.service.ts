@@ -2913,7 +2913,10 @@ export class OrderService {
         id,
         {
           ...body,
-          ...buildPaymentTerms(body, customizationBaseAmount(body)),
+          // A PATCH without payment_terms leaves the stored terms alone
+          ...(Array.isArray(body.payment_terms)
+            ? buildPaymentTerms(body, customizationBaseAmount(body))
+            : {}),
         },
         { new: true },
       );
@@ -2987,11 +2990,14 @@ export class OrderService {
         updateObj.licenses_with_base_price = licenses_with_base_price;
       }
 
-      // Payment terms (or one 100% term from the legacy fields) + their summary
-      Object.assign(
-        updateObj,
-        buildPaymentTerms(body, (cost_per_license || 0) * (total_license || 0)),
-      );
+      // Payment terms + their summary. A PATCH without payment_terms (old API
+      // callers) leaves the stored terms alone and only updates the fields sent.
+      if (Array.isArray(body.payment_terms)) {
+        Object.assign(
+          updateObj,
+          buildPaymentTerms(body, (cost_per_license || 0) * (total_license || 0)),
+        );
+      }
 
       // Remove undefined fields to avoid overwriting with undefined
       Object.keys(updateObj).forEach(
