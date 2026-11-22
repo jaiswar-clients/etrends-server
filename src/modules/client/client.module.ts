@@ -7,6 +7,7 @@ import { Order, OrderSchema } from '@/db/schema/order/product-order.schema';
 import { Product, ProductSchema } from '@/db/schema/product.schema';
 import { AMC, AMCSchema } from '@/db/schema/amc/amc.schema';
 import { Reminder, ReminderSchema } from '@/db/schema/reminders/reminder.schema';
+import { License, LicenseSchema } from '@/db/schema/order/license.schema';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { Reminder, ReminderSchema } from '@/db/schema/reminders/reminder.schema'
       { name: Product.name, schema: ProductSchema },
       { name: AMC.name, schema: AMCSchema },
       { name: Reminder.name, schema: ReminderSchema },
+      { name: License.name, schema: LicenseSchema },
     ]),
   ],
   controllers: [ClientController],

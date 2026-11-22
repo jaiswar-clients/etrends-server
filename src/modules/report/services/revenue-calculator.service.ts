@@ -9,11 +9,38 @@ import { AdditionalService, AdditionalServiceDocument } from '@/db/schema/order/
 import { Product, ProductDocument } from '@/db/schema/product.schema';
 import { Client, ClientDocument } from '@/db/schema/client.schema';
 import { AMC, AMCDocument, PAYMENT_STATUS_ENUM } from '@/db/schema/amc/amc.schema';
+import { normalizePaymentStatus } from '@/common/types/enums/order.enum';
+import {
+  IItemPaymentTerm,
+  customizationBaseAmount,
+  effectivePaymentTerms,
+  licenseBaseAmount,
+  standaloneTermsDateFilter,
+  termAmount,
+} from '@/modules/order/utils/standalone-payment-terms';
+
+/** One payment term of a standalone customization / license (see standaloneTermRows). */
+export interface IStandaloneTermRow {
+  kind: 'customization' | 'license';
+  item: any;
+  term: IItemPaymentTerm;
+  termIndex: number;
+  status: string;
+  date: Date;
+  amount: number;
+}
+
+const toValidDate = (v: unknown): Date | null => {
+  if (!v) return null;
+  const d = new Date(v as any);
+  return isNaN(d.getTime()) ? null : d;
+};
 import {
   IRevenueDashboardResponse,
   IMonthlyRevenueBreakdown,
   IExpectedVsCollectedResponse,
   IPeriodBreakdown,
+  ICollectionTotals,
   IMonthlyBreakdown,
   IMonthlyBreakdownDetail,
   IRevenueDashboardQuery,
@@ -51,7 +78,7 @@ export class RevenueCalculatorService {
   /**
    * Check if a revenue stream should be included based on order type filter
    */
-  private shouldIncludeStream(
+  shouldIncludeStream(
     streamType: 'new' | 'amc' | 'customization' | 'license',
     orderTypes?: string,
   ): boolean {
@@ -67,6 +94,112 @@ export class RevenueCalculatorService {
       auditor_license: 'license',
     };
     return types.some((t) => map[t] === streamType);
+  }
+
+  /**
+   * Date that places a new-sales row (order term / customization / license /
+   * additional service) in a period: its invoice_date. Rows not invoiced yet
+   * (to_be_created / proforma) that have no invoice_date fall back to the
+   * purchase / PO date. Paid / invoice rows never fall back, so revenue stays
+   * strictly invoice_date based.
+   */
+  newSalesRowDate(
+    rawStatus: string | undefined,
+    invoiceDate: unknown,
+    purchaseDate: unknown,
+  ): { date: Date; basis: 'invoice' | 'purchase' } | null {
+    const invoice = toValidDate(invoiceDate);
+    if (invoice) return { date: invoice, basis: 'invoice' };
+    if (!rawStatus) return null;
+    const status = normalizePaymentStatus(rawStatus);
+    if (status !== PAYMENT_STATUS_ENUM.TO_BE_CREATED && status !== PAYMENT_STATUS_ENUM.PROFORMA) return null;
+    const purchase = toValidDate(purchaseDate);
+    return purchase ? { date: purchase, basis: 'purchase' } : null;
+  }
+
+  /**
+   * Payment-term rows of standalone customizations and licenses dated in
+   * [start, end]: one row per term (items without terms count as one 100% term
+   * built from their legacy fields).
+   * - invoicedOnly: invoice / paid terms placed by their invoice date (revenue rule).
+   * - otherwise: every scheduled term, placed by its invoice date or, for
+   *   to_be_created / proforma terms without one, the item's purchase date.
+   * Zero-value licenses are skipped (as before).
+   */
+  async standaloneTermRows(
+    start: Date,
+    end: Date,
+    opts: { invoicedOnly?: boolean; kinds?: Array<'customization' | 'license'> } = {},
+  ): Promise<IStandaloneTermRow[]> {
+    const kinds = opts.kinds ?? ['customization', 'license'];
+    const [customizations, licenses] = await Promise.all([
+      kinds.includes('customization')
+        ? this.customizationModel
+            .find(standaloneTermsDateFilter(start, end, opts.invoicedOnly ? undefined : 'purchased_date'))
+            .lean()
+        : Promise.resolve([]),
+      kinds.includes('license')
+        ? this.licenseModel
+            .find(standaloneTermsDateFilter(start, end, opts.invoicedOnly ? undefined : 'purchase_date'))
+            .lean()
+        : Promise.resolve([]),
+    ]);
+
+    const rows: IStandaloneTermRow[] = [];
+    const collect = (kind: 'customization' | 'license', item: any, base: number, purchaseDate: unknown) => {
+      effectivePaymentTerms(item, base).forEach((term, termIndex) => {
+        const status = normalizePaymentStatus(term.status || PAYMENT_STATUS_ENUM.TO_BE_CREATED);
+        let date: Date | null;
+        if (opts.invoicedOnly) {
+          if (status !== PAYMENT_STATUS_ENUM.INVOICE && status !== PAYMENT_STATUS_ENUM.PAID) return;
+          date = toValidDate(term.invoice_date);
+        } else {
+          date = this.newSalesRowDate(status, term.invoice_date, purchaseDate)?.date ?? null;
+        }
+        if (!date || date < start || date > end) return;
+        rows.push({ kind, item, term, termIndex, status, date, amount: termAmount(term, base) });
+      });
+    };
+    for (const c of customizations as any[]) collect('customization', c, customizationBaseAmount(c), c.purchased_date);
+    for (const l of licenses as any[]) {
+      const base = licenseBaseAmount(l);
+      if (base === 0) continue;
+      collect('license', l, base, l.purchase_date);
+    }
+    return rows;
+  }
+
+  /** client_id of an order (cached per call site). */
+  private async clientIdOfOrder(orderId: unknown, cache: Map<string, string | undefined>): Promise<string | undefined> {
+    if (!orderId) return undefined;
+    const key = String(orderId);
+    if (!cache.has(key)) {
+      const order = await this.orderModel.findById(key).select('client_id').lean();
+      cache.set(key, order?.client_id?.toString());
+    }
+    return cache.get(key);
+  }
+
+  /** Orders that may hold new-sales rows dated in [start, end] (see newSalesRowDate). */
+  newSalesOrderFilter(start: Date, end: Date) {
+    return {
+      deleted: { $ne: true },
+      $or: [
+        { 'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() } },
+        { purchased_date: { $gte: start, $lte: end } },
+      ],
+    };
+  }
+
+  /** Standalone customizations / licenses / additional services dated in [start, end]. */
+  standaloneNewSalesFilter(start: Date, end: Date, purchaseField: 'purchased_date' | 'purchase_date') {
+    return {
+      deleted: { $ne: true },
+      $or: [
+        { invoice_date: { $gte: start, $lte: end } },
+        { invoice_date: null, [purchaseField]: { $gte: start, $lte: end } },
+      ],
+    };
   }
 
   /**
@@ -107,27 +240,12 @@ export class RevenueCalculatorService {
     endDate: Date,
     filter: string = 'monthly',
   ): Promise<Map<string, number>> {
-    const customizations = await this.customizationModel
-      .find({
-        invoice_date: { $gte: startDate, $lte: endDate },
-        deleted: { $ne: true },
-      })
-      .lean();
-
     const revenueByPeriod = new Map<string, number>();
-
-    for (const cust of customizations) {
-      if (cust.payment_status === 'proforma') continue;
-      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-
-      const revenue = cust.cost || 0;
-      const date = cust.invoice_date;
-      if (!date) continue;
-
-      const period = this.getPeriodLabel(new Date(date), filter);
-      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    // One row per invoiced payment term (invoice / paid), by the term's invoice date
+    for (const row of await this.standaloneTermRows(startDate, endDate, { invoicedOnly: true, kinds: ['customization'] })) {
+      const period = this.getPeriodLabel(row.date, filter);
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + row.amount);
     }
-
     return revenueByPeriod;
   }
 
@@ -141,29 +259,12 @@ export class RevenueCalculatorService {
     endDate: Date,
     filter: string = 'monthly',
   ): Promise<Map<string, number>> {
-    const licenses = await this.licenseModel
-      .find({
-        invoice_date: { $gte: startDate, $lte: endDate },
-        deleted: { $ne: true },
-      })
-      .lean();
-
     const revenueByPeriod = new Map<string, number>();
-
-    for (const license of licenses) {
-      if (license.payment_status === 'proforma') continue;
-      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-
-      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-      if (revenue === 0) continue;
-
-      const date = license.invoice_date;
-      if (!date) continue;
-
-      const period = this.getPeriodLabel(new Date(date), filter);
-      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + revenue);
+    // One row per invoiced payment term (invoice / paid), by the term's invoice date
+    for (const row of await this.standaloneTermRows(startDate, endDate, { invoicedOnly: true, kinds: ['license'] })) {
+      const period = this.getPeriodLabel(row.date, filter);
+      revenueByPeriod.set(period, (revenueByPeriod.get(period) || 0) + row.amount);
     }
-
     return revenueByPeriod;
   }
 
@@ -492,7 +593,15 @@ export class RevenueCalculatorService {
   }
 
   /**
-   * Expected vs Collected Revenue Report
+   * Expected vs Invoiced vs Collected Revenue Report
+   *
+   * Every payment row is bucketed once (new sales by invoice_date, falling back
+   * to the purchase / PO date for to_be_created / proforma rows without one;
+   * AMC by payment from_date) and counted cumulatively by status:
+   *   expected  = to_be_created + proforma + invoice + paid (everything scheduled)
+   *   invoiced  = invoice + paid
+   *   collected = paid
+   * so collected <= invoiced <= expected for every period.
    */
   async getExpectedVsCollected(query: IExpectedVsCollectedQuery): Promise<IExpectedVsCollectedResponse> {
     const { fiscalYear, filter = 'monthly' } = query;
@@ -502,151 +611,67 @@ export class RevenueCalculatorService {
     const includeNewOrders = this.shouldIncludeStream('new', query.orderTypes);
     const includeAMC = this.shouldIncludeStream('amc', query.orderTypes);
 
-    // New Sales: Expected vs Collected
-    let newSalesBreakdown: IPeriodBreakdown[] = [];
-    let newSalesExpected = 0;
-    let newSalesCollected = 0;
+    // New Sales
+    const newSalesByPeriod = new Map<string, IPeriodBreakdown>();
+    const newSalesTotals = this.emptyCollectionTotals();
 
     if (includeNewOrders) {
-      const newSalesOrders = await this.orderModel
-        .find({
-          'payment_terms.invoice_date': { $gte: start.toISOString(), $lte: end.toISOString() },
-          deleted: { $ne: true },
-        })
-        .lean();
+      const newSalesOrders = await this.orderModel.find(this.newSalesOrderFilter(start, end)).lean();
 
-      // Group by month for breakdown
-      const newSalesByPeriod = new Map<string, { expected: number; collected: number }>();
-
-      // FIX 2: Iterate payment_terms directly and group by term.invoice_date
+      // Iterate payment_terms directly; group by invoice_date (PO date for not-yet-invoiced terms)
       for (const order of newSalesOrders) {
-        if (this.isNewSaleOrder(order)) {
-          for (const term of order.payment_terms || []) {
-            if (!term.invoice_date) continue;
-            const termInvoiceDate = new Date(term.invoice_date);
-            if (termInvoiceDate < start || termInvoiceDate > end) continue;
-            if (term.status === 'proforma') continue;
-            if (term.status !== 'paid' && term.status !== 'invoice') continue;
-
-            const termAmount = term.calculated_amount || 0;
-            const isPaid = term.status === 'paid';
-
-            // Expected: all terms with status 'paid' or 'invoice'
-            newSalesExpected += termAmount;
-            // Collected: only terms with status 'paid'
-            if (isPaid) {
-              newSalesCollected += termAmount;
-            }
-
-            // Add to period breakdown grouped by invoice_date
-            const period = this.getPeriodLabel(termInvoiceDate, filter);
-            const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
-            existing.expected += termAmount;
-            if (isPaid) {
-              existing.collected += termAmount;
-            }
-            newSalesByPeriod.set(period, existing);
-          }
+        if (!this.isNewSaleOrder(order)) continue;
+        for (const term of order.payment_terms || []) {
+          const placed = this.newSalesRowDate(term.status, term.invoice_date, order.purchased_date);
+          if (!placed || placed.date < start || placed.date > end) continue;
+          this.tallyCollection(
+            newSalesByPeriod,
+            newSalesTotals,
+            this.getPeriodLabel(placed.date, filter),
+            term.calculated_amount || 0,
+            term.status,
+          );
         }
       }
 
-      // Include standalone customizations
-      const customizations = await this.customizationModel
-        .find({
-          invoice_date: { $gte: start, $lte: end },
-          deleted: { $ne: true },
-        })
-        .lean();
-      for (const cust of customizations) {
-        if (cust.payment_status === 'proforma') continue;
-        if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-        const cost = cust.cost || 0;
-        const isPaid = cust.payment_status === 'paid';
-        newSalesExpected += cost;
-        if (isPaid) newSalesCollected += cost;
-        const date = cust.invoice_date;
-        if (date) {
-          const period = this.getPeriodLabel(new Date(date), filter);
-          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
-          existing.expected += cost;
-          if (isPaid) existing.collected += cost;
-          newSalesByPeriod.set(period, existing);
-        }
+      // Standalone customizations + licenses: one row per payment term
+      for (const row of await this.standaloneTermRows(start, end)) {
+        this.tallyCollection(
+          newSalesByPeriod,
+          newSalesTotals,
+          this.getPeriodLabel(row.date, filter),
+          row.amount,
+          row.status,
+        );
       }
 
-      // Include standalone licenses
-      const licenses = await this.licenseModel
-        .find({
-          invoice_date: { $gte: start, $lte: end },
-          deleted: { $ne: true },
-        })
-        .lean();
-      for (const license of licenses) {
-        if (license.payment_status === 'proforma') continue;
-        if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-        const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-        if (revenue === 0) continue;
-        const isPaid = license.payment_status === 'paid';
-        newSalesExpected += revenue;
-        if (isPaid) newSalesCollected += revenue;
-        const date = license.invoice_date;
-        if (date) {
-          const period = this.getPeriodLabel(new Date(date), filter);
-          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
-          existing.expected += revenue;
-          if (isPaid) existing.collected += revenue;
-          newSalesByPeriod.set(period, existing);
-        }
-      }
-
-      // Include standalone additional services
+      // Standalone additional services
       const additionalServices = await this.additionalServiceModel
-        .find({
-          invoice_date: { $gte: start, $lte: end },
-          deleted: { $ne: true },
-        })
+        .find(this.standaloneNewSalesFilter(start, end, 'purchased_date'))
         .lean();
       for (const service of additionalServices) {
-        if (service.payment_status === 'proforma') continue;
-        if (service.payment_status !== 'paid' && service.payment_status !== 'invoice') continue;
+        const placed = this.newSalesRowDate(service.payment_status, service.invoice_date, service.purchased_date);
+        if (!placed || placed.date < start || placed.date > end) continue;
         const revenue = service.cost || 0;
         if (revenue === 0) continue;
-        const isPaid = service.payment_status === 'paid';
-        newSalesExpected += revenue;
-        if (isPaid) newSalesCollected += revenue;
-        const date = service.invoice_date;
-        if (date) {
-          const period = this.getPeriodLabel(new Date(date), filter);
-          const existing = newSalesByPeriod.get(period) || { expected: 0, collected: 0 };
-          existing.expected += revenue;
-          if (isPaid) existing.collected += revenue;
-          newSalesByPeriod.set(period, existing);
-        }
-      }
-
-      // Convert to array
-      const sortedPeriods = this.sortPeriods([...newSalesByPeriod.keys()]);
-      for (const period of sortedPeriods) {
-        const data = newSalesByPeriod.get(period)!;
-        newSalesBreakdown.push({
-          period,
-          expected: data.expected,
-          collected: data.collected,
-        });
+        this.tallyCollection(
+          newSalesByPeriod,
+          newSalesTotals,
+          this.getPeriodLabel(placed.date, filter),
+          revenue,
+          service.payment_status,
+        );
       }
     }
 
-    // AMC: Expected vs Collected
-    let amcBreakdown: IPeriodBreakdown[] = [];
-    let amcExpected = 0;
-    let amcCollected = 0;
+    // AMC
+    const amcByPeriod = new Map<string, IPeriodBreakdown>();
+    const amcTotals = this.emptyCollectionTotals();
 
     if (includeAMC) {
       const amcs = await (this.amcModel as any).findWithDeleted()
         .populate({ path: 'order_id', model: 'Order' })
         .lean();
-
-      const amcByPeriod = new Map<string, { expected: number; collected: number }>();
 
       for (const amc of amcs) {
         const order = amc.order_id as any;
@@ -655,62 +680,70 @@ export class RevenueCalculatorService {
         if (order?.status === 'inactive') continue;
 
         // Include all payments (first payment is now paid AMC, not free period)
-        const allPayments = amc.payments || [];
-
-        for (const payment of allPayments) {
-          // Only include paid or invoice payments in revenue
-          if (payment.status !== PAYMENT_STATUS_ENUM.PAID && payment.status !== PAYMENT_STATUS_ENUM.INVOICE) continue;
-
+        for (const payment of amc.payments || []) {
+          if (!payment.from_date) continue;
           const paymentFromDate = new Date(payment.from_date);
-
-          // Check if payment falls within date range (range eligibility check)
-          if (paymentFromDate >= start && paymentFromDate <= end) {
-            // Expected: calculated_amount (amc_rate_amount)
-            const expected = payment.amc_rate_amount || 0;
-            // Collected: only if status is PAID
-            const collected = payment.status === PAYMENT_STATUS_ENUM.PAID ? expected : 0;
-
-            amcExpected += expected;
-            amcCollected += collected;
-
-            const period = this.getPeriodLabel(paymentFromDate, filter);
-            const existing = amcByPeriod.get(period) || { expected: 0, collected: 0 };
-            existing.expected += expected;
-            existing.collected += collected;
-            amcByPeriod.set(period, existing);
-          }
+          if (paymentFromDate < start || paymentFromDate > end) continue;
+          this.tallyCollection(
+            amcByPeriod,
+            amcTotals,
+            this.getPeriodLabel(paymentFromDate, filter),
+            payment.amc_rate_amount || 0,
+            payment.status,
+          );
         }
-      }
-
-      // Convert to array
-      const amcSortedPeriods = this.sortPeriods([...amcByPeriod.keys()]);
-      for (const period of amcSortedPeriods) {
-        const data = amcByPeriod.get(period)!;
-        amcBreakdown.push({
-          period,
-          expected: data.expected,
-          collected: data.collected,
-        });
       }
     }
 
+    const toBreakdown = (byPeriod: Map<string, IPeriodBreakdown>) =>
+      this.sortPeriods([...byPeriod.keys()]).map((period) => byPeriod.get(period)!);
+
     return {
       fiscalYear: fyLabel,
-      newSales: {
-        expected: newSalesExpected,
-        collected: newSalesCollected,
-        breakdown: newSalesBreakdown,
-      },
-      amc: {
-        expected: amcExpected,
-        collected: amcCollected,
-        breakdown: amcBreakdown,
-      },
+      newSales: { ...newSalesTotals, breakdown: toBreakdown(newSalesByPeriod) },
+      amc: { ...amcTotals, breakdown: toBreakdown(amcByPeriod) },
       total: {
-        expected: newSalesExpected + amcExpected,
-        collected: newSalesCollected + amcCollected,
+        expected: newSalesTotals.expected + amcTotals.expected,
+        invoiced: newSalesTotals.invoiced + amcTotals.invoiced,
+        collected: newSalesTotals.collected + amcTotals.collected,
       },
     };
+  }
+
+  private emptyCollectionTotals(): ICollectionTotals {
+    return { expected: 0, invoiced: 0, collected: 0 };
+  }
+
+  /**
+   * Add one payment row to its period bucket and the stream totals.
+   * Unknown statuses are ignored; legacy 'pending' counts as to_be_created.
+   */
+  private tallyCollection(
+    byPeriod: Map<string, IPeriodBreakdown>,
+    totals: ICollectionTotals,
+    period: string,
+    amount: number,
+    rawStatus?: string,
+  ): void {
+    if (!rawStatus) return;
+    const status = normalizePaymentStatus(rawStatus);
+    const isInvoiced = status === PAYMENT_STATUS_ENUM.INVOICE || status === PAYMENT_STATUS_ENUM.PAID;
+    const isScheduled =
+      isInvoiced || status === PAYMENT_STATUS_ENUM.TO_BE_CREATED || status === PAYMENT_STATUS_ENUM.PROFORMA;
+    if (!isScheduled) return;
+
+    const row = byPeriod.get(period) ?? { period, expected: 0, invoiced: 0, collected: 0 };
+    row.expected += amount;
+    totals.expected += amount;
+    if (isInvoiced) {
+      row.invoiced += amount;
+      totals.invoiced += amount;
+    }
+    if (status === PAYMENT_STATUS_ENUM.PAID) {
+      row.collected += amount;
+      totals.collected += amount;
+    }
+    byPeriod.set(period, row);
   }
 
   /**
@@ -795,52 +828,22 @@ export class RevenueCalculatorService {
       }
     }
 
-    // Include standalone customizations
-    const customizations = await this.customizationModel
-      .find({
-        invoice_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const cust of customizations) {
-      if (cust.payment_status === 'proforma') continue;
-      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-      const revenue = cust.cost || 0;
-      newSalesTotal += revenue;
-      const order = await this.orderModel.findById(cust.order_id).select('client_id').populate('client_id').lean();
+    // Standalone customizations + licenses: one row per invoiced payment term
+    for (const row of await this.standaloneTermRows(start, end, { invoicedOnly: true })) {
+      newSalesTotal += row.amount;
+      const order = await this.orderModel.findById(row.item.order_id).select('client_id').populate('client_id').lean();
       const client = order?.client_id as any;
+      const label =
+        row.kind === 'customization'
+          ? row.item.title || 'Customization'
+          : `License (${row.item.total_license})`;
       newSalesDetails.push({
-        orderId: cust._id.toString(),
+        orderId: row.item._id.toString(),
         clientName: client?.name || 'Unknown',
-        productName: cust.title || 'Customization',
-        amount: revenue,
-        status: cust.payment_status || 'unknown',
-        date: cust.invoice_date,
-      });
-    }
-
-    // Include standalone licenses
-    const licenses = await this.licenseModel
-      .find({
-        invoice_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const license of licenses) {
-      if (license.payment_status === 'proforma') continue;
-      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id').populate('client_id').lean();
-      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-      if (revenue === 0) continue;
-      newSalesTotal += revenue;
-      const client = order?.client_id as any;
-      newSalesDetails.push({
-        orderId: license._id.toString(),
-        clientName: client?.name || 'Unknown',
-        productName: `License (${license.total_license})`,
-        amount: revenue,
-        status: license.payment_status || 'unknown',
-        date: license.invoice_date,
+        productName: row.term.name ? `${label} · ${row.term.name}` : label,
+        amount: row.amount,
+        status: row.status,
+        date: row.date,
       });
     }
 
@@ -1119,44 +1122,20 @@ export class RevenueCalculatorService {
       }
     }
 
-    // Include standalone customizations
-    const customizations = await this.customizationModel
-      .find({
-        invoice_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const cust of customizations) {
-      if (cust.payment_status === 'proforma') continue;
-      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
-      const clientId = order?.client_id?.toString();
+    // Standalone customizations + licenses: one row per invoiced payment term
+    // (orderCount counts each item once, however many terms it has)
+    const clientCacheCur = new Map<string, string | undefined>();
+    const countedItems = new Set<string>();
+    for (const row of await this.standaloneTermRows(start, end, { invoicedOnly: true })) {
+      const clientId = await this.clientIdOfOrder(row.item.order_id, clientCacheCur);
       if (!clientId) continue;
-      const revenue = cust.cost || 0;
       const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
-      existing.newSales += revenue;
-      existing.orderCount++;
-      currentFYRevenue.set(clientId, existing);
-    }
-
-    // Include standalone licenses
-    const licenses = await this.licenseModel
-      .find({
-        invoice_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const license of licenses) {
-      if (license.payment_status === 'proforma') continue;
-      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
-      const clientId = order?.client_id?.toString();
-      if (!clientId) continue;
-      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-      if (revenue === 0) continue;
-      const existing = currentFYRevenue.get(clientId) || { newSales: 0, amc: 0, orderCount: 0 };
-      existing.newSales += revenue;
-      existing.orderCount++;
+      existing.newSales += row.amount;
+      const itemKey = `${row.kind}:${row.item._id}`;
+      if (!countedItems.has(itemKey)) {
+        countedItems.add(itemKey);
+        existing.orderCount++;
+      }
       currentFYRevenue.set(clientId, existing);
     }
 
@@ -1236,38 +1215,12 @@ export class RevenueCalculatorService {
       }
     }
 
-    // Include standalone customizations for previous FY
-    const prevCustomizations = await this.customizationModel
-      .find({
-        invoice_date: { $gte: prevStart, $lte: prevEnd },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const cust of prevCustomizations) {
-      if (cust.payment_status === 'proforma') continue;
-      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
-      const clientId = order?.client_id?.toString();
+    // Standalone customizations + licenses for previous FY: one row per invoiced payment term
+    const clientCachePrev = new Map<string, string | undefined>();
+    for (const row of await this.standaloneTermRows(prevStart, prevEnd, { invoicedOnly: true })) {
+      const clientId = await this.clientIdOfOrder(row.item.order_id, clientCachePrev);
       if (!clientId) continue;
-      prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + (cust.cost || 0));
-    }
-
-    // Include standalone licenses for previous FY
-    const prevLicenses = await this.licenseModel
-      .find({
-        invoice_date: { $gte: prevStart, $lte: prevEnd },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const license of prevLicenses) {
-      if (license.payment_status === 'proforma') continue;
-      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
-      const clientId = order?.client_id?.toString();
-      if (!clientId) continue;
-      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-      if (revenue === 0) continue;
-      prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + revenue);
+      prevFYRevenue.set(clientId, (prevFYRevenue.get(clientId) || 0) + row.amount);
     }
 
     // Include additional services for previous FY
@@ -1485,38 +1438,12 @@ export class RevenueCalculatorService {
       }
     }
 
-    // Include standalone customizations
-    const customizations = await this.customizationModel
-      .find({
-        invoice_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const cust of customizations) {
-      if (cust.payment_status === 'proforma') continue;
-      if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
-      const clientId = order?.client_id?.toString();
+    // Standalone customizations + licenses: one row per invoiced payment term
+    const clientCacheCR = new Map<string, string | undefined>();
+    for (const row of await this.standaloneTermRows(start, end, { invoicedOnly: true })) {
+      const clientId = await this.clientIdOfOrder(row.item.order_id, clientCacheCR);
       if (!clientId) continue;
-      clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + (cust.cost || 0));
-    }
-
-    // Include standalone licenses
-    const licenses = await this.licenseModel
-      .find({
-        invoice_date: { $gte: start, $lte: end },
-        deleted: { $ne: true },
-      })
-      .lean();
-    for (const license of licenses) {
-      if (license.payment_status === 'proforma') continue;
-      if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-      const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
-      const clientId = order?.client_id?.toString();
-      if (!clientId) continue;
-      const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-      if (revenue === 0) continue;
-      clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + revenue);
+      clientRevenue.set(clientId, (clientRevenue.get(clientId) || 0) + row.amount);
     }
 
     // Include additional services
@@ -1690,41 +1617,13 @@ export class RevenueCalculatorService {
         }
       }
 
-      // Include standalone customizations
-      const customizations = await this.customizationModel
-        .find({
-          invoice_date: { $gte: start, $lte: end },
-          deleted: { $ne: true },
-        })
-        .lean();
-      for (const cust of customizations) {
-        if (cust.payment_status === 'proforma') continue;
-        if (cust.payment_status !== 'paid' && cust.payment_status !== 'invoice') continue;
-        const order = await this.orderModel.findById(cust.order_id).select('client_id').lean();
-        const clientId = order?.client_id?.toString();
+      // Standalone customizations + licenses: one row per invoiced payment term
+      const clientCacheCW = new Map<string, string | undefined>();
+      for (const row of await this.standaloneTermRows(start, end, { invoicedOnly: true })) {
+        const clientId = await this.clientIdOfOrder(row.item.order_id, clientCacheCW);
         if (!clientId) continue;
         const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
-        existing.newSales += cust.cost || 0;
-        perClient.set(clientId, existing);
-      }
-
-      // Include standalone licenses
-      const licenses = await this.licenseModel
-        .find({
-          invoice_date: { $gte: start, $lte: end },
-          deleted: { $ne: true },
-        })
-        .lean();
-      for (const license of licenses) {
-        if (license.payment_status === 'proforma') continue;
-        if (license.payment_status !== 'paid' && license.payment_status !== 'invoice') continue;
-        const order = await this.orderModel.findById(license.order_id).select('client_id').lean();
-        const clientId = order?.client_id?.toString();
-        if (!clientId) continue;
-        const revenue = (license.rate?.amount || 0) * (license.total_license || 0);
-        if (revenue === 0) continue;
-        const existing = perClient.get(clientId) || { newSales: 0, amc: 0 };
-        existing.newSales += revenue;
+        existing.newSales += row.amount;
         perClient.set(clientId, existing);
       }
 

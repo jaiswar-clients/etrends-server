@@ -19,7 +19,8 @@ export interface IAMCRate {
 }
 
 
-class PaymentTerms {
+/** Payment term: used by orders and by standalone licenses / customizations. */
+export class PaymentTerms {
   @Prop({ type: String })
   name: string;
 

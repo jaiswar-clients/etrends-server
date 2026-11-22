@@ -2,14 +2,17 @@ import { Type } from 'class-transformer';
 import { Types } from 'mongoose';
 
 import {
+  IsArray,
   IsEnum,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  ValidateNested,
 } from 'class-validator';
 import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
+import { PaymentTermsDto } from './create-order.dto';
 
 export class CreateLicenseDto {
   @IsMongoId()
@@ -47,13 +50,20 @@ export class CreateLicenseDto {
   @IsOptional()
   purchase_order_number: string;
 
+  // Legacy single-invoice fields; payment_terms supersede them when sent.
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   invoice_number: string;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   invoice_date: string;
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentTermsDto)
+  payment_terms?: PaymentTermsDto[];
 
   @IsString()
   @IsOptional()

@@ -13,7 +13,7 @@ import {
 import { Type } from 'class-transformer';
 import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
 
-class PaymentTermsDto {
+export class PaymentTermsDto {
   @IsString()
   name: string;
 

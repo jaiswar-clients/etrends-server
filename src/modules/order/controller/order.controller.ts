@@ -463,6 +463,7 @@ export class OrderController {
     @Query('client_id') clientId?: string,
     @Query('product_id') productId?: string,
     @Query('type') type?: string,
+    @Query('status') status?: string,
   ) {
     const parsedPage = Math.max(1, parseInt(String(page)) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(String(limit)) || 10));
@@ -494,6 +495,7 @@ export class OrderController {
       clientId,
       productId,
       type,
+      status: status && status !== 'undefined' ? status : undefined,
     });
   }
 
@@ -504,6 +506,7 @@ export class OrderController {
     @Query('client_id') clientId?: string,
     @Query('product_id') productId?: string,
     @Query('type') type?: string,
+    @Query('status') status?: string,
     @Res() res?: Response,
   ) {
     let parsedStartDate: Date | undefined = undefined;
@@ -530,7 +533,7 @@ export class OrderController {
     this.loggerService.log(
       JSON.stringify({
         message: 'exportPendingPayments: Requested export',
-        filters: { startDate, endDate, clientId, productId, type },
+        filters: { startDate, endDate, clientId, productId, type, status },
       }),
     );
 
@@ -540,10 +543,11 @@ export class OrderController {
       clientId,
       productId,
       type,
+      status: status && status !== 'undefined' ? status : undefined,
     });
 
     const date = new Date().toISOString().split('T')[0];
-    const fileName = `Pending_Payments_Export_${date}.xlsx`;
+    const fileName = `Outstanding_Payments_Export_${date}.xlsx`;
     res!.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'Content-Disposition': `attachment; filename="${fileName}"`,

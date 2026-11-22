@@ -6,7 +6,7 @@ import {
   Types,
 } from 'mongoose';
 import * as mongooseDelete from 'mongoose-delete';
-import { IAMCRate, PAYMENT_STATUS_ENUM } from './product-order.schema';
+import { IAMCRate, PAYMENT_STATUS_ENUM, PaymentTerms } from './product-order.schema';
 
 // Define the document type for TypeScript
 export type LicenseDocument = HydratedDocument<License>;
@@ -56,6 +56,14 @@ export class License extends Document {
 
   @Prop({ type: String })
   purchase_order_number: string;
+
+  /**
+   * Payment terms (split of rate.amount × total_license). The item-level
+   * payment_status / invoice_* / payment_receive_date fields are a summary kept
+   * in sync with these terms (see summarizePaymentTerms).
+   */
+  @Prop({ type: [PaymentTerms], default: [] })
+  payment_terms: PaymentTerms[];
 
   @Prop({ type: String })
   invoice_number: string;

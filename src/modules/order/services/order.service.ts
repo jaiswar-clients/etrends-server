@@ -14,6 +14,13 @@ import { Client, ClientDocument } from '@/db/schema/client.schema';
 import { StorageService } from '@/common/storage/services/storage.service';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import {
+  buildPaymentTerms,
+  customizationBaseAmount,
+  effectivePaymentTerms,
+  licenseBaseAmount,
+  termAmount,
+} from '../utils/standalone-payment-terms';
+import {
   AdditionalService,
   AdditionalServiceDocument,
 } from '@/db/schema/order/additional-service.schema';
@@ -26,6 +33,7 @@ import {
   PURCHASE_TYPE,
   ORDER_STATUS_ENUM,
   PAYMENT_STATUS_LABELS,
+  normalizePaymentStatus,
 } from '@/common/types/enums/order.enum';
 import {
   AMC,
@@ -969,6 +977,9 @@ export class OrderService {
       const amcPercentage = body.amc_percentage ?? 0;
       const amcAmount = (cost / 100) * amcPercentage;
 
+      // Payment terms split the license cost; item-level payment fields are their summary
+      const terms = buildPaymentTerms(body, cost);
+
       const license = new this.licenseModel({
         rate: {
           amount: cost_per_license,
@@ -979,7 +990,8 @@ export class OrderService {
         order_id: orderId,
         purchase_date: body.purchase_date,
         purchase_order_document: body.purchase_order_document,
-        invoice_document: body.invoice_document,
+        purchase_order_number: body.purchase_order_number,
+        ...terms,
         amc_rate: {
           percentage: amcPercentage,
           amount: amcAmount,
@@ -1150,6 +1162,8 @@ export class OrderService {
 
       const customization = new this.customizationModel({
         ...body,
+        // Payment terms split the cost; item-level payment fields are their summary
+        ...buildPaymentTerms(body, customizationBaseAmount(body)),
         order_id: orderId,
         amc_rate: {
           percentage: amcPercentage,
@@ -1713,16 +1727,23 @@ export class OrderService {
       // Query sub-collections for order_ids with matching payment_status
       const [licenseOrderIds, customizationOrderIds, additionalServiceOrderIds] =
         await Promise.all([
+          // Licenses / customizations: match the item summary or any payment term
           this.licenseModel
             .find({
-              payment_status: filters.paymentStatus,
+              $or: [
+                { payment_status: filters.paymentStatus },
+                { 'payment_terms.status': filters.paymentStatus },
+              ],
               deleted: { $ne: true },
             })
             .select('order_id')
             .lean<{ order_id: Types.ObjectId }[]>(),
           this.customizationModel
             .find({
-              payment_status: filters.paymentStatus,
+              $or: [
+                { payment_status: filters.paymentStatus },
+                { 'payment_terms.status': filters.paymentStatus },
+              ],
               deleted: { $ne: true },
             })
             .select('order_id')
@@ -2890,7 +2911,10 @@ export class OrderService {
 
       const customization = await this.customizationModel.findByIdAndUpdate(
         id,
-        body,
+        {
+          ...body,
+          ...buildPaymentTerms(body, customizationBaseAmount(body)),
+        },
         { new: true },
       );
 
@@ -2962,6 +2986,12 @@ export class OrderService {
       if (licenses_with_base_price !== undefined) {
         updateObj.licenses_with_base_price = licenses_with_base_price;
       }
+
+      // Payment terms (or one 100% term from the legacy fields) + their summary
+      Object.assign(
+        updateObj,
+        buildPaymentTerms(body, (cost_per_license || 0) * (total_license || 0)),
+      );
 
       // Remove undefined fields to avoid overwriting with undefined
       Object.keys(updateObj).forEach(
@@ -6795,6 +6825,8 @@ export class OrderService {
       clientId?: string;
       productId?: string;
       type?: string;
+      /** Comma-separated payment statuses; default = outstanding = 'invoice' only. */
+      status?: string;
     } = {},
   ): Promise<{
     data: {
@@ -6852,6 +6884,32 @@ export class OrderService {
           );
         }
       }
+
+      // Parse status filter. Default = outstanding = invoiced but not yet paid.
+      const outstandingStatuses: string[] = [PAYMENT_STATUS_ENUM.INVOICE];
+      const requestedStatuses = filters.status
+        ? filters.status
+            .split(',')
+            .map((s) => normalizePaymentStatus(s.trim().toLowerCase()))
+            .filter(Boolean)
+        : outstandingStatuses;
+      const invalidStatuses = requestedStatuses.filter(
+        (s) => !Object.values(PAYMENT_STATUS_ENUM).includes(s as PAYMENT_STATUS_ENUM),
+      );
+      if (invalidStatuses.length > 0) {
+        throw new HttpException(
+          `Invalid status value(s): ${invalidStatuses.join(', ')}`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      const statusSet = new Set<string>(requestedStatuses);
+      // Missing status counts as to_be_created; legacy 'pending' maps to to_be_created
+      const rowStatus = (s?: string): string =>
+        normalizePaymentStatus(s || PAYMENT_STATUS_ENUM.TO_BE_CREATED);
+      // Mongo $in for standalone items (include legacy 'pending' alongside to_be_created)
+      const statusQueryValues = statusSet.has(PAYMENT_STATUS_ENUM.TO_BE_CREATED)
+        ? [...statusSet, 'pending']
+        : [...statusSet];
 
       // Get active order IDs (for filtering AMCs and checking order status)
       const activeOrders = await this.orderModel
@@ -6948,11 +7006,8 @@ export class OrderService {
 
         for (let i = 0; i < order.payment_terms.length; i++) {
           const pt = order.payment_terms[i];
-          if (
-            pt.status === PAYMENT_STATUS_ENUM.PAID ||
-            pt.status === PAYMENT_STATUS_ENUM.PROFORMA
-          )
-            continue;
+          const ptStatus = rowStatus(pt.status);
+          if (!statusSet.has(ptStatus)) continue;
 
           const rowDate = pt.invoice_date
             ? new Date(pt.invoice_date)
@@ -6966,9 +7021,10 @@ export class OrderService {
           allRows.push({
             _id: `new_order_${orderId}_${i}`,
             type: 'new_order',
-            type_sub: pt.status === PAYMENT_STATUS_ENUM.INVOICE
-              ? 'payment_term'
-              : 'po_balance',
+            type_sub:
+              ptStatus === PAYMENT_STATUS_ENUM.TO_BE_CREATED
+                ? 'po_balance'
+                : 'payment_term',
             client_id: client?._id?.toString(),
             client_name: clientName,
             product_ids: productIds,
@@ -6976,162 +7032,105 @@ export class OrderService {
             order_id: orderId,
             purchase_order_number: order.purchase_order_number,
             amount: pt.calculated_amount || 0,
-            status: pt.status === PAYMENT_STATUS_ENUM.INVOICE
-              ? 'invoice'
-              : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
-            invoice_date: pt.invoice_date
-              ? toISO(pt.invoice_date)
-              : toISO(order.purchased_date) || null,
+            status: ptStatus,
+            // Only a real invoice date is shown; PO date is just the filter/sort basis
+            invoice_date: toISO(pt.invoice_date),
+            row_date: toISO(rowDate),
             invoice_number: pt.invoice_number || null,
             entity_id: orderId,
           });
         }
       }
 
-      // Process Customizations
-      const customizationQuery: any = {
-        payment_status: {
-          $in: [PAYMENT_STATUS_ENUM.TO_BE_CREATED, PAYMENT_STATUS_ENUM.INVOICE],
-        },
+      // Process Customizations + Auditor Licences: one row per payment term
+      // (items without terms count as one 100% term from their legacy fields)
+      const standaloneStatusQuery: any = {
+        $or: [
+          { payment_status: { $in: statusQueryValues } },
+          { 'payment_terms.status': { $in: statusQueryValues } },
+        ],
       };
-      if (filters.clientId) {
-        // Customizations don't have client_id directly, need to filter by order's client
-        // We'll filter post-query
-      }
+      const standalonePopulate = [
+        { path: 'order_id', select: 'client_id products status purchased_date' },
+        { path: 'product_id', select: 'short_name' },
+      ];
+      const [customizations, licenses] = await Promise.all([
+        this.customizationModel.find(standaloneStatusQuery).populate(standalonePopulate).lean(),
+        this.licenseModel.find(standaloneStatusQuery).populate(standalonePopulate).lean(),
+      ]);
 
-      const customizations = await this.customizationModel
-        .find(customizationQuery)
-        .populate([
-          { path: 'order_id', select: 'client_id products status purchased_date' },
-          { path: 'product_id', select: 'short_name' },
-        ])
-        .lean();
-
-      for (const cust of customizations) {
-        const order = cust.order_id as any;
-        if (!order || order.status !== ORDER_STATUS_ENUM.ACTIVE) continue;
-
-        const orderId = order._id.toString();
-        if (filters.clientId && order.client_id?.toString() !== filters.clientId)
-          continue;
-
-        const custProductId = (cust.product_id as any)?.toString?.() ?? null;
-        if (
-          productIdStringSet &&
-          (!custProductId || !productIdStringSet.has(custProductId))
-        )
-          continue;
-
-        const rowDate = cust.invoice_date
-          ? new Date(cust.invoice_date)
-          : cust.purchased_date
-            ? new Date(cust.purchased_date)
-            : null;
-        if (!rowDate) continue;
-        const dateInRange =
-          (!parsedStartDate || rowDate >= parsedStartDate) &&
-          (!parsedEndDate || rowDate <= parsedEndDate);
-        if (!dateInRange) continue;
-
-        const existing = orderClientMap.get(orderId);
-        const clientName = existing?.clientName || 'Unknown';
-        const custProductShortName = (cust.product_id as any)?.short_name;
-        const productNames = custProductShortName
-          ? [custProductShortName]
-          : existing?.productNames || [];
-        const productIds = custProductId
-          ? [custProductId]
-          : existing?.productIds || [];
-
-        allRows.push({
-          _id: `customization_${cust._id}`,
+      const standaloneItems = [
+        ...(customizations as any[]).map((item) => ({
           type: 'customization',
-          client_id: order.client_id?.toString(),
-          client_name: clientName,
-          product_ids: productIds,
-          product_names: productNames,
-          order_id: orderId,
-          purchase_order_number: cust.purchase_order_number,
-          amount: cust.cost || 0,
-          status:
-            cust.payment_status === PAYMENT_STATUS_ENUM.INVOICE
-              ? 'invoice'
-              : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
-          invoice_date: toISO(rowDate),
-          invoice_number: cust.invoice_number || null,
-          entity_id: cust._id.toString(),
-        });
-      }
+          item,
+          base: customizationBaseAmount(item),
+          purchaseDate: item.purchased_date,
+        })),
+        ...(licenses as any[]).map((item) => ({
+          type: 'auditor_licence',
+          item,
+          base: licenseBaseAmount(item),
+          purchaseDate: item.purchase_date,
+        })),
+      ];
 
-      // Process Auditor Licences
-      const licenseQuery: any = {
-        payment_status: {
-          $in: [PAYMENT_STATUS_ENUM.TO_BE_CREATED, PAYMENT_STATUS_ENUM.INVOICE],
-        },
-      };
-      const licenses = await this.licenseModel
-        .find(licenseQuery)
-        .populate([
-          { path: 'order_id', select: 'client_id products status purchased_date' },
-          { path: 'product_id', select: 'short_name' },
-        ])
-        .lean();
-
-      for (const lic of licenses) {
-        const order = lic.order_id as any;
+      for (const { type, item, base, purchaseDate } of standaloneItems) {
+        const order = item.order_id as any;
         if (!order || order.status !== ORDER_STATUS_ENUM.ACTIVE) continue;
 
         const orderId = order._id.toString();
         if (filters.clientId && order.client_id?.toString() !== filters.clientId)
           continue;
 
-        const licProductId = (lic.product_id as any)?.toString?.() ?? null;
+        const itemProductId = (item.product_id as any)?._id?.toString?.() ?? (item.product_id as any)?.toString?.() ?? null;
         if (
           productIdStringSet &&
-          (!licProductId || !productIdStringSet.has(licProductId))
+          (!itemProductId || !productIdStringSet.has(itemProductId))
         )
           continue;
 
-        const rowDate = lic.invoice_date
-          ? new Date(lic.invoice_date)
-          : lic.purchase_date
-            ? new Date(lic.purchase_date)
-            : null;
-        if (!rowDate) continue;
-        const dateInRange =
-          (!parsedStartDate || rowDate >= parsedStartDate) &&
-          (!parsedEndDate || rowDate <= parsedEndDate);
-        if (!dateInRange) continue;
-
         const existing = orderClientMap.get(orderId);
         const clientName = existing?.clientName || 'Unknown';
-        const licProductShortName = (lic.product_id as any)?.short_name;
-        const productNames = licProductShortName
-          ? [licProductShortName]
+        const itemProductShortName = (item.product_id as any)?.short_name;
+        const productNames = itemProductShortName
+          ? [itemProductShortName]
           : existing?.productNames || [];
-        const productIds = licProductId
-          ? [licProductId]
+        const productIds = itemProductId
+          ? [itemProductId]
           : existing?.productIds || [];
-        const licenseAmount =
-          (lic.rate?.amount || 0) * (lic.total_license || 0);
 
-        allRows.push({
-          _id: `auditor_licence_${lic._id}`,
-          type: 'auditor_licence',
-          client_id: order.client_id?.toString(),
-          client_name: clientName,
-          product_ids: productIds,
-          product_names: productNames,
-          order_id: orderId,
-          purchase_order_number: lic.purchase_order_number,
-          amount: licenseAmount,
-          status:
-            lic.payment_status === PAYMENT_STATUS_ENUM.INVOICE
-              ? 'invoice'
-              : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
-          invoice_date: toISO(rowDate),
-          invoice_number: lic.invoice_number || null,
-          entity_id: lic._id.toString(),
+        effectivePaymentTerms(item, base).forEach((term, termIndex) => {
+          const termStatus = rowStatus(term.status);
+          if (!statusSet.has(termStatus)) return;
+
+          const rowDate = term.invoice_date
+            ? new Date(term.invoice_date)
+            : purchaseDate
+              ? new Date(purchaseDate)
+              : null;
+          if (!rowDate) return;
+          const dateInRange =
+            (!parsedStartDate || rowDate >= parsedStartDate) &&
+            (!parsedEndDate || rowDate <= parsedEndDate);
+          if (!dateInRange) return;
+
+          allRows.push({
+            _id: `${type}_${item._id}_${termIndex}`,
+            type,
+            client_id: order.client_id?.toString(),
+            client_name: clientName,
+            product_ids: productIds,
+            product_names: productNames,
+            order_id: orderId,
+            purchase_order_number: item.purchase_order_number,
+            term_name: term.name || null,
+            amount: termAmount(term, base),
+            status: termStatus,
+            invoice_date: toISO(term.invoice_date),
+            row_date: toISO(rowDate),
+            invoice_number: term.invoice_number || null,
+            entity_id: item._id.toString(),
+          });
         });
       }
 
@@ -7175,11 +7174,8 @@ export class OrderService {
 
         for (let i = 0; i < amc.payments.length; i++) {
           const payment = amc.payments[i];
-          if (
-            payment.status === PAYMENT_STATUS_ENUM.PAID ||
-            payment.status === PAYMENT_STATUS_ENUM.PROFORMA
-          )
-            continue;
+          const paymentStatus = rowStatus(payment.status);
+          if (!statusSet.has(paymentStatus)) continue;
 
           const rowDate = payment.from_date
             ? new Date(payment.from_date)
@@ -7200,11 +7196,9 @@ export class OrderService {
             order_id: orderId,
             purchase_order_number: payment.purchase_order_number,
             amount: payment.amc_rate_amount || 0,
-            status:
-              payment.status === PAYMENT_STATUS_ENUM.INVOICE
-                ? 'invoice'
-                : PAYMENT_STATUS_ENUM.TO_BE_CREATED,
-            invoice_date: toISO(payment.invoice_date || payment.from_date),
+            status: paymentStatus,
+            invoice_date: toISO(payment.invoice_date),
+            row_date: toISO(rowDate),
             invoice_number: payment.invoice_number || null,
             entity_id: amc._id.toString(),
           });
@@ -7217,18 +7211,22 @@ export class OrderService {
         filteredRows = allRows.filter((row) => typeFilter.includes(row.type));
       }
 
-      // Sort by invoice_date descending
+      // Sort by invoice date (fallback: row date) descending
       filteredRows.sort((a, b) => {
-        const dateA = a.invoice_date ? new Date(a.invoice_date).getTime() : 0;
-        const dateB = b.invoice_date ? new Date(b.invoice_date).getTime() : 0;
-        return dateB - dateA;
+        const time = (r: any) => {
+          const d = r.invoice_date || r.row_date;
+          return d ? new Date(d).getTime() : 0;
+        };
+        return time(b) - time(a);
       });
 
       // Calculate total amounts
       const totalAmount = {
         total: 0,
-        invoice: 0,
         to_be_created: 0,
+        proforma: 0,
+        invoice: 0,
+        paid: 0,
         new_order: 0,
         customization: 0,
         auditor_licence: 0,
@@ -7238,9 +7236,7 @@ export class OrderService {
       for (const row of filteredRows) {
         const amt = row.amount || 0;
         totalAmount.total += amt;
-        if (row.status === 'invoice') totalAmount.invoice += amt;
-        if (row.status === PAYMENT_STATUS_ENUM.TO_BE_CREATED)
-          totalAmount.to_be_created += amt;
+        if (row.status in totalAmount) totalAmount[row.status as 'to_be_created' | 'proforma' | 'invoice' | 'paid'] += amt;
         if (row.type === 'new_order') totalAmount.new_order += amt;
         if (row.type === 'customization') totalAmount.customization += amt;
         if (row.type === 'auditor_licence') totalAmount.auditor_licence += amt;
@@ -7299,6 +7295,7 @@ export class OrderService {
       clientId?: string;
       productId?: string;
       type?: string;
+      status?: string;
     } = {},
   ): Promise<Buffer> {
     try {
@@ -7316,15 +7313,16 @@ export class OrderService {
         { header: 'Products', key: 'products', width: 25 },
         { header: 'Invoice #', key: 'invoiceNumber', width: 20 },
         { header: 'Invoice Date', key: 'invoiceDate', width: 15 },
+        { header: 'Status', key: 'status', width: 16 },
         { header: 'Amount', key: 'amount', width: 15 },
       ];
 
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'Pending Payments Management';
+      workbook.creator = 'Outstanding Payments Management';
       workbook.created = new Date();
       workbook.modified = new Date();
 
-      const worksheet = workbook.addWorksheet('Pending Payments', {
+      const worksheet = workbook.addWorksheet('Outstanding Payments', {
         properties: { tabColor: { argb: '4F81BD' } },
         pageSetup: {
           paperSize: 9,
@@ -7392,12 +7390,13 @@ export class OrderService {
           row.product_names?.join(', ') || '—',
           row.invoice_number || '—',
           formattedDate,
+          PAYMENT_STATUS_LABELS[row.status as PAYMENT_STATUS_ENUM] ?? row.status,
           row.amount || 0,
         ]);
       });
 
       // Format amount column
-      const amountCol = worksheet.getColumn(7);
+      const amountCol = worksheet.getColumn(8);
       amountCol.numFmt = '#,##0.00';
 
       const buffer = await workbook.xlsx.writeBuffer();

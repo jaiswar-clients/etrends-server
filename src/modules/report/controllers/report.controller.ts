@@ -1,8 +1,10 @@
 import { AuthGuard } from '@/common/guards/auth.guard';
-import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
 import { ReportService } from '../services/report.service';
 import { RevenueCalculatorService } from '../services/revenue-calculator.service';
 import { ExcelExportService } from '../services/excel-export.service';
+import { DashboardDrilldownService } from '../services/dashboard-drilldown.service';
+import { DrilldownCard, IDrilldownQuery } from '../dto/drilldown.dto';
 import { ReportFilterType } from '@/common/types/enums/report';
 import { Response } from 'express';
 
@@ -13,7 +15,69 @@ export class ReportController {
     private readonly reportService: ReportService,
     private readonly revenueCalculatorService: RevenueCalculatorService,
     private readonly excelExportService: ExcelExportService,
+    private readonly drilldownService: DashboardDrilldownService,
   ) {}
+
+  private parseDrilldownQuery(q: Record<string, string | undefined>): IDrilldownQuery {
+    const clean = (v?: string) => (v && v !== 'undefined' && v !== 'null' ? v : undefined);
+    const now = new Date();
+    const defaultFiscalYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+    const fy = clean(q.fiscalYear);
+    // filters = JSON {"status":["paid"],"category":["AMC"]}
+    let filters: Record<string, string[]> | undefined;
+    const rawFilters = clean(q.filters);
+    if (rawFilters) {
+      try {
+        const parsed = JSON.parse(rawFilters);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          filters = Object.fromEntries(
+            Object.entries(parsed)
+              .filter(([, v]) => Array.isArray(v))
+              .map(([k, v]) => [k, (v as unknown[]).map(String)]),
+          );
+        }
+      } catch {
+        throw new BadRequestException('filters must be a JSON object of string arrays');
+      }
+    }
+    return {
+      card: q.card as DrilldownCard,
+      fiscalYear: fy ? Number(fy) : defaultFiscalYear,
+      filter: (clean(q.filter) as IDrilldownQuery['filter']) || 'monthly',
+      orderTypes: clean(q.orderTypes),
+      period: clean(q.period),
+      filters,
+      search: clean(q.search),
+    };
+  }
+
+  /** Drill-down rows behind a Revenue Dashboard card. */
+  @Get('drilldown')
+  async getDrilldown(@Query() q: Record<string, string>) {
+    return await this.drilldownService.getDrilldown(this.parseDrilldownQuery(q));
+  }
+
+  /** Expected Revenue / Proforma / To be Created card values. */
+  @Get('revenue-pipeline')
+  async getRevenuePipeline(@Query() q: Record<string, string>) {
+    const { fiscalYear, orderTypes } = this.parseDrilldownQuery(q);
+    return await this.drilldownService.getPipelineSummary({ fiscalYear, orderTypes });
+  }
+
+  /** Excel dump of the same drill-down table (honours filters / search). */
+  @Get('drilldown/export')
+  async exportDrilldown(@Query() q: Record<string, string>, @Res() res: Response) {
+    const query = this.parseDrilldownQuery(q);
+    const table = await this.drilldownService.getDrilldown(query);
+    const workbook = await this.drilldownService.buildWorkbook(table);
+    const fy = `FY_${query.fiscalYear}-${(query.fiscalYear + 1).toString().slice(-2)}`;
+    const period = query.period ? `_${query.period.replace(/[^A-Za-z0-9-]+/g, '_')}` : '';
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=${query.card}${period}_${fy}.xlsx`);
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
+    await workbook.xlsx.write(res);
+    res.end();
+  }
 
   /**
    * @deprecated Use /reports/revenue-dashboard instead
