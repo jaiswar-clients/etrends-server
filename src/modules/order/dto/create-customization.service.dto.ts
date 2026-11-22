@@ -8,8 +8,11 @@ import {
   IsEnum,
   IsArray,
   IsOptional,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { PAYMENT_STATUS_ENUM } from '@/db/schema/order/product-order.schema';
+import { PaymentTermsDto } from './create-order.dto';
 
 export class CreateCustomizationDto {
   @IsMongoId()
@@ -45,16 +48,24 @@ export class CreateCustomizationDto {
   @IsOptional()
   purchase_order_number: string;
 
+  // Legacy single-invoice fields; payment_terms supersede them when sent.
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   invoice_number: string;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   invoice_date: string;
 
   @IsString()
+  @IsOptional()
   invoice_document: string;
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PaymentTermsDto)
+  payment_terms?: PaymentTermsDto[];
 
   @IsString()
   purchased_date: string;

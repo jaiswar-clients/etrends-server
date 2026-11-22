@@ -388,13 +388,16 @@ describe('RevenueCalculatorService', () => {
 
       const result = await service.getExpectedVsCollected({ fiscalYear: 2023, filter: 'monthly' });
 
-      // New sales: expected = 3000+2000=5000, collected = 3000
+      // New sales: expected = invoiced = 3000+2000=5000, collected = 3000
       expect(result.newSales.expected).toBe(5000);
+      expect(result.newSales.invoiced).toBe(5000);
       expect(result.newSales.collected).toBe(3000);
 
       // AMC: expected = 1000 (only first payment in range), collected = 1000
       expect(result.amc.expected).toBe(1000);
+      expect(result.amc.invoiced).toBe(1000);
       expect(result.amc.collected).toBe(1000);
+      expect(result.total).toEqual({ expected: 6000, invoiced: 6000, collected: 4000 });
 
       // Breakdown grouped correctly
       const mayBreakdown = result.newSales.breakdown.find(b => b.period === 'May FY23-24');
@@ -403,6 +406,7 @@ describe('RevenueCalculatorService', () => {
 
       const junBreakdown = result.newSales.breakdown.find(b => b.period === 'Jun FY23-24');
       expect(junBreakdown?.expected).toBe(2000);
+      expect(junBreakdown?.invoiced).toBe(2000);
       expect(junBreakdown?.collected).toBe(0);
 
       // AMC breakdown grouped by amc_start_date (Apr)
@@ -410,7 +414,7 @@ describe('RevenueCalculatorService', () => {
       expect(aprBreakdown?.expected).toBe(1000);
     });
 
-    it('should exclude proforma from both new sales and AMC', async () => {
+    it('should count proforma as expected only (not invoiced or collected)', async () => {
       const mockOrders = [
         {
           _id: new Types.ObjectId(),
@@ -447,10 +451,90 @@ describe('RevenueCalculatorService', () => {
 
       const result = await service.getExpectedVsCollected({ fiscalYear: 2023, filter: 'monthly' });
 
-      expect(result.newSales.expected).toBe(0);
+      expect(result.newSales.expected).toBe(3000);
+      expect(result.newSales.invoiced).toBe(0);
       expect(result.newSales.collected).toBe(0);
-      expect(result.amc.expected).toBe(0);
+      expect(result.amc.expected).toBe(1000);
+      expect(result.amc.invoiced).toBe(0);
       expect(result.amc.collected).toBe(0);
+    });
+
+    it('should place undated to_be_created terms by the PO date, never undated paid ones', async () => {
+      const mockOrders = [
+        {
+          _id: new Types.ObjectId(),
+          products: [new Types.ObjectId()],
+          purchased_date: new Date('2023-08-10'),
+          payment_terms: [
+            { calculated_amount: 700, status: 'to_be_created' },
+            { calculated_amount: 300, status: 'proforma' },
+            { calculated_amount: 999, status: 'paid' },
+          ],
+        },
+      ];
+
+      jest.spyOn(orderModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue(mockOrders),
+      } as any);
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
+        populate: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue([]) }),
+      } as any);
+
+      const result = await service.getExpectedVsCollected({ fiscalYear: 2023, filter: 'monthly' });
+
+      expect(result.newSales.breakdown).toEqual([
+        { period: 'Aug FY23-24', expected: 1000, invoiced: 0, collected: 0 },
+      ]);
+    });
+
+    it('should stack to_be_created / invoice / paid as expected >= invoiced >= collected', async () => {
+      const mockOrders = [
+        {
+          _id: new Types.ObjectId(),
+          products: [new Types.ObjectId()],
+          purchased_date: new Date('2023-04-15'),
+          payment_terms: [
+            { invoice_date: new Date('2023-05-10'), calculated_amount: 4000, status: 'to_be_created' },
+            // legacy value still in un-migrated data
+            { invoice_date: new Date('2023-05-12'), calculated_amount: 500, status: 'pending' },
+            { invoice_date: new Date('2023-05-15'), calculated_amount: 3000, status: 'invoice' },
+            { invoice_date: new Date('2023-05-20'), calculated_amount: 2000, status: 'paid' },
+            { invoice_date: new Date('2023-05-25'), calculated_amount: 999, status: 'garbage' },
+          ],
+        },
+      ];
+
+      const mockAMCs = [
+        {
+          _id: new Types.ObjectId(),
+          order_id: { _id: new Types.ObjectId(), amc_start_date: new Date('2023-04-01') },
+          payments: [
+            { from_date: new Date('2023-07-01'), amc_rate_amount: 800, status: PAYMENT_STATUS_ENUM.TO_BE_CREATED },
+            { from_date: new Date('2023-07-02'), amc_rate_amount: 600, status: PAYMENT_STATUS_ENUM.INVOICE },
+            { from_date: new Date('2023-07-03'), amc_rate_amount: 400, status: PAYMENT_STATUS_ENUM.PAID },
+          ],
+        },
+      ];
+
+      jest.spyOn(orderModel, 'find').mockReturnValue({
+        lean: jest.fn().mockResolvedValue(mockOrders),
+      } as any);
+
+      jest.spyOn(amcModel, 'findWithDeleted').mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(mockAMCs),
+        }),
+      } as any);
+
+      const result = await service.getExpectedVsCollected({ fiscalYear: 2023, filter: 'monthly' });
+
+      expect(result.newSales.breakdown).toEqual([
+        { period: 'May FY23-24', expected: 9500, invoiced: 5000, collected: 2000 },
+      ]);
+      expect(result.amc.breakdown).toEqual([
+        { period: 'Jul FY23-24', expected: 1800, invoiced: 1000, collected: 400 },
+      ]);
+      expect(result.total).toEqual({ expected: 11300, invoiced: 6000, collected: 2400 });
     });
   });
 

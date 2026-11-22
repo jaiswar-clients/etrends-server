@@ -18,30 +18,27 @@ export interface IRevenueDashboardResponse {
   monthlyBreakdown: IMonthlyRevenueBreakdown[];
 }
 
-// Period Breakdown for Expected vs Collected
-export interface IPeriodBreakdown {
-  period: string;
+// Cumulative collection amounts: collected <= invoiced <= expected.
+// expected  = to_be_created + proforma + invoice + paid
+// invoiced  = invoice + paid
+// collected = paid
+export interface ICollectionTotals {
   expected: number;
+  invoiced: number;
   collected: number;
+}
+
+// Period Breakdown for Expected vs Collected
+export interface IPeriodBreakdown extends ICollectionTotals {
+  period: string;
 }
 
 // Expected vs Collected Response
 export interface IExpectedVsCollectedResponse {
   fiscalYear: string;
-  newSales: {
-    expected: number;
-    collected: number;
-    breakdown: IPeriodBreakdown[];
-  };
-  amc: {
-    expected: number;
-    collected: number;
-    breakdown: IPeriodBreakdown[];
-  };
-  total: {
-    expected: number;
-    collected: number;
-  };
+  newSales: ICollectionTotals & { breakdown: IPeriodBreakdown[] };
+  amc: ICollectionTotals & { breakdown: IPeriodBreakdown[] };
+  total: ICollectionTotals;
 }
 
 // Monthly Breakdown Detail

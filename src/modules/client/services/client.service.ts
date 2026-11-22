@@ -12,6 +12,24 @@ import { INDUSTRIES_ENUM } from '@/common/types/enums/industry.enum';
 import { ORDER_STATUS_ENUM } from '@/common/types/enums/order.enum';
 import { Types } from 'mongoose';
 import { Reminder, ReminderDocument } from '@/db/schema/reminders/reminder.schema';
+import { License, LicenseDocument } from '@/db/schema/order/license.schema';
+
+/** Auditor (license) count: base = licenses_with_base_price on new orders, additional = licenses bought later. */
+export interface IAuditorCount {
+  base: number;
+  additional: number;
+  total: number;
+}
+
+export interface IAuditorCountDetail {
+  source: 'New Order' | 'Additional License';
+  id: string;
+  orderId: string;
+  products: string;
+  count: number;
+  date: Date | null;
+  paymentStatus?: string;
+}
 
 interface ClientFilterOptions {
   parentCompanyId?: string;
@@ -37,8 +55,96 @@ export class ClientService {
     private amcModel: SoftDeleteModel<AMCDocument>,
     @InjectModel(Reminder.name)
     private reminderModel: SoftDeleteModel<ReminderDocument>,
+    @InjectModel(License.name)
+    private licenseModel: SoftDeleteModel<LicenseDocument>,
     private loggerService: LoggerService,
   ) {}
+
+  /**
+   * Auditor counts per client.
+   * base       = order.licenses_with_base_price (set on the New Order)
+   * additional = license.total_license of licenses purchased on those orders
+   * Inactive / deleted orders and their licenses are excluded. Licenses count
+   * regardless of payment status (they are purchased seats).
+   * Raw collection queries: client_id / order_id are stored as strings in old rows.
+   */
+  async getAuditorCounts(
+    clientIds: string[],
+    withDetails = false,
+  ): Promise<Map<string, IAuditorCount & { details?: IAuditorCountDetail[] }>> {
+    const result = new Map<string, IAuditorCount & { details?: IAuditorCountDetail[] }>();
+    const ids = [...new Set(clientIds.map(String))];
+    for (const id of ids) {
+      result.set(id, { base: 0, additional: 0, total: 0, ...(withDetails ? { details: [] } : {}) });
+    }
+    if (!ids.length) return result;
+
+    const idValues = [
+      ...ids,
+      ...ids.filter((id) => Types.ObjectId.isValid(id)).map((id) => new Types.ObjectId(id)),
+    ];
+    const orders = await this.orderModel.collection
+      .find({
+        client_id: { $in: idValues },
+        deleted: { $ne: true },
+        status: { $ne: ORDER_STATUS_ENUM.INACTIVE },
+      })
+      .project({ client_id: 1, licenses_with_base_price: 1, products: 1, purchased_date: 1 })
+      .toArray();
+    if (!orders.length) return result;
+
+    const clientOfOrder = new Map(orders.map((o) => [String(o._id), String(o.client_id)]));
+    const orderIdValues = [...orders.map((o) => o._id), ...orders.map((o) => String(o._id))];
+    const licenses = await this.licenseModel.collection
+      .find({ order_id: { $in: orderIdValues }, deleted: { $ne: true } })
+      .project({ order_id: 1, total_license: 1, product_id: 1, purchase_date: 1, invoice_date: 1, payment_status: 1 })
+      .toArray();
+
+    let productName = new Map<string, string>();
+    if (withDetails) {
+      const products = await this.productModel.find({}).select('name short_name').lean();
+      productName = new Map(products.map((p: any) => [String(p._id), p.short_name || p.name]));
+    }
+    const names = (list: unknown[] = []) =>
+      list.map((p) => productName.get(String(p))).filter(Boolean).join(', ');
+
+    for (const order of orders) {
+      const entry = result.get(String(order.client_id));
+      const count = Number(order.licenses_with_base_price) || 0;
+      if (!entry || count <= 0) continue;
+      entry.base += count;
+      entry.details?.push({
+        source: 'New Order',
+        id: String(order._id),
+        orderId: String(order._id),
+        products: names(order.products),
+        count,
+        date: order.purchased_date ?? null,
+      });
+    }
+    for (const license of licenses) {
+      const entry = result.get(clientOfOrder.get(String(license.order_id)) ?? '');
+      const count = Number(license.total_license) || 0;
+      if (!entry || count <= 0) continue;
+      entry.additional += count;
+      entry.details?.push({
+        source: 'Additional License',
+        id: String(license._id),
+        orderId: String(license.order_id),
+        products: names([license.product_id]),
+        count,
+        date: license.purchase_date ?? license.invoice_date ?? null,
+        paymentStatus: license.payment_status,
+      });
+    }
+    for (const entry of result.values()) {
+      entry.total = entry.base + entry.additional;
+      entry.details?.sort(
+        (a, b) => (a.date ? new Date(a.date).getTime() : 0) - (b.date ? new Date(b.date).getTime() : 0),
+      );
+    }
+    return result;
+  }
 
   async getAllClients(
     page = 1,
@@ -433,6 +539,14 @@ export class ClientService {
         }),
       );
 
+      // Auditor counts (one batched lookup for the page)
+      const auditorCounts = await this.getAuditorCounts(
+        transformedClients.map((c: any) => String(c._id)),
+      );
+      for (const c of transformedClients as any[]) {
+        c.auditor_count = auditorCounts.get(String(c._id)) ?? { base: 0, additional: 0, total: 0 };
+      }
+
       this.loggerService.log(
         JSON.stringify({
           message: 'getAllClients: Completed processing clients',
@@ -557,6 +671,9 @@ export class ClientService {
         { header: 'Parent Company', key: 'parentCompany', width: 25 },
         { header: 'Products', key: 'products', width: 35 },
         { header: 'Orders Count', key: 'ordersCount', width: 18 },
+        { header: 'Auditors (Base)', key: 'auditorsBase', width: 16 },
+        { header: 'Auditors (Additional)', key: 'auditorsAdditional', width: 20 },
+        { header: 'Auditors (Total)', key: 'auditorsTotal', width: 16 },
         { header: 'First Order Date', key: 'firstOrderDate', width: 20 },
         { header: 'Created At', key: 'createdAt', width: 20 },
       ];
@@ -608,6 +725,9 @@ export class ClientService {
           parentCompany: client.parent_company || 'N/A',
           products,
           ordersCount,
+          auditorsBase: client.auditor_count?.base ?? 0,
+          auditorsAdditional: client.auditor_count?.additional ?? 0,
+          auditorsTotal: client.auditor_count?.total ?? 0,
           firstOrderDate,
           createdAt,
         });
@@ -639,9 +759,14 @@ export class ClientService {
         });
       });
 
+      const sumAuditors = (key: 'base' | 'additional' | 'total') =>
+        clients.reduce((s: number, c: any) => s + (c.auditor_count?.[key] ?? 0), 0);
       const totalRow = worksheet.addRow({
         name: 'TOTAL CLIENTS',
         ordersCount: clients.length,
+        auditorsBase: sumAuditors('base'),
+        auditorsAdditional: sumAuditors('additional'),
+        auditorsTotal: sumAuditors('total'),
       });
 
       totalRow.eachCell((cell, colNumber) => {
@@ -777,6 +902,9 @@ export class ClientService {
         clientObj['parent_company'] = parentCompany;
         delete clientObj.parent_company_id;
       }
+
+      const auditor = (await this.getAuditorCounts([id], true)).get(String(id));
+      clientObj['auditor_count'] = auditor ?? { base: 0, additional: 0, total: 0, details: [] };
 
       this.loggerService.warn(
         JSON.stringify({

@@ -3,6 +3,7 @@ import { ReportController } from './controllers/report.controller';
 import { ReportService } from './services/report.service';
 import { RevenueCalculatorService } from './services/revenue-calculator.service';
 import { ExcelExportService } from './services/excel-export.service';
+import { DashboardDrilldownService } from './services/dashboard-drilldown.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Order, OrderSchema } from '@/db/schema/order/product-order.schema';
 import { License, LicenseSchema } from '@/db/schema/order/license.schema';
@@ -31,7 +32,7 @@ import {
     ]),
   ],
   controllers: [ReportController],
-  providers: [ReportService, RevenueCalculatorService, ExcelExportService],
+  providers: [ReportService, RevenueCalculatorService, ExcelExportService, DashboardDrilldownService],
 })
 export class ReportModule implements OnModuleInit {
   constructor(private readonly reportService: ReportService) {}

@@ -179,7 +179,7 @@ export class ExcelExportService {
     const ch = data.clientHealth;
 
     const totalRevenue = rd.summary.grandTotalRevenue;
-    const collectionRate = evc.total.expected > 0 ? (evc.total.collected / evc.total.expected) * 100 : 0;
+    const collectionRate = evc.total.invoiced > 0 ? (evc.total.collected / evc.total.invoiced) * 100 : 0;
     const healthScore = Math.round(
       ch.healthMetrics.activePercentage * 0.3 +
       ch.healthMetrics.amcRenewalRate * 0.3 +
@@ -190,7 +190,7 @@ export class ExcelExportService {
       {
         kpi: 'Total Revenue',
         value: this.formatCurrency(totalRevenue),
-        insight: `${evc.total.collected >= evc.total.expected ? 'Above' : 'Working towards'} target for the fiscal year`,
+        insight: `${evc.total.collected >= evc.total.invoiced ? 'Above' : 'Working towards'} target for the fiscal year`,
       },
       {
         kpi: 'New Sales Revenue',
@@ -331,6 +331,7 @@ export class ExcelExportService {
     sheet.columns = [
       { header: 'Category', key: 'category', width: 20 },
       { header: 'Expected', key: 'expected', width: 20 },
+      { header: 'Invoiced', key: 'invoiced', width: 20 },
       { header: 'Collected', key: 'collected', width: 20 },
       { header: 'Pending', key: 'pending', width: 20 },
       { header: 'Collection Rate', key: 'rate', width: 18 },
@@ -345,12 +346,14 @@ export class ExcelExportService {
     ];
 
     categories.forEach((cat, idx) => {
-      const pending = cat.data.expected - cat.data.collected;
-      const rate = cat.data.expected > 0 ? (cat.data.collected / cat.data.expected) * 100 : 0;
+      // Pending / rate measure collection against what has been invoiced
+      const pending = cat.data.invoiced - cat.data.collected;
+      const rate = cat.data.invoiced > 0 ? (cat.data.collected / cat.data.invoiced) * 100 : 0;
 
       const row = sheet.addRow({
         category: cat.name,
         expected: cat.data.expected,
+        invoiced: cat.data.invoiced,
         collected: cat.data.collected,
         pending: pending,
         rate: `${rate.toFixed(1)}%`,
@@ -372,13 +375,11 @@ export class ExcelExportService {
         cell.border = this.BORDER_STYLE;
       });
 
-      row.getCell(2).numFmt = this.CURRENCY_FORMAT;
-      row.getCell(3).numFmt = this.CURRENCY_FORMAT;
-      row.getCell(4).numFmt = this.CURRENCY_FORMAT;
-      row.getCell(2).alignment = { horizontal: 'right' };
-      row.getCell(3).alignment = { horizontal: 'right' };
-      row.getCell(4).alignment = { horizontal: 'right' };
-      row.getCell(5).alignment = { horizontal: 'center' };
+      for (const c of [2, 3, 4, 5]) {
+        row.getCell(c).numFmt = this.CURRENCY_FORMAT;
+        row.getCell(c).alignment = { horizontal: 'right' };
+      }
+      row.getCell(6).alignment = { horizontal: 'center' };
     });
 
     // Period breakdown
@@ -392,34 +393,37 @@ export class ExcelExportService {
       fgColor: { argb: this.COLORS.lightGray },
     };
 
-    sheet.addRow(['Period', 'Expected', 'Collected', 'Pending', 'Collection Rate']);
+    sheet.addRow(['Period', 'Expected', 'Invoiced', 'Collected', 'Pending', 'Collection Rate']);
     this.styleHeaderRow(sheet.lastRow!);
 
     // Combine new sales and AMC breakdowns
-    const periodMap = new Map<string, { expected: number; collected: number }>();
+    const periodMap = new Map<string, { expected: number; invoiced: number; collected: number }>();
 
     data.newSales.breakdown.forEach((item) => {
       periodMap.set(item.period, {
         expected: item.expected,
+        invoiced: item.invoiced,
         collected: item.collected,
       });
     });
 
     data.amc.breakdown.forEach((item) => {
-      const existing = periodMap.get(item.period) || { expected: 0, collected: 0 };
+      const existing = periodMap.get(item.period) || { expected: 0, invoiced: 0, collected: 0 };
       existing.expected += item.expected;
+      existing.invoiced += item.invoiced;
       existing.collected += item.collected;
       periodMap.set(item.period, existing);
     });
 
     let rowNum = 0;
     for (const [period, values] of periodMap.entries()) {
-      const pending = values.expected - values.collected;
-      const rate = values.expected > 0 ? (values.collected / values.expected) * 100 : 0;
+      const pending = values.invoiced - values.collected;
+      const rate = values.invoiced > 0 ? (values.collected / values.invoiced) * 100 : 0;
 
       const row = sheet.addRow({
         category: period,
         expected: values.expected,
+        invoiced: values.invoiced,
         collected: values.collected,
         pending: pending,
         rate: `${rate.toFixed(1)}%`,
@@ -429,13 +433,11 @@ export class ExcelExportService {
       row.eachCell((cell) => {
         cell.border = this.BORDER_STYLE;
       });
-      row.getCell(2).numFmt = this.CURRENCY_FORMAT;
-      row.getCell(3).numFmt = this.CURRENCY_FORMAT;
-      row.getCell(4).numFmt = this.CURRENCY_FORMAT;
-      row.getCell(2).alignment = { horizontal: 'right' };
-      row.getCell(3).alignment = { horizontal: 'right' };
-      row.getCell(4).alignment = { horizontal: 'right' };
-      row.getCell(5).alignment = { horizontal: 'center' };
+      for (const c of [2, 3, 4, 5]) {
+        row.getCell(c).numFmt = this.CURRENCY_FORMAT;
+        row.getCell(c).alignment = { horizontal: 'right' };
+      }
+      row.getCell(6).alignment = { horizontal: 'center' };
     }
   }
 
@@ -797,7 +799,7 @@ export class ExcelExportService {
     sheet.addRow(['COLLECTION BREAKDOWN']);
     sheet.lastRow!.font = this.FONTS.subtitle;
 
-    sheet.addRow(['Category', 'Expected', 'Collected', 'Collection Rate']);
+    sheet.addRow(['Category', 'Expected', 'Invoiced', 'Collected', 'Collection Rate']);
     this.styleHeaderRow(sheet.lastRow!);
 
     [
@@ -805,10 +807,11 @@ export class ExcelExportService {
       { name: 'AMC', data: data.expectedVsCollected.amc },
       { name: 'Total', data: data.expectedVsCollected.total },
     ].forEach((item) => {
-      const rate = item.data.expected > 0 ? (item.data.collected / item.data.expected) * 100 : 0;
+      const rate = item.data.invoiced > 0 ? (item.data.collected / item.data.invoiced) * 100 : 0;
       const row = sheet.addRow({
         category: item.name,
         expected: item.data.expected,
+        invoiced: item.data.invoiced,
         collected: item.data.collected,
         collectionRate: `${rate.toFixed(1)}%`,
       });
@@ -819,6 +822,7 @@ export class ExcelExportService {
       });
       row.getCell(2).numFmt = this.CURRENCY_FORMAT;
       row.getCell(3).numFmt = this.CURRENCY_FORMAT;
+      row.getCell(4).numFmt = this.CURRENCY_FORMAT;
     });
 
     // Client health summary
@@ -878,7 +882,7 @@ export class ExcelExportService {
     }
 
     // Collection insights
-    const collectionRate = evc.total.expected > 0 ? (evc.total.collected / evc.total.expected) * 100 : 0;
+    const collectionRate = evc.total.invoiced > 0 ? (evc.total.collected / evc.total.invoiced) * 100 : 0;
     if (collectionRate < 70) {
       insights.push('Collection rate at ' + collectionRate.toFixed(1) + '% requires immediate attention. Implement follow-up process for pending payments.');
     } else if (collectionRate < 85) {

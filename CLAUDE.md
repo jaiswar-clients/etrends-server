@@ -83,7 +83,9 @@ Note: DB stores these refs as STRINGS, not ObjectIds (all 157 product refs are s
 
 ### Calculation source
 
-Pending payments for new orders come SOLELY from `order.payment_terms` entries with `status` of `to_be_created` or `invoice` (one row per term, `amount = pt.calculated_amount`). This is the only correct source.
+Pending payments for new orders come SOLELY from `order.payment_terms` entries (one row per term, `amount = pt.calculated_amount`). This is the only correct source.
+
+UI name is **Outstanding Payments** (route `/outstanding-payments`; `/pending-payments` redirects). The API (`GET /orders/pending-payments`, `/orders/export-pending-payments`) takes `status` (comma-separated); default = outstanding = `invoice` only (client requirement 2026-11-22). Other statuses can be requested explicitly. Row `invoice_date` is the real invoice date (null when not invoiced); `row_date` (invoice date, else PO / AMC from date) is only the FY-filter/sort basis.
 
 ### `pending_balance` / `total_paid` are STALE — do not trust
 
@@ -101,6 +103,14 @@ const remaining = base_cost - paid; // = pending + any unscheduled gap
 ### Removed: "PO balance gap" row (Scenario 3)
 
 Previously `getPendingPayments` (order.service.ts) synthesized an extra `_gap` row when `pending_balance > pendingInvoiceSum`. This was removed 2026-07-08 because: (a) it depended on the stale `pending_balance` field, producing phantom rows (275000 ghost row for Suzlon); (b) 0/128 active orders legitimately triggered it; (c) `payment_terms` already represents all scheduled payments — anything outside a term is unscheduled, not "pending payment."
+
+## Dashboard drill-downs
+
+Every Revenue Dashboard card opens a table from `GET /reports/drilldown?card=...` (`DashboardDrilldownService`); `GET /reports/drilldown/export` streams the same table as xlsx (honours `filterValues` / `search`). Revenue cards reuse `RevenueCalculatorService` eligibility (invoice + paid; AMC also needs `order.amc_start_date`) so table totals equal the card values. Status Date = received date (paid) / invoice date (invoice) / proforma date (proforma, AMC only) / empty (to_be_created).
+
+## Payment terms on licenses / customizations
+
+Licenses and customizations have `payment_terms` (same shape as `orders.payment_terms`; base = `rate.amount × total_license` / `cost`). Item-level `payment_status`, `invoice_*`, `payment_receive_date` are a summary written on save (`summarizePaymentTerms`). Reports must iterate terms via `effectivePaymentTerms()` / `RevenueCalculatorService.standaloneTermRows()` (`src/modules/order/utils/standalone-payment-terms.ts`); items without terms (pre-migration) are treated as one 100% term. Migration: `npm run migrate:standalone-terms` (idempotent).
 
 ## Payment status lifecycle
 
