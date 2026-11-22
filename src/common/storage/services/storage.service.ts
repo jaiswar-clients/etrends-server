@@ -23,13 +23,24 @@ export class StorageService {
     if (!filename) {
       return null;
     }
+
+    // Legacy rows may already contain an absolute URL instead of a file key.
+    if (/^https?:\/\//i.test(filename)) {
+      return filename;
+    }
+
     const filePath = path.join(this.filesPath, filename);
     
     if (!fs.existsSync(filePath)) {
       return null;
     }
 
-    return `${this.configService.get('APP_URL')}/v1/files/${filename}`;
+    const appUrl = String(this.configService.get('APP_URL') || '').replace(
+      /\/+$/,
+      '',
+    );
+
+    return `${appUrl}/v1/files/${filename}`;
   }
 
   delete(filename: string): void {
